@@ -53,6 +53,13 @@ WantedBy=timers.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now iplast-proxy.service iplast-proxy-apply.path iplast-proxy-check.timer >/dev/null 2>&1
-# the API container reads status.json and drops request.txt here
-if [ -f .env ] && ! grep -q '^PROXY_INBOX=' .env; then printf '\nPROXY_INBOX=%s/inbox\n' "$HOME_DIR" >> .env; fi
+/usr/local/bin/iplast-proxy migrate || true
+# .env: host tools use xray on 127.0.0.1, containers use the proxy container; the API reads status.json here
+git config http.proxy http://127.0.0.1:10809
+if [ -f .env ]; then
+  sed -i 's#^HTTPS_PROXY=http://172.17.0.1:10809#HTTPS_PROXY=http://proxy:10809#; s#^HTTP_PROXY=http://172.17.0.1:10809#HTTP_PROXY=http://proxy:10809#' .env
+  grep -q '^BUILD_PROXY=' .env || printf '\nBUILD_PROXY=http://127.0.0.1:10809\n' >> .env
+  grep -q '^COMPOSE_PROFILES=' .env || printf 'COMPOSE_PROFILES=proxy\n' >> .env
+  grep -q '^PROXY_INBOX=' .env || printf 'PROXY_INBOX=%s/inbox\n' "$HOME_DIR" >> .env
+fi
 echo "proxy tools installed"

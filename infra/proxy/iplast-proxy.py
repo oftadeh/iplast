@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Outbound proxy for servers that reach Telegram/OpenAI/GitHub only through a VPN (e.g. inside Iran).
 
-Runs on the host as root. xray (in /opt/iplast-proxy) serves an HTTP proxy on 127.0.0.1:10809 and on the
-Docker bridge 172.17.0.1:10809; the iPlast containers use it through HTTPS_PROXY.
+Runs on the host as root. The same xray config runs twice: on the host (127.0.0.1:10809, for git, image builds
+and deploy notices) and as the `proxy` container of the compose project (proxy:10809, for the api and bot
+containers; host firewalls often block containers from reaching host ports).
 
   iplast-proxy.py apply      take a new source from inbox/request.txt (set from the admin panel), or re-use the saved one
   iplast-proxy.py check      health check; when the active server fails, pick another working one from the saved source
@@ -17,10 +18,10 @@ HOME = '/opt/iplast-proxy'
 INBOX = f'{HOME}/inbox'
 XRAY = f'{HOME}/xray'
 CONFIG = f'{HOME}/config.json'
+CONFIG_DOCKER = f'{HOME}/config-docker.json'
 SOURCE = f'{HOME}/source.txt'
 STATUS = f'{INBOX}/status.json'
 PORT, TEST_PORT = 10809, 10899
-LISTEN = ('127.0.0.1', '172.17.0.1')
 TEST_URL = 'https://api.telegram.org'
 
 
@@ -151,6 +152,23 @@ def test(ob):
             p.kill()
 
 
+def install(ob):
+    os.makedirs(HOME, exist_ok=True)
+    for path, listen in ((CONFIG, ('127.0.0.1',)), (CONFIG_DOCKER, ('0.0.0.0',))):
+        json.dump(config(ob, listen, PORT), open(path, 'w'), indent=1)
+        os.chmod(path, 0o644)  # read by the proxy container
+    subprocess.run(['systemctl', 'restart', 'iplast-proxy'], check=False)
+    subprocess.run(['docker', 'restart', 'iplast-proxy-1'], check=False, capture_output=True)
+    time.sleep(2)
+
+
+def migrate():
+    """Older installs: host config also listened on 172.17.0.1 and there was no container config."""
+    if os.path.exists(CONFIG) and not os.path.exists(CONFIG_DOCKER):
+        ob = next(o for o in json.load(open(CONFIG))['outbounds'] if o.get('protocol') != 'freedom')
+        install(ob)
+
+
 def choose(source, prefer=None):
     links = links_from(source)
     if not links:
@@ -165,11 +183,7 @@ def choose(source, prefer=None):
         cands.sort(key=lambda c: c[0] == prefer)
     for name, ob in cands:
         if test(ob):
-            os.makedirs(HOME, exist_ok=True)
-            json.dump(config(ob, LISTEN, PORT), open(CONFIG, 'w'), indent=1)
-            os.chmod(CONFIG, 0o600)
-            subprocess.run(['systemctl', 'restart', 'iplast-proxy'], check=False)
-            time.sleep(2)
+            install(ob)
             return name, len(links)
     raise RuntimeError(f'هیچ‌کدام از {len(links)} کانفیگ به تلگرام وصل نشد (ممکن است اشتراک تمام شده باشد)')
 
@@ -215,4 +229,4 @@ def check():
 
 if __name__ == '__main__':
     os.makedirs(INBOX, exist_ok=True)
-    {'apply': apply, 'check': check}.get(sys.argv[1] if len(sys.argv) > 1 else 'check', check)()
+    {'apply': apply, 'check': check, 'migrate': migrate}.get(sys.argv[1] if len(sys.argv) > 1 else 'check', check)()

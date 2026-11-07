@@ -21,7 +21,7 @@ fi
 command -v git >/dev/null && command -v openssl >/dev/null || { apt-get update -qq && apt-get install -y -qq git curl openssl >/dev/null; }
 
 # Servers that reach GitHub, npm and Telegram only through a proxy (e.g. inside Iran):
-#   OUTBOUND_PROXY=http://172.17.0.1:10809   (must be reachable from Docker containers too)
+#   OUTBOUND_PROXY=http://127.0.0.1:10809    (xray from infra/proxy, installed in /opt/iplast-proxy)
 # Servers where another web server already owns ports 80/443 and forwards this site to us:
 #   SHARED_WEB=172.17.0.1:8088               (where our web container listens, plain HTTP)
 OUTBOUND_PROXY="${OUTBOUND_PROXY:-}"
@@ -70,9 +70,11 @@ KAVENEGAR_SENDER=
 ADMIN_SMS_NUMBERS=
 ENV
   if [ -n "$OUTBOUND_PROXY" ]; then cat >> .env <<ENV
-# outbound proxy (Telegram, OpenAI, npm, GitHub)
-HTTPS_PROXY=$OUTBOUND_PROXY
-HTTP_PROXY=$OUTBOUND_PROXY
+# outbound proxy: builds/git on the host use BUILD_PROXY; api/bot use the proxy container
+BUILD_PROXY=$OUTBOUND_PROXY
+COMPOSE_PROFILES=proxy
+HTTPS_PROXY=http://proxy:10809
+HTTP_PROXY=http://proxy:10809
 NO_PROXY=localhost,127.0.0.1,api,postgres,redis,web,migrate,bot
 NODE_USE_ENV_PROXY=1
 PROXY_INBOX=/opt/iplast-proxy/inbox

@@ -7,6 +7,8 @@ exec 9>/tmp/iplast-deploy.lock
 flock -n 9 || exit 0
 
 set -a; . ./.env; set +a
+# on the host, the proxy is xray on 127.0.0.1 (proxy:10809 only exists inside Docker)
+if [ -n "${BUILD_PROXY:-}" ]; then export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi
 notify() {
   local id="${ADMIN_TELEGRAM_IDS%%,*}"
   [ -n "${BOT_TOKEN:-}" ] && [ -n "$id" ] || return 0
@@ -21,7 +23,7 @@ if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then exit 0; fi
 git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
 # servers that use the outbound proxy (see infra/proxy): keep its host tools current
-if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; fi
+if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi
 LOG=/var/log/iplast-deploy.log
 if docker compose up -d --build --remove-orphans >"$LOG" 2>&1; then
   sleep 8
