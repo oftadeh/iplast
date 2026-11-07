@@ -12,7 +12,7 @@ set -euo pipefail
 HOST=${1:-$(cat /opt/iplast-tls/host 2>/dev/null || true)}
 [ -n "$HOST" ] || { echo "usage: $0 <host>"; exit 1; }
 DIR=/opt/iplast-tls
-PROXY=${OUTBOUND_PROXY:-http://127.0.0.1:10809}
+PROXY=${TLS_PROXY:-http://127.0.0.1:10809}  # host xray (infra/proxy)
 CADDY_CONTAINER=${CADDY_CONTAINER:-niva-panel-proxy-1}
 CADDYFILE=${CADDYFILE:-/opt/niva/deploy/panel-ip.Caddyfile}
 UPSTREAM=${UPSTREAM:-172.17.0.1:8088}
