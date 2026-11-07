@@ -13,11 +13,16 @@ export class AuthService implements OnModuleInit {
 
   constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService) {}
 
-  /** Makes sure every ID in ADMIN_TELEGRAM_IDS exists as an ADMIN, so the first login works. */
+  /**
+   * ADMIN_TELEGRAM_IDS only bootstraps the first senior manager. Once an active ADMIN exists, roles are
+   * managed in the panel, so the manager role can be handed over without editing the server's .env.
+   * If no active ADMIN is left, the IDs in .env become ADMIN again (recovery).
+   */
   async onModuleInit() {
     const ids = (process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x));
+    const hasAdmin = (await this.prisma.user.count({ where: { staffRole: 'ADMIN', isActive: true } })) > 0;
     for (const id of ids) {
-      await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'ADMIN' }, update: { staffRole: 'ADMIN', isActive: true } });
+      await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: hasAdmin ? null : 'ADMIN' }, update: hasAdmin ? {} : { staffRole: 'ADMIN', isActive: true } });
     }
     // SUPPORT_TELEGRAM_IDS are sales agents unless they already have a role
     for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x) && !ids.includes(x))) {
@@ -81,16 +86,11 @@ export class AuthService implements OnModuleInit {
     const verified = verifyInitData(initData, this.env('BOT_TOKEN'));
     if (!verified) throw new UnauthorizedException('initData نامعتبر است');
     const u = verified.user;
-    const admins = (process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
     const user = await this.prisma.user.upsert({
       where: { telegramId: BigInt(u.id) },
-      create: { telegramId: BigInt(u.id), username: u.username, firstName: u.first_name, lastName: u.last_name, staffRole: admins.includes(String(u.id)) ? 'ADMIN' : null },
+      create: { telegramId: BigInt(u.id), username: u.username, firstName: u.first_name, lastName: u.last_name },
       update: { username: u.username, firstName: u.first_name, lastName: u.last_name, lastSeenAt: new Date() },
     });
-    if (admins.includes(String(u.id)) && user.staffRole !== 'ADMIN') {
-      await this.prisma.user.update({ where: { id: user.id }, data: { staffRole: 'ADMIN' } });
-      user.staffRole = 'ADMIN';
-    }
     const token = this.sign(user);
     return { token, user: { id: user.id, firstName: user.firstName, staffRole: user.staffRole } };
   }
