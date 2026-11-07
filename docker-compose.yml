@@ -38,7 +38,9 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
 
+  # mini app + admin panel behind HTTPS; runs only when a domain is set (COMPOSE_PROFILES=web in .env)
   web:
+    profiles: [web]
     build: { context: ., dockerfile: infra/Dockerfile.web }
     restart: unless-stopped
     environment: { DOMAIN: "${DOMAIN}" }

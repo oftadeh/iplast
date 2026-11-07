@@ -5,14 +5,14 @@ import { Injectable, Logger } from '@nestjs/common';
 export class TelegramService {
   private readonly log = new Logger('Telegram');
 
-  async send(chatId: bigint | number | string, text: string): Promise<boolean> {
+  async send(chatId: bigint | number | string, text: string, replyMarkup?: object): Promise<boolean> {
     const token = process.env.BOT_TOKEN;
     if (!token) return false;
     try {
       const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: String(chatId), text }),
+        body: JSON.stringify({ chat_id: String(chatId), text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
       });
       if (!r.ok) this.log.warn(`sendMessage ${r.status}`);
       return r.ok;

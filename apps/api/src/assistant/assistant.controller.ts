@@ -4,7 +4,15 @@ import { timingSafeEqual } from 'node:crypto';
 import { Session, SessionGuard } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrdersService, STATUS_FA } from '../orders/orders.service';
+import { audit } from '../common/audit';
 import { AssistantService } from './assistant.service';
+
+function checkKey(key: string | undefined) {
+  const want = process.env.INTERNAL_KEY ?? '';
+  if (!want || !key || key.length !== want.length || !timingSafeEqual(Buffer.from(key), Buffer.from(want))) throw new UnauthorizedException();
+}
+const tgId = (v: unknown) => { if (!/^\d{4,15}$/.test(String(v ?? ''))) throw new BadRequestException(); return BigInt(String(v)); };
 
 /** The customer's default account (for personal prices), if they belong to exactly one or pass one they belong to. */
 async function accountOf(prisma: PrismaService, userId: string, customerId?: string) {
@@ -48,15 +56,13 @@ export class AssistantController {
 /** Called only by the bot container, with the shared INTERNAL_KEY; never exposed by Caddy (see Caddyfile). */
 @Controller('internal/assistant')
 export class InternalAssistantController {
-  constructor(private readonly ai: AssistantService, private readonly prisma: PrismaService) {}
+  constructor(private readonly ai: AssistantService, private readonly prisma: PrismaService, private readonly orders: OrdersService) {}
 
   @Post()
   async fromBot(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; firstName?: string; username?: string; text?: string; fileId?: string }) {
-    const want = process.env.INTERNAL_KEY ?? '';
-    if (!want || !key || key.length !== want.length || !timingSafeEqual(Buffer.from(key), Buffer.from(want))) throw new UnauthorizedException();
+    checkKey(key);
     if (!this.ai.enabled) return { enabled: false };
-    if (!/^\d{4,15}$/.test(String(b.telegramId ?? ''))) throw new BadRequestException();
-    const tg = BigInt(b.telegramId!);
+    const tg = tgId(b.telegramId);
     const user = await this.prisma.user.upsert({ where: { telegramId: tg }, create: { telegramId: tg, firstName: b.firstName, username: b.username }, update: {} });
     let text = String(b.text ?? '');
     let heard: string | null = null;
@@ -66,5 +72,49 @@ export class InternalAssistantController {
     }
     const v = await this.ai.draft(user.id, text, b.fileId ? 'bot-voice' : 'bot-text', await accountOf(this.prisma, user.id));
     return { enabled: true, draftId: v.id, hasItems: v.lines.length > 0, heard, text: this.ai.chatText(v) };
+  }
+
+  /**
+   * «✅ ثبت سفارش» under an assistant draft in the bot chat: places the draft as an order.
+   * The first order of a new customer needs a company name; the bot asks for it and calls again.
+   */
+  @Post('confirm')
+  async confirm(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; draftId?: string; companyName?: string; note?: string }) {
+    checkKey(key);
+    const user = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
+    const d = b.draftId ? await this.prisma.assistantDraft.findUnique({ where: { id: String(b.draftId) } }) : null;
+    if (!user || !d || d.userId !== user.id) throw new BadRequestException('پیش‌نویس پیدا نشد');
+    const ms = await this.prisma.customerMember.findMany({ where: { userId: user.id, role: { in: ['OWNER', 'BUYER'] } } });
+    const others = ms.length ? 0 : await this.prisma.customerMember.count({ where: { userId: user.id } });
+    if (!ms.length && others) throw new BadRequestException('دسترسی ثبت سفارش برای حساب شما فعال نیست؛ با مدیر حساب شرکت هماهنگ کنید');
+    const name = b.companyName?.trim();
+    if (!ms.length && !name) return { needName: true };
+    const items = (d.items as unknown as { variantId: string; quantity: number; packs: number | null }[]).map(i => ({ variantId: i.variantId, quantity: i.quantity, ...(i.packs ? { packs: i.packs } : {}) }));
+    const o = await this.orders.create(user.id, {
+      customerId: ms[0]?.customerId, newCustomer: ms.length ? undefined : { name }, items, idempotencyKey: `draft:${d.id}`,
+      note: [b.note?.trim(), `سفارش از ربات: «${d.inputText.slice(0, 300)}»`].filter(Boolean).join('\n'),
+    }, 'bot');
+    await this.prisma.assistantDraft.update({ where: { id: d.id }, data: { usedAt: new Date() } });
+    return { orderNumber: o.number, status: o.statusFa };
+  }
+}
+
+/** Order status buttons under the new-order message that staff get in the bot. */
+@Controller('internal/orders')
+export class InternalOrdersController {
+  constructor(private readonly prisma: PrismaService, private readonly orders: OrdersService) {}
+
+  @Post('status')
+  async status(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; orderId?: string; status?: string }) {
+    checkKey(key);
+    const tg = tgId(b.telegramId);
+    const support = (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(s => s.trim()).includes(String(tg));
+    const staff = await this.prisma.user.findUnique({ where: { telegramId: tg } });
+    if (!staff?.isActive || (!staff.staffRole && !support)) throw new UnauthorizedException();
+    const status = b.status as keyof typeof STATUS_FA;
+    if (!['CONFIRMED', 'SALES_REVIEW', 'REJECTED'].includes(String(status))) throw new BadRequestException('وضعیت نامعتبر است');
+    const r = await this.orders.setStatus(staff.id, String(b.orderId), status);
+    await audit(this.prisma, staff.id, 'order.status', 'Order', String(b.orderId), { status: r.before }, { status, via: 'bot' });
+    return { number: r.number, statusFa: STATUS_FA[status] };
   }
 }

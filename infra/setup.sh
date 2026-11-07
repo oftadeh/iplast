@@ -27,16 +27,20 @@ if [ ! -f .env ]; then
   BOT_TOKEN="${BOT_TOKEN:-$(ask 'Telegram bot token: ')}"
   ADMIN_ID="${ADMIN_ID:-$(ask 'Your numeric Telegram ID (send /id to the bot later if unsure, Enter to skip): ')}"
   OPENAI_KEY="${OPENAI_API_KEY:-$(ask 'OpenAI API key for the order assistant (Enter to skip, add later in .env): ')}"
-  DOMAIN="${DOMAIN:-$DOMAIN_DEFAULT}"
+  # No domain yet = bot-only: customers order inside the bot chat; the mini app and admin panel stay off.
+  # Turn them on later with: sudo bash /opt/iplast/infra/enable-web.sh isfahanplast.co
+  DOMAIN="${DOMAIN-$(ask "Domain for the mini app and admin panel (e.g. $DOMAIN_DEFAULT), Enter = bot only for now: ")}"
+  if [ -n "$DOMAIN" ]; then PROFILES=web; MINIAPP="https://app.$DOMAIN"; CORS="https://app.$DOMAIN,https://admin.$DOMAIN"; else PROFILES=; MINIAPP=; CORS=; fi
   PGPASS="$(openssl rand -hex 24)"
   cat > .env <<ENV
 NODE_ENV=production
 DOMAIN=$DOMAIN
+COMPOSE_PROFILES=$PROFILES
 BOT_TOKEN=$BOT_TOKEN
 ADMIN_TELEGRAM_IDS=$ADMIN_ID
 SUPPORT_TELEGRAM_IDS=$ADMIN_ID
-MINIAPP_URL=https://app.$DOMAIN
-CORS_ORIGINS=https://app.$DOMAIN,https://admin.$DOMAIN
+MINIAPP_URL=$MINIAPP
+CORS_ORIGINS=$CORS
 POSTGRES_USER=iplast
 POSTGRES_PASSWORD=$PGPASS
 POSTGRES_DB=iplast
@@ -86,4 +90,9 @@ if [ ! -f .seeded ]; then
   docker compose run --rm api node node_modules/@iplast/db/dist/seed.js && touch .seeded
 fi
 echo "Done. Public IP: $(curl -fsS https://api.ipify.org || echo unknown)"
-echo "Point DNS A records app.<domain> and admin.<domain> to this IP."
+if grep -q '^COMPOSE_PROFILES=web' .env; then
+  echo "Point DNS A records app.<domain> and admin.<domain> to this IP."
+else
+  echo "Bot-only mode: open the bot in Telegram and send /start."
+  echo "When the domain is ready: sudo bash $DIR/infra/enable-web.sh <domain>"
+fi

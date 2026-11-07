@@ -81,12 +81,29 @@ export class OrdersService {
     const total = this.orderTotal(o.items);
     const inq = o.items.filter(i => i.unitPrice === null).length;
     const who = [o.placedBy.firstName, o.placedBy.lastName].filter(Boolean).join(' ') || `کاربر ${o.placedBy.telegramId}`;
-    const text = `🧾 سفارش جدید #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}\n${o.items.length} قلم${inq ? ` (${inq} استعلامی)` : ''}\nجمع تقریبی: ${formatRial(total)}`;
+    const lines = o.items.slice(0, 40).map((i, n) => `${n + 1}. ${i.title} — ${i.packs ? `${i.packs} بسته (${i.quantity})` : i.quantity}${i.unitPrice === null ? ' — استعلامی' : ''}`);
+    if (o.items.length > 40) lines.push(`… و ${o.items.length - 40} قلم دیگر`);
+    const text = `🧾 سفارش جدید #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی)` : ''} · جمع تقریبی: ${formatRial(total)}${o.note ? `\nتوضیح: ${o.note}` : ''}`;
+    // staff can move the order on right from the chat (handled by the bot), also when there is no admin panel yet
+    const kb = { inline_keyboard: [[
+      { text: '✅ تأیید', callback_data: `os:${o.id}:CONFIRMED` },
+      { text: '🕓 در بررسی', callback_data: `os:${o.id}:SALES_REVIEW` },
+      { text: '❌ رد', callback_data: `os:${o.id}:REJECTED` },
+    ]] };
     const targets = new Set<string>();
     if (o.customer.support?.isActive) targets.add(String(o.customer.support.telegramId));
     else for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean)) targets.add(id);
-    for (const t of targets) await this.tg.send(t, text);
+    for (const t of targets) await this.tg.send(t, text, kb);
     await this.tg.send(o.placedBy.telegramId, `سفارش #${o.number} ثبت شد و برای واحد فروش ارسال شد. نتیجه بررسی همین‌جا اطلاع داده می‌شود.`);
+  }
+
+  /** Moves an order to a new status and tells the person who placed it, through the bot. */
+  async setStatus(byUserId: string, id: string, status: OrderStatus, comment?: string) {
+    const o = await this.prisma.order.findUnique({ where: { id }, include: { placedBy: true } });
+    if (!o) throw new NotFoundException();
+    await this.prisma.order.update({ where: { id }, data: { status, events: { create: { status, byUserId, comment } } } });
+    await this.tg.send(o.placedBy.telegramId, `وضعیت سفارش #${o.number}: ${STATUS_FA[status]}${comment ? `\nتوضیح: ${comment}` : ''}`);
+    return { before: o.status, number: o.number };
   }
 
   /** OWNER sees every order of the company, BUYER only their own. Staff see all. */

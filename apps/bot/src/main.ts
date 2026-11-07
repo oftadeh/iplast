@@ -51,13 +51,39 @@ async function assistantDraft(from: { id: number; first_name?: string; username?
   }
 }
 
+/** POST to the API's internal routes; returns the JSON body, or throws with the API's Persian message. */
+async function internal<T>(path: string, body: object): Promise<T> {
+  const r = await fetch(`${API_INTERNAL_URL}${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_KEY },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
+  });
+  const j = await r.json().catch(() => ({})) as T & { message?: string };
+  if (!r.ok) throw new Error(typeof j.message === 'string' ? j.message : 'خطا در ثبت');
+  return j;
+}
+
+/** Customers asked for their company name before their first order: telegram id → draft id. */
+const awaitingName = new Map<number, { draftId: string; at: number }>();
+
+async function confirmDraft(ctx: Context, draftId: string, companyName?: string) {
+  const from = ctx.from!;
+  const r = await internal<{ needName?: boolean; orderNumber?: number }>('/internal/assistant/confirm', { telegramId: String(from.id), draftId, companyName });
+  if (r.needName) {
+    awaitingName.set(from.id, { draftId, at: Date.now() });
+    await ctx.reply('این اولین سفارش شماست. نام فروشگاه یا شرکت‌تان را بنویسید تا سفارش ثبت شود.', { reply_markup: { force_reply: true, input_field_placeholder: 'نام فروشگاه یا شرکت' } });
+    return false;
+  }
+  awaitingName.delete(from.id);
+  return true; // the API itself tells the customer «سفارش #… ثبت شد» and sends the order to sales
+}
+
 const openAppKeyboard = () => MINIAPP_URL ? new InlineKeyboard().webApp('🛒 باز کردن فروشگاه', MINIAPP_URL) : undefined;
 
 bot.command('start', async ctx => {
   await ctx.reply(
     'سلام! به ربات فروش اصفهان پلاست خوش آمدید.\n\n' +
     'می‌توانید سفارش را همین‌جا بنویسید، ویس بفرستید، یا عکس و PDF لیست خریدتان را ارسال کنید تا کارشناس فروش بررسی کند.\n' +
-    'برای دیدن محصولات و قیمت‌ها، فروشگاه را باز کنید.',
+    (MINIAPP_URL ? 'برای دیدن محصولات و قیمت‌ها، فروشگاه را باز کنید.' : 'مثلاً بنویسید: «دو کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰». پیش‌نویس سفارش با قیمت روز آماده می‌شود و با یک دکمه ثبت می‌کنید.'),
     { reply_markup: openAppKeyboard() },
   );
 });
@@ -85,6 +111,31 @@ async function pickSupport(customerTelegramId: number): Promise<number | null> {
   if (!agents.length) return null;
   return agents[rr++ % agents.length];
 }
+
+// «✅ ثبت این سفارش» under an assistant draft
+bot.callbackQuery(/^cd:([a-z0-9]{10,40})$/, async ctx => {
+  try {
+    const done = await confirmDraft(ctx, ctx.match[1]);
+    await ctx.answerCallbackQuery(done ? { text: 'سفارش ثبت شد' } : {});
+    if (done) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
+  } catch (e) {
+    await ctx.answerCallbackQuery({ text: (e as Error).message, show_alert: true });
+  }
+});
+
+// Staff order buttons under «🧾 سفارش جدید»: confirm, under review, reject
+bot.callbackQuery(/^os:([a-z0-9]{10,40}):(CONFIRMED|SALES_REVIEW|REJECTED)$/, async ctx => {
+  try {
+    const r = await internal<{ number: number; statusFa: string }>('/internal/orders/status', { telegramId: String(ctx.from.id), orderId: ctx.match[1], status: ctx.match[2] });
+    await ctx.answerCallbackQuery({ text: `سفارش #${r.number}: ${r.statusFa}` });
+    const who = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ');
+    const old = ctx.callbackQuery.message?.text ?? '';
+    // final states drop the buttons; «در بررسی» keeps them for the final decision
+    await ctx.editMessageText(`${old}\n\n▫️ ${r.statusFa} (${who})`, ctx.match[2] === 'SALES_REVIEW' ? { reply_markup: ctx.callbackQuery.message?.reply_markup } : {}).catch(() => {});
+  } catch (e) {
+    await ctx.answerCallbackQuery({ text: (e as Error).message === 'Unauthorized' ? 'فقط کارکنان فروش' : (e as Error).message, show_alert: true });
+  }
+});
 
 // Staff replying (Telegram "reply") to a copied customer message → the answer goes back through the bot.
 bot.on('message', async (ctx, next) => {
@@ -121,6 +172,13 @@ bot.on('message', async ctx => {
     if (!ctx.message.reply_to_message) await ctx.reply('برای پاسخ به مشتری، روی پیام کپی‌شده‌ی او Reply بزنید.');
     return;
   }
+  const pending = awaitingName.get(from.id);
+  if (pending && Date.now() - pending.at > 30 * 60_000) awaitingName.delete(from.id);
+  else if (pending && kind === 'TEXT' && ctx.message.text && !ctx.message.text.startsWith('/')) {
+    const name = ctx.message.text.trim().slice(0, 120);
+    try { await confirmDraft(ctx, pending.draftId, name); } catch (e) { await ctx.reply((e as Error).message); }
+    return;
+  }
   const tg = BigInt(from.id);
   const user = await prisma.user.findUnique({ where: { telegramId: tg }, include: { memberships: { select: { customerId: true, customer: { select: { name: true } } }, take: 1 } } });
   let conv = await prisma.conversation.findFirst({ where: { userTelegramId: tg, isOpen: true } });
@@ -152,8 +210,10 @@ bot.on('message', async ctx => {
     const d = await assistantDraft(from, m.text, m.voice?.file_id ?? m.audio?.file_id);
     if (d?.text && d.draftId) {
       const heard = d.heard ? `🎙 شنیدم: «${d.heard}»\n\n` : '';
-      const kb = MINIAPP_URL ? new InlineKeyboard().webApp('🛒 بررسی و ثبت در سبد', `${MINIAPP_URL}${MINIAPP_URL.includes('?') ? '&' : '?'}draft=${d.draftId}`) : undefined;
-      await ctx.reply(heard + d.text, { reply_markup: kb });
+      const kb = new InlineKeyboard().text('✅ ثبت همین سفارش', `cd:${d.draftId}`);
+      if (MINIAPP_URL) kb.row().webApp('🛒 ویرایش در سبد', `${MINIAPP_URL}${MINIAPP_URL.includes('?') ? '&' : '?'}draft=${d.draftId}`);
+      const tip = MINIAPP_URL ? '' : '\n\nبرای تغییر، سفارش اصلاح‌شده را دوباره بفرستید.';
+      await ctx.reply(heard + d.text + tip, { reply_markup: kb });
       await prisma.message.create({ data: { conversationId: conv.id, direction: 'OUT', kind: 'TEXT', text: `[دستیار]\n${heard}${d.text}` } });
       if (agent) await ctx.api.sendMessage(agent, `🤖 پیش‌نویس دستیار برای ${name}:\n${heard}${d.text}`).catch(() => {});
     }

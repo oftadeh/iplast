@@ -40,12 +40,9 @@ export class AdminOrdersController {
   async setStatus(@Session() s: SessionClaims, @Param('id') id: string, @Body() body: { status?: string; comment?: string }) {
     const status = body?.status as OrderStatus;
     if (!STATUSES.includes(status)) throw new BadRequestException('وضعیت نامعتبر است');
-    const o = await this.prisma.order.findUnique({ where: { id }, include: { placedBy: true } });
-    if (!o) throw new NotFoundException();
     const comment = body.comment?.slice(0, 1000);
-    await this.prisma.order.update({ where: { id }, data: { status, events: { create: { status, byUserId: s.sub, comment } } } });
-    await audit(this.prisma, s.sub, 'order.status', 'Order', id, { status: o.status }, { status, comment });
-    await this.tg.send(o.placedBy.telegramId, `وضعیت سفارش #${o.number}: ${STATUS_FA[status]}${comment ? `\nتوضیح: ${comment}` : ''}`);
+    const r = await this.orders.setStatus(s.sub, id, status, comment);
+    await audit(this.prisma, s.sub, 'order.status', 'Order', id, { status: r.before }, { status, comment });
     return this.orders.get(s.sub, id, true);
   }
 }
