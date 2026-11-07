@@ -34,6 +34,8 @@ model ProductFamily {
   slug        String       @unique
   name        String
   description String?
+  specs       Json? // [["فشار کاری","۱۰ اتمسفر"], ...]
+  badge       String? // پرفروش، جدید
   model       String? // e.g. IPT, قالب آلومینیومی
   unitName    String       @default("عدد")
   packName    String? // کارتن / کیسه / بسته

@@ -4,9 +4,17 @@ import { HealthController } from './health/health.controller';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 import { CatalogController } from './catalog/catalog.controller';
+import { TelegramService } from './common/telegram.service';
+import { SessionGuard } from './common/session';
+import { MeController } from './me/me.controller';
+import { OrdersController } from './orders/orders.controller';
+import { OrdersService } from './orders/orders.service';
+import { AdminOrdersController } from './admin/admin-orders.controller';
+import { AdminCustomersController } from './admin/admin-customers.controller';
+import { AdminStaffController } from './admin/admin-staff.controller';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController],
-  providers: [PrismaService, AuthService],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController],
+  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService],
 })
 export class AppModule {}

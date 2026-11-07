@@ -71,5 +71,9 @@ systemctl enable --now iplast-autodeploy.timer
 
 echo "Building and starting (first build takes several minutes)..."
 FORCE=1 /usr/local/bin/iplast-autodeploy
+if [ ! -f .seeded ]; then
+  echo "Loading the Aban 1405 catalog..."
+  docker compose run --rm api node node_modules/@iplast/db/dist/seed.js && touch .seeded
+fi
 echo "Done. Public IP: $(curl -fsS https://api.ipify.org || echo unknown)"
 echo "Point DNS A records app.<domain> and admin.<domain> to this IP."

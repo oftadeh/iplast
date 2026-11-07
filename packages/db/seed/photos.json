@@ -1,0 +1,72 @@
+{
+ "male-adapter": {
+  "file": "male-adapter.webp",
+  "source": "pdf:J04-04"
+ },
+ "female-adapter": {
+  "file": "female-adapter.webp",
+  "source": "pdf:J04-05"
+ },
+ "coupling": {
+  "file": "coupling.webp",
+  "source": "pdf:J05-06"
+ },
+ "elbow": {
+  "file": "elbow.webp",
+  "source": "pdf:J05-08"
+ },
+ "male-elbow": {
+  "file": "male-elbow.webp",
+  "source": "pdf:J06-10"
+ },
+ "end-cap": {
+  "file": "end-cap.webp",
+  "source": "pdf:J06-11"
+ },
+ "tee": {
+  "file": "tee.webp",
+  "source": "pdf:J07-12"
+ },
+ "saddle": {
+  "file": "saddle.webp",
+  "source": "pdf:J13-17"
+ },
+ "poly-valve": {
+  "file": "poly-valve.webp",
+  "source": "pdf:J27-30"
+ },
+ "pvc-valve": {
+  "file": "pvc-valve.webp",
+  "source": "pdf:J27-29"
+ },
+ "wafer-valve": {
+  "file": "wafer-valve.webp",
+  "source": "pdf:J02-02"
+ },
+ "disc-filter": {
+  "file": "disc-filter.webp",
+  "source": "pdf:J03-03"
+ },
+ "rs-valve": {
+  "file": "rs-valve.webp",
+  "source": "pdf:J23-28"
+ },
+ "newfit-a": {
+  "file": "newfit-a.webp",
+  "source": "pdf:N04-41"
+ },
+ "newfit-coupling": {
+  "file": "newfit-coupling.webp",
+  "source": "pdf:N05-48"
+ },
+ "reducing-tee": {
+  "file": "tee.webp",
+  "source": "pdf:J07-12",
+  "sibling": true
+ },
+ "drip16": {
+  "file": "rs-valve.webp",
+  "source": "pdf:J23-28",
+  "sibling": true
+ }
+}

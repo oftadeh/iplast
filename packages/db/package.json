@@ -9,13 +9,20 @@
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "build": "prisma generate && tsc -p tsconfig.json",
-    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit"
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "seed": "node dist/seed.js"
   },
   "dependencies": {
     "@prisma/client": "5.22.0"
   },
   "devDependencies": {
+    "@types/node": "22.9.0",
     "prisma": "5.22.0",
     "typescript": "5.6.3"
-  }
+  },
+  "files": [
+    "dist",
+    "seed",
+    "prisma"
+  ]
 }

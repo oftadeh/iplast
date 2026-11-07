@@ -11,15 +11,26 @@ export class CatalogController {
   }
 
   @Get('families')
-  families(@Query('category') category?: string, @Query('q') q?: string) {
-    return this.prisma.productFamily.findMany({
+  async families(@Query('category') category?: string, @Query('q') q?: string) {
+    const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
+    const fams = await this.prisma.productFamily.findMany({
       where: {
         isActive: true,
         ...(category ? { category: { slug: category } } : {}),
         ...(q ? { OR: [{ name: { contains: q } }, { synonyms: { some: { term: { contains: q } } } }] } : {}),
       },
       orderBy: { sortOrder: 'asc' },
-      select: { id: true, slug: true, name: true, model: true, media: { where: { isPrimary: true }, take: 1 } },
+      select: {
+        id: true, slug: true, name: true, model: true, badge: true, packName: true,
+        category: { select: { slug: true, name: true } },
+        brand: { select: { name: true } },
+        media: { where: { isPrimary: true }, take: 1, select: { key: true, source: true } },
+        variants: { where: { isActive: true }, select: { prices: list ? { where: { priceListId: list.id, status: 'PRICED' }, select: { amount: true } } : { where: { id: '-' }, select: { amount: true } } } },
+      },
+    });
+    return fams.map(({ variants, ...f }) => {
+      const prices = variants.flatMap(v => v.prices.map(p => p.amount)).filter((a): a is bigint => a !== null);
+      return { ...f, sizeCount: variants.length, minPrice: prices.length ? prices.reduce((a, b) => (a < b ? a : b)) : null };
     });
   }
 
@@ -31,6 +42,8 @@ export class CatalogController {
       where: { slug },
       include: {
         axes: { orderBy: { sortOrder: 'asc' } },
+        category: { select: { slug: true, name: true } },
+        brand: { select: { name: true } },
         media: true,
         variants: {
           where: { isActive: true },
