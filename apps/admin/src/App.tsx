@@ -1,21 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ApiError, Me, api, getToken, personName, setToken, setUnauthorizedHandler, toEnDigits, ROLE_FA } from './lib';
-import { OrdersPage } from './pages/Orders';
-import { CustomersPage } from './pages/Customers';
+import { ApprovalsPage } from './pages/Approvals';
+import { ProductsPage } from './pages/Products';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
-import { ConversationsPage } from './pages/Conversations';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
 export const useAdmin = () => useContext(AdminCtx);
 
+// Focused on decisions and the catalog: approve orders and customers, define products, keep prices current.
+// Conversations stay in the bot chat itself (staff reply there).
 const SECTIONS = [
-  { id: 'orders', title: 'سفارش‌ها' },
-  { id: 'conversations', title: 'گفتگوهای ربات' },
-  { id: 'customers', title: 'مشتریان' },
-  { id: 'prices', title: 'لیست قیمت' },
-  { id: 'staff', title: 'پشتیبان‌ها و مدیران', admin: true },
+  { id: 'approvals', title: 'تأییدها' },
+  { id: 'products', title: 'کالاها' },
+  { id: 'prices', title: 'لیست قیمت (PDF)' },
+  { id: 'staff', title: 'کارشناسان', admin: true },
 ] as const;
 
 interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
@@ -26,7 +26,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(!!getToken() || !!tgApp());
   const [denied, setDenied] = useState(false);
-  const [section, setSection] = useState<string>(() => location.hash.slice(1).split('/')[0] || 'orders');
+  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return ['approvals', 'products', 'prices', 'staff'].includes(h) ? h : 'approvals'; });
   const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
   const [toastText, setToastText] = useState('');
   const t = useRef<number>();
@@ -71,9 +71,8 @@ export function App() {
           <div className="who"><span>{personName(me)} · {ROLE_FA[me.staffRole!]}</span>{tgApp() ? <a href="/" style={{ color: 'inherit' }}>بازگشت به فروشگاه</a> : <button type="button" onClick={() => { setToken(null); setMe(null); }}>خروج</button>}</div>
         </aside>
         <main>
-          {section === 'orders' && <OrdersPage focus={focus} onFocus={setFocus} />}
-          {section === 'customers' && <CustomersPage focus={focus} onFocus={setFocus} />}
-          {section === 'conversations' && <ConversationsPage focus={focus} onFocus={setFocus} />}
+          {section === 'approvals' && <ApprovalsPage />}
+          {section === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}
           {section === 'prices' && <PricesPage />}
           {section === 'staff' && me.staffRole === 'ADMIN' && <StaffPage />}
         </main>

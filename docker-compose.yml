@@ -27,6 +27,7 @@ services:
     build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api } }
     restart: unless-stopped
     env_file: .env
+    volumes: [uploads:/data/uploads]   # product photos added in the admin panel
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_started }
@@ -48,6 +49,7 @@ services:
     depends_on: [api]
 
 volumes:
+  uploads:
   pgdata:
   redisdata:
   caddydata:
