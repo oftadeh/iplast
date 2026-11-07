@@ -1,6 +1,12 @@
 import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+/** Words of a search like «نری ۶۳» or «فیلتر 2 اینچ»; numbers alone don't pick a family. */
+function searchTerms(q: string) {
+  const words = q.trim().slice(0, 80).split(/\s+/).filter(w => w.length >= 2 && !/^[\d۰-۹/.×x*]+$/.test(w));
+  return words.length ? words : [q.trim().slice(0, 80)];
+}
+
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly prisma: PrismaService) {}
@@ -17,7 +23,7 @@ export class CatalogController {
       where: {
         isActive: true,
         ...(category ? { category: { slug: category } } : {}),
-        ...(q ? { OR: [{ name: { contains: q } }, { synonyms: { some: { term: { contains: q } } } }] } : {}),
+        ...(q ? { OR: searchTerms(q).flatMap(t => [{ name: { contains: t } }, { synonyms: { some: { term: { contains: t } } } }]) } : {}),
       },
       orderBy: { sortOrder: 'asc' },
       select: {
