@@ -16,7 +16,7 @@ export interface OrderInput {
 
 export const STATUS_FA: Record<OrderStatus, string> = {
   SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', SALES_APPROVED: 'تأیید کارشناس؛ منتظر تأیید نهایی مدیر', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
-  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید شد', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
+  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی؛ ارسال به انبار', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
 
@@ -112,6 +112,22 @@ export class OrdersService {
     await this.tg.send(o.placedBy.telegramId, `پیش‌فاکتور #${o.number} ثبت شد و برای ${agent ? `کارشناس فروش شما، ${agent}،` : 'کارشناس فروش'} ارسال شد.\nبرای هماهنگی قیمت، تحویل و پرداخت، همین‌جا در ربات پیام یا ویس بدهید؛ مستقیم به کارشناس‌تان می‌رسد.`);
   }
 
+  /** After the final approval the order goes to the warehouse (or the managers when no warehouse user is defined). */
+  private async notifyWarehouse(orderId: string, approvedBy: string) {
+    const { o, text } = await this.orderText(orderId, `📦 سفارش تأییدشده برای انبار (تأیید نهایی: ${approvedBy})`);
+    let to = await this.prisma.user.findMany({ where: { staffRole: 'WAREHOUSE', isActive: true } });
+    if (!to.length) to = await this.admins();
+    const kb = { inline_keyboard: [[
+      { text: '📦 در حال آماده‌سازی', callback_data: `os:${o.id}:prep` },
+      { text: '🚚 ارسال شد', callback_data: `os:${o.id}:ship` },
+    ]] };
+    for (const w of to) await this.tg.send(w.telegramId, `${text}\n\nبعد از بارگیری «ارسال شد» را بزنید تا به مشتری خبر داده شود. شماره‌ی بارنامه را می‌توانید در پنل ثبت کنید.`, kb);
+    if (o.customer.supportId) {
+      const sup = await this.prisma.user.findUnique({ where: { id: o.customer.supportId } });
+      if (sup?.isActive) await this.tg.send(sup.telegramId, `✅ پیش‌فاکتور #${o.number} (${o.customer.name}) تأیید نهایی شد و برای انبار رفت.`);
+    }
+  }
+
   /**
    * The two-step approval: the customer's sales agent approves («تأیید کارشناس»), then a manager gives the final
    * approval. A manager may approve directly only when there are no sales agents at all. Either may reject or ask for a fix.
@@ -126,7 +142,7 @@ export class OrdersService {
     const isAdmin = u.staffRole === 'ADMIN';
     const open: OrderStatus[] = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX'];
     const note = comment?.trim().slice(0, 1000) || undefined;
-    const by = [u.firstName, u.lastName].filter(Boolean).join(' ') || 'کارشناس';
+    const by = [u.firstName, u.lastName].filter(Boolean).join(' ') || (u.staffRole === 'ADMIN' ? 'مدیر' : 'کارشناس');
     if (action === 'sales_ok') {
       if (!open.includes(o.status)) throw new BadRequestException(o.status === 'SALES_APPROVED' ? 'قبلاً تأیید کارشناس خورده است' : 'این پیش‌فاکتور دیگر منتظر تأیید کارشناس نیست');
       if (!isAdmin && o.customer.supportId && o.customer.supportId !== u.id) throw new ForbiddenException('این مشتری کارشناس دیگری دارد');
@@ -144,7 +160,20 @@ export class OrdersService {
       const noSales = !(await this.prisma.user.count({ where: { staffRole: 'SALES', isActive: true } }));
       if (o.status !== 'SALES_APPROVED' && !(noSales && open.includes(o.status))) throw new BadRequestException('اول کارشناس فروش باید تأیید کند');
       await this.setStatus(byUserId, orderId, 'CONFIRMED', note);
+      await this.notifyWarehouse(orderId, by);
       return { status: 'CONFIRMED' as OrderStatus };
+    }
+    if (action === 'prep' || action === 'ship' || action === 'delivered') {
+      if (!isAdmin && u.staffRole !== 'WAREHOUSE') throw new ForbiddenException('این کار با انبار یا مدیر است');
+      const from: Record<string, OrderStatus[]> = { prep: ['CONFIRMED'], ship: ['CONFIRMED', 'PREPARING'], delivered: ['SHIPPED'] };
+      const to: Record<string, OrderStatus> = { prep: 'PREPARING', ship: 'SHIPPED', delivered: 'DELIVERED' };
+      if (!from[action].includes(o.status)) throw new BadRequestException(`این سفارش الان «${STATUS_FA[o.status]}» است`);
+      await this.setStatus(byUserId, orderId, to[action], note);
+      if (action === 'ship' && o.customer.supportId) {
+        const sup = await this.prisma.user.findUnique({ where: { id: o.customer.supportId } });
+        if (sup?.isActive) await this.tg.send(sup.telegramId, `🚚 سفارش #${o.number} (${o.customer.name}) ارسال شد.${note ? `\n${note}` : ''}`);
+      }
+      return { status: to[action] };
     }
     if (action === 'fix' || action === 'reject') {
       if (![...open, 'SALES_APPROVED'].includes(o.status)) throw new BadRequestException('این سفارش دیگر قابل تغییر نیست');

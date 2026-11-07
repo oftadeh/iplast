@@ -202,6 +202,7 @@ model CustomerPrice {
 enum StaffRole {
   ADMIN
   SALES // پشتیبان / کارشناس فروش
+  WAREHOUSE // انبار: آماده‌سازی و ارسال سفارش‌های تأییدشده
 }
 
 model User {
@@ -524,4 +525,22 @@ enum PaymentStatus {
   CLEARED
   BOUNCED // برگشتی
   CANCELLED
+}
+
+// ───────────── Announcements ─────────────
+
+/// A message the manager sends through the bot to sales staff, customers, or one customer.
+model Broadcast {
+  id          String   @id @default(cuid())
+  audience    String // sales | customers | all | customer
+  customerId  String?
+  text        String
+  withButton  Boolean  @default(false) // adds an «open the shop» button for customers
+  recipients  Int      @default(0)
+  sent        Int      @default(0)
+  failed      Int      @default(0)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }

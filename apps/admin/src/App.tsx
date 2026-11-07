@@ -5,6 +5,8 @@ import { ProductsPage } from './pages/Products';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
 import { AccountsPage } from './pages/Accounts';
+import { WarehousePage } from './pages/Warehouse';
+import { MessagesPage } from './pages/Messages';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -12,13 +14,16 @@ export const useAdmin = () => useContext(AdminCtx);
 
 // Focused on decisions and the catalog: approve orders and customers, define products, keep prices current.
 // Conversations stay in the bot chat itself (staff reply there).
-const SECTIONS = [
-  { id: 'approvals', title: 'تأییدها' },
-  { id: 'products', title: 'کالاها' },
-  { id: 'prices', title: 'به‌روزرسانی قیمت' },
-  { id: 'accounts', title: 'حساب مشتریان' },
-  { id: 'staff', title: 'کارشناسان', admin: true },
-] as const;
+type Role = NonNullable<Me['staffRole']>;
+const SECTIONS: { id: string; title: string; roles: Role[] }[] = [
+  { id: 'approvals', title: 'تأییدها', roles: ['ADMIN', 'SALES'] },
+  { id: 'warehouse', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'] },
+  { id: 'messages', title: 'پیام و اعلان', roles: ['ADMIN'] },
+  { id: 'products', title: 'کالاها', roles: ['ADMIN', 'SALES'] },
+  { id: 'prices', title: 'به‌روزرسانی قیمت', roles: ['ADMIN', 'SALES'] },
+  { id: 'accounts', title: 'حساب مشتریان', roles: ['ADMIN', 'SALES'] },
+  { id: 'staff', title: 'کارکنان', roles: ['ADMIN'] },
+];
 
 interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
 /** Opened inside Telegram (from the mini app or the bot's /admin): signs in with the user's own Telegram account. */
@@ -28,7 +33,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(!!getToken() || !!tgApp());
   const [denied, setDenied] = useState(false);
-  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return ['approvals', 'products', 'prices', 'accounts', 'staff'].includes(h) ? h : 'approvals'; });
+  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return SECTIONS.some(s => s.id === h) ? h : 'approvals'; });
   const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
   const [toastText, setToastText] = useState('');
   const t = useRef<number>();
@@ -56,28 +61,31 @@ export function App() {
   if (!me && tgApp()) return (
     <div className="login"><div className="card">
       <h1>{denied ? 'دسترسی ندارید' : 'ورود ناموفق بود'}</h1>
-      <p className="muted small" style={{ margin: 0 }}>{denied ? 'این بخش فقط برای مدیران و کارشناسان فروش است. اگر باید دسترسی داشته باشید، از مدیر بخواهید آیدی تلگرام شما را در بخش «پشتیبان‌ها و مدیران» اضافه کند.' : 'دوباره از داخل ربات باز کنید.'}</p>
+      <p className="muted small" style={{ margin: 0 }}>{denied ? 'این بخش فقط برای کارکنان اصفهان پلاست است. اگر باید دسترسی داشته باشید، از مدیر بخواهید آیدی تلگرام شما را در بخش «کارکنان» اضافه کند.' : 'دوباره از داخل ربات باز کنید.'}</p>
       <a className="btn" href="/">بازگشت به فروشگاه</a>
     </div></div>
   );
   if (!me) return <Login onDone={loadMe} />;
 
   const open = (s: string, id?: string) => { setSection(s); setFocus(id); };
-  const visible = SECTIONS.filter(s => !('admin' in s) || me.staffRole === 'ADMIN');
+  const visible = SECTIONS.filter(s => s.roles.includes(me.staffRole!));
+  const current = visible.some(s => s.id === section) ? section : visible[0].id;
   return (
     <AdminCtx.Provider value={{ me, toast, open }}>
       <div className="shell">
         <aside className="side">
           <div className="logo">اصفهان پلاست <small>پنل مدیریت iPlast</small></div>
-          <nav>{visible.map(s => <button key={s.id} type="button" aria-current={s.id === section ? 'page' : undefined} onClick={() => open(s.id)}>{s.title}</button>)}</nav>
+          <nav>{visible.map(s => <button key={s.id} type="button" aria-current={s.id === current ? 'page' : undefined} onClick={() => open(s.id)}>{s.title}</button>)}</nav>
           <div className="who"><span>{personName(me)} · {ROLE_FA[me.staffRole!]}</span>{tgApp() ? <a href="/" style={{ color: 'inherit' }}>بازگشت به فروشگاه</a> : <button type="button" onClick={() => { setToken(null); setMe(null); }}>خروج</button>}</div>
         </aside>
         <main>
-          {section === 'approvals' && <ApprovalsPage />}
-          {section === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}
-          {section === 'prices' && <PricesPage />}
-          {section === 'accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
-          {section === 'staff' && me.staffRole === 'ADMIN' && <StaffPage />}
+          {current === 'approvals' && <ApprovalsPage />}
+          {current === 'warehouse' && <WarehousePage />}
+          {current === 'messages' && <MessagesPage />}
+          {current === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}
+          {current === 'prices' && <PricesPage />}
+          {current === 'accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
+          {current === 'staff' && <StaffPage />}
         </main>
       </div>
       {toastText && <div className="toast" role="status">{toastText}</div>}

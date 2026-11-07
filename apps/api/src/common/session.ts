@@ -4,8 +4,8 @@ import type { Request } from 'express';
 import { AuthService, SessionClaims } from '../auth/auth.service';
 
 export const STAFF_KEY = 'staffRoles';
-/** Restricts a route to staff. With no roles given, any staff role (ADMIN or SALES) is allowed. */
-export const Staff = (...roles: ('ADMIN' | 'SALES')[]) => SetMetadata(STAFF_KEY, roles.length ? roles : ['ADMIN', 'SALES']);
+/** Restricts a route to staff. With no roles given, ADMIN and SALES are allowed (not WAREHOUSE). */
+export const Staff = (...roles: ('ADMIN' | 'SALES' | 'WAREHOUSE')[]) => SetMetadata(STAFF_KEY, roles.length ? roles : ['ADMIN', 'SALES']);
 
 export const Session = createParamDecorator((_: unknown, ctx: ExecutionContext): SessionClaims => ctx.switchToHttp().getRequest().session);
 

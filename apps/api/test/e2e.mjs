@@ -92,6 +92,32 @@ await call('PATCH', `/api/admin/orders/${o1.id}/status`, { status: 'PREPARING' }
 await call('PATCH', `/api/admin/orders/${o1.id}/status`, { status: 'CONFIRMED' }, admin, 400);
 const prep = await call('PATCH', `/api/admin/orders/${o1.id}/status`, { status: 'PREPARING' }, admin);
 assert.equal(prep.status, 'PREPARING'); step('only the manager moves it on (preparing); approvals cannot be skipped by status');
+// warehouse: prepares and ships what the manager approved
+await call('POST', '/api/admin/staff', { telegramId: '7200', firstName: 'انبار', role: 'WAREHOUSE' }, admin);
+const wh = await login(7200, 'Warehouse');
+await call('GET', '/api/admin/customers', null, wh, 403);
+await call('GET', '/api/admin/accounts', null, wh, 403); step('warehouse cannot open customers or accounts');
+const whq = await call('GET', '/api/admin/orders?status=CONFIRMED,PREPARING', null, wh);
+assert.ok(whq.rows.some(r => r.id === o1.id)); step('warehouse sees approved orders');
+await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'ship' }, sales, 403); step('sales agent cannot mark shipping');
+await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'delivered' }, wh, 400);
+const sh = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'ship', comment: 'باربری ایران‌پیما، بارنامه ۱۲۳۴۵' }, wh);
+assert.equal(sh.status, 'SHIPPED'); assert.equal(sh.events.at(-1).comment, 'باربری ایران‌پیما، بارنامه ۱۲۳۴۵'); step('warehouse ships with the waybill note');
+const dl = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'delivered' }, wh);
+assert.equal(dl.status, 'DELIVERED'); step('warehouse marks delivery');
+
+// manager messages through the bot
+await call('POST', '/api/admin/broadcasts', { audience: 'sales', text: 'جلسه‌ی فروش شنبه' }, sales, 403); step('only the manager sends announcements');
+await call('POST', '/api/admin/broadcasts', { audience: 'sales', text: ' ' }, admin, 400);
+await call('POST', '/api/admin/broadcasts', { audience: 'customer', text: 'سلام' }, admin, 400); step('empty text or missing customer refused');
+assert.equal((await call('GET', '/api/admin/broadcasts/count?audience=sales', null, admin)).count, 2);
+assert.equal((await call('GET', `/api/admin/broadcasts/count?audience=customer&customerId=${cust.customerId}`, null, admin)).count, 2);
+assert.equal((await call('GET', '/api/admin/broadcasts/count?audience=staff', null, admin)).count, 4); step('recipient counts: 2 agents, 2 users of the company, 4 staff');
+const bc = await call('POST', '/api/admin/broadcasts', { audience: 'customers', text: 'لیست قیمت جدید منتشر شد', withButton: true }, admin);
+assert.ok(bc.recipients >= 3);
+const hist = await call('GET', '/api/admin/broadcasts', null, admin);
+assert.equal(hist[0].id, bc.id); assert.equal(hist[0].audienceFa, 'همه‌ی مشتریان'); step('announcement to all customers recorded');
+
 const meO = await call('GET', '/api/me', null, owner);
 assert.equal(meO.accounts[0].support.firstName, 'Sales'); step('customer sees their sales agent');
 

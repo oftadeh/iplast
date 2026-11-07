@@ -11,7 +11,7 @@ const STATUSES = Object.keys(STATUS_FA) as OrderStatus[];
 
 @Controller('admin/orders')
 @UseGuards(SessionGuard)
-@Staff()
+@Staff('ADMIN', 'SALES', 'WAREHOUSE')
 export class AdminOrdersController {
   constructor(private readonly prisma: PrismaService, private readonly orders: OrdersService, private readonly tg: TelegramService) {}
 

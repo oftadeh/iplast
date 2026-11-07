@@ -54,7 +54,8 @@ export function HomeScreen() {
     <>
       <section className="hero">
         <p className="hi">{me?.firstName ? `سلام ${me.firstName}، خوش آمدید` : 'سلام، خوش آمدید'}</p>
-        <h1>اصفهان پلاست، <em>هرآنچه</em> می‌خواهید</h1>
+        <h1>اصفهان پلاست</h1>
+        <p className="sub">لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری · فروش عمده</p>
         {hero && <img className="photo hero-photo" src={photoUrl(hero.media[0].key)!} alt="" />}
         <div className="row">
           <button type="button" className="pill white" onClick={() => go({ name: 'catalog' })}>مشاهده محصولات</button>
@@ -301,7 +302,7 @@ export function OrdersScreen() {
         <div className="empty">هنوز سفارشی ثبت نکرده‌اید.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div>
       ) : list.data.map(o => (
         <button key={o.id} type="button" className="oc" onClick={() => go({ name: 'order', id: o.id })}>
-          <div className="r"><b className="num">سفارش #{fa(o.number)}</b><span className={`st ${stClass(o.status)}`}>{o.statusFa}</span></div>
+          <div className="r"><b className="num">{['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'SALES_APPROVED'].includes(o.status) ? 'پیش‌فاکتور' : 'سفارش'} #{fa(o.number)}</b><span className={`st ${stClass(o.status)}`}>{o.statusFa}</span></div>
           <div className="r"><small className="num">{o.customer.name} · {fa(o.items.length)} قلم · {dateFa(o.createdAt)}</small><b className="num" style={{ fontSize: 13 }}>{BigInt(o.total) ? `${short(BigInt(o.total))} ریال` : 'استعلامی'}</b></div>
           {o.placedBy && <small>ثبت‌کننده: {personName(o.placedBy)}</small>}
         </button>
@@ -328,7 +329,7 @@ export function OrderScreen({ id }: { id: string }) {
           <div><p className="num">{at <= 2 && !stopped ? 'پیش‌فاکتور' : 'سفارش'} #{fa(d.number)} · {d.customer.name}</p><h2>{d.statusFa}</h2><p>{stopped ? (lastComment ?? '') : at < 6 ? STEPS[Math.min(at, 5)][1] : 'سفارش تحویل شد'}</p></div>
           <svg className="ring" viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="34" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="8" />
             {!stopped && <circle cx="42" cy="42" r="34" fill="none" stroke="#fff" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${C * pct} ${C}`} transform="rotate(-90 42 42)" />}
-            <text x="42" y="48" textAnchor="middle" fill="#fff" fontSize="17" fontWeight="900">{stopped ? '—' : `${fa(Math.min(at + 1, 6))}/${fa(6)}`}</text></svg>
+            <text x="42" y="48" textAnchor="middle" fill="#fff" fontSize="17" fontWeight="800">{stopped ? '—' : `${fa(Math.min(at + 1, 6))}/${fa(6)}`}</text></svg>
         </div>
         {!stopped && <div className="bar">{STEPS.map((_, i) => <i key={i} className={i < at ? 'on' : i === at ? 'now' : ''} />)}</div>}
       </section>
@@ -376,7 +377,7 @@ function AgentCard({ customerId }: { customerId: string }) {
 
 const STATUS_LABEL: Record<string, string> = {
   SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', NEEDS_FIX: 'نیاز به اصلاح', SALES_APPROVED: 'تأیید کارشناس فروش', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
-  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی مدیر', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
+  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی؛ ارسال به انبار', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
 

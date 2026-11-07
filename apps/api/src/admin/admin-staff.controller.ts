@@ -23,7 +23,7 @@ export class AdminStaffController {
   @Post()
   async add(@Session() s: SessionClaims, @Body() b: { telegramId?: string; firstName?: string; role?: string }) {
     const tg = telegramId(b?.telegramId);
-    const role = b.role === 'ADMIN' ? 'ADMIN' : 'SALES';
+    const role = b.role === 'ADMIN' ? 'ADMIN' : b.role === 'WAREHOUSE' ? 'WAREHOUSE' : 'SALES';
     const u = await this.prisma.user.upsert({
       where: { telegramId: tg },
       create: { telegramId: tg, firstName: b.firstName?.slice(0, 60), staffRole: role },
@@ -41,7 +41,7 @@ export class AdminStaffController {
     const u = await this.prisma.user.update({
       where: { id },
       data: {
-        ...(b.role ? { staffRole: b.role === 'ADMIN' ? 'ADMIN' : 'SALES' } : {}),
+        ...(b.role ? { staffRole: b.role === 'ADMIN' ? 'ADMIN' : b.role === 'WAREHOUSE' ? 'WAREHOUSE' : 'SALES' } : {}),
         ...(b.isActive !== undefined ? { isActive: !!b.isActive } : {}),
         ...(b.firstName ? { firstName: b.firstName.slice(0, 60) } : {}),
       },

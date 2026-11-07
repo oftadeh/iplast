@@ -16,14 +16,14 @@ let rr = 0;
  * Sales-support agents: active staff defined in the admin panel (SALES, or ADMIN when there is no SALES agent),
  * plus any IDs in SUPPORT_TELEGRAM_IDS. Cached for a minute.
  */
-let staffCache = { at: 0, agents: [] as number[], all: new Set<number>() };
+let staffCache = { at: 0, agents: [] as number[], all: new Set<number>(), panel: new Set<number>() };
 async function staff() {
   if (Date.now() - staffCache.at < 60_000) return staffCache;
   const rows = await prisma.user.findMany({ where: { staffRole: { not: null }, isActive: true }, select: { telegramId: true, staffRole: true }, orderBy: { createdAt: 'asc' } });
   const sales = rows.filter(r => r.staffRole === 'SALES').map(r => Number(r.telegramId));
   const admins = rows.filter(r => r.staffRole === 'ADMIN').map(r => Number(r.telegramId));
   const agents = [...new Set([...(sales.length ? sales : admins), ...SUPPORT])];
-  staffCache = { at: Date.now(), agents, all: new Set([...sales, ...admins, ...SUPPORT]) };
+  staffCache = { at: Date.now(), agents, all: new Set([...sales, ...admins, ...SUPPORT]), panel: new Set(rows.map(r => Number(r.telegramId))) };
   return staffCache;
 }
 
@@ -92,7 +92,7 @@ bot.command('id', ctx => ctx.reply(`آیدی عددی شما: ${ctx.from?.id}`))
 
 // Staff: the admin panel opens inside Telegram, signed in with their own Telegram account
 bot.command('admin', async ctx => {
-  if (!ctx.from || !(await staff()).all.has(ctx.from.id)) return ctx.reply('این بخش فقط برای مدیران و کارشناسان فروش است.');
+  if (!ctx.from || !(await staff()).panel.has(ctx.from.id)) return ctx.reply('این بخش فقط برای کارکنان اصفهان پلاست است.');
   if (!MINIAPP_URL) return ctx.reply('پنل مدیریت هنوز روی سرور فعال نشده است.');
   await ctx.reply('پنل مدیریت اصفهان پلاست:', { reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', `${MINIAPP_URL.replace(/\/+$/, '')}/admin/`) });
 });
@@ -131,13 +131,15 @@ bot.callbackQuery(/^cd:([a-z0-9]{10,40})$/, async ctx => {
 });
 
 // Proforma buttons: «تأیید کارشناس» for the sales agent, «تأیید نهایی» for managers, «رد» for both
-bot.callbackQuery(/^os:([a-z0-9]{10,40}):(sales_ok|final_ok|reject)$/, async ctx => {
+bot.callbackQuery(/^os:([a-z0-9]{10,40}):(sales_ok|final_ok|reject|prep|ship|delivered)$/, async ctx => {
   try {
     const r = await internal<{ number: number; statusFa: string }>('/internal/orders/decide', { telegramId: String(ctx.from.id), orderId: ctx.match[1], action: ctx.match[2] });
     await ctx.answerCallbackQuery({ text: `سفارش #${r.number}: ${r.statusFa}` });
     const who = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ');
     const old = ctx.callbackQuery.message?.text ?? '';
-    await ctx.editMessageText(`${old}\n\n▫️ ${r.statusFa} (${who})`).catch(() => {});
+    const next = ctx.match[2] === 'prep' ? { reply_markup: new InlineKeyboard().text('🚚 ارسال شد', `os:${ctx.match[1]}:ship`) }
+      : ctx.match[2] === 'ship' ? { reply_markup: new InlineKeyboard().text('✅ تحویل مشتری شد', `os:${ctx.match[1]}:delivered`) } : {};
+    await ctx.editMessageText(`${old}\n\n▫️ ${r.statusFa} (${who})`, next).catch(() => {});
   } catch (e) {
     const m = (e as Error).message;
     await ctx.answerCallbackQuery({ text: m === 'Unauthorized' ? 'فقط کارکنان فروش' : m, show_alert: true });

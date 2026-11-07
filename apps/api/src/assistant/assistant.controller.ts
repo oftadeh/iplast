@@ -111,7 +111,7 @@ export class InternalOrdersController {
     checkKey(key);
     const staff = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
     if (!staff?.isActive || !staff.staffRole) throw new UnauthorizedException();
-    if (!['sales_ok', 'final_ok', 'reject'].includes(String(b.action))) throw new BadRequestException('کار نامعتبر است');
+    if (!['sales_ok', 'final_ok', 'reject', 'prep', 'ship', 'delivered'].includes(String(b.action))) throw new BadRequestException('کار نامعتبر است');
     const before = await this.prisma.order.findUnique({ where: { id: String(b.orderId) }, select: { status: true, number: true } });
     const r = await this.orders.decide(staff.id, String(b.orderId), String(b.action));
     await audit(this.prisma, staff.id, 'order.decide', 'Order', String(b.orderId), before, { action: b.action, status: r.status, via: 'bot' });

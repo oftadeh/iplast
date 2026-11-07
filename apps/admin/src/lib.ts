@@ -10,7 +10,7 @@ export const personName = (p?: { firstName?: string | null; lastName?: string | 
 
 export const STATUS_CLASS = (s: string) =>
   s === 'SUBMITTED' ? 'new' : s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' ? 'ask' : s === 'DELIVERED' || s === 'SALES_APPROVED' ? 'ok' : '';
-export const ROLE_FA: Record<string, string> = { OWNER: 'مدیر حساب', BUYER: 'کارشناس خرید', VIEWER: 'فقط مشاهده', ADMIN: 'مدیر', SALES: 'کارشناس فروش' };
+export const ROLE_FA: Record<string, string> = { OWNER: 'مدیر حساب', BUYER: 'کارشناس خرید', VIEWER: 'فقط مشاهده', ADMIN: 'مدیر ارشد', SALES: 'کارشناس فروش', WAREHOUSE: 'انبار' };
 export const TYPE_FA: Record<string, string> = { RETAIL: 'خرده‌فروش', DEALER: 'نماینده', CONTRACTOR: 'پیمانکار' };
 
 const KEY = 'iplast.admin.token';
@@ -52,8 +52,8 @@ export function useApi<T>(path: string | null) {
   return { ...s, reload: () => setN(x => x + 1), setData: (d: T) => set({ data: d, error: null }) };
 }
 
-export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole: 'ADMIN' | 'SALES' | null }
-export interface Staff { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; staffRole: 'ADMIN' | 'SALES'; isActive: boolean; _count: { supportOf: number } }
+export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole: 'ADMIN' | 'SALES' | 'WAREHOUSE' | null }
+export interface Staff { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; staffRole: 'ADMIN' | 'SALES' | 'WAREHOUSE'; isActive: boolean; _count: { supportOf: number } }
 
 /** Jalali (شمسی) date → ISO date string (YYYY-MM-DD), for cheque due dates. */
 export function jalaliToIso(jy: number, jm: number, jd: number) {

@@ -21,6 +21,7 @@ interface Reported {
 }
 
 const AGENT = 'SUBMITTED,SALES_REVIEW,NEEDS_FIX';
+const SHORT: Record<string, string> = { SUBMITTED: 'منتظر کارشناس', SALES_REVIEW: 'در بررسی کارشناس', SALES_APPROVED: 'منتظر تأیید نهایی', CONFIRMED: 'تأیید نهایی شد' };
 const FINAL = 'SALES_APPROVED';
 
 /**
@@ -137,7 +138,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
     <article className="card ocard">
       <button type="button" className="ohead" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className="num"><b>#{fa(r.number)}</b> · {r.customer.name}</span>
-        <span className={`st ${STATUS_CLASS(r.status)}`}>{r.statusFa}</span>
+        <span className={`st ${STATUS_CLASS(r.status)}`}>{SHORT[r.status] ?? r.statusFa}</span>
         <span className="muted small num">{personName(r.placedBy)} · {r.channel === 'bot' ? 'ربات' : 'مینی‌اپ'} · {dateFa(r.createdAt)} · کارشناس: {agentName ?? 'تعیین نشده'}</span>
         <span className="small num"><b>{fa(r.itemCount)} قلم</b>{r.inquiryCount ? <span className="st ask" style={{ marginInlineStart: 6 }}>{fa(r.inquiryCount)} استعلامی</span> : null} · {BigInt(r.total) ? rial(r.total) : '—'}</span>
       </button>
