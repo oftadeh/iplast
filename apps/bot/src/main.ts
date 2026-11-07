@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, Context } from 'grammy';
 import { PrismaClient, MessageKind } from '@iplast/db';
+import { Agent } from 'node:https';
 
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error('BOT_TOKEN is not set');
@@ -8,7 +9,12 @@ const ids = (v?: string) => (v ?? '').split(',').map(s => s.trim()).filter(Boole
 const SUPPORT = ids(process.env.SUPPORT_TELEGRAM_IDS);
 
 const prisma = new PrismaClient();
-const bot = new Bot(token);
+// On a server that reaches Telegram only through a proxy, HTTPS_PROXY is set in .env.
+// grammY uses its own HTTP client, so the proxy is passed as an agent (Node 22.21+ reads proxyEnv).
+const proxied = !!(process.env.HTTPS_PROXY || process.env.https_proxy);
+const bot = new Bot(token, proxied
+  ? { client: { baseFetchConfig: { agent: new Agent({ keepAlive: true, proxyEnv: process.env } as never), compress: true } } }
+  : undefined);
 
 let rr = 0;
 

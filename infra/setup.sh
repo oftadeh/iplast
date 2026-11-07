@@ -18,10 +18,17 @@ if ! command -v docker >/dev/null; then
   echo "Installing Docker..."
   curl -fsSL https://get.docker.com | sh
 fi
-apt-get update -qq && apt-get install -y -qq git curl openssl >/dev/null
+command -v git >/dev/null && command -v openssl >/dev/null || { apt-get update -qq && apt-get install -y -qq git curl openssl >/dev/null; }
 
-if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone "$REPO" "$DIR"; fi
+# Servers that reach GitHub, npm and Telegram only through a proxy (e.g. inside Iran):
+#   OUTBOUND_PROXY=http://172.17.0.1:10809   (must be reachable from Docker containers too)
+# Servers where another web server already owns ports 80/443 and forwards this site to us:
+#   SHARED_WEB=172.17.0.1:8088               (where our web container listens, plain HTTP)
+OUTBOUND_PROXY="${OUTBOUND_PROXY:-}"
+GITPX=(); [ -n "$OUTBOUND_PROXY" ] && GITPX=(-c "http.proxy=$OUTBOUND_PROXY")
+if [ -d "$DIR/.git" ]; then git -C "$DIR" "${GITPX[@]}" pull --ff-only; else git "${GITPX[@]}" clone "$REPO" "$DIR"; fi
 cd "$DIR"
+if [ -n "$OUTBOUND_PROXY" ]; then git config http.proxy "$OUTBOUND_PROXY"; fi
 
 if [ ! -f .env ]; then
   BOT_TOKEN="${BOT_TOKEN:-$(ask 'Telegram bot token: ')}"
@@ -32,7 +39,7 @@ if [ ! -f .env ]; then
   # Move to a real domain later with: sudo bash /opt/iplast/infra/enable-web.sh isfahanplast.co
   DOMAIN="${DOMAIN-$(ask "Domain (e.g. $DOMAIN_DEFAULT), Enter = none for now: ")}"
   if [ -n "$DOMAIN" ]; then SITE="app.$DOMAIN"; else
-    IP="$(curl -4fsS https://api.ipify.org)"; SITE="$(echo "$IP" | tr . -).sslip.io"; fi
+    IP="${PUBLIC_IP:-$(curl -4fsS --noproxy '*' https://api.ipify.org)}"; SITE="$(echo "$IP" | tr . -).sslip.io"; fi
   PGPASS="$(openssl rand -hex 24)"
   cat > .env <<ENV
 NODE_ENV=production
@@ -62,6 +69,21 @@ KAVENEGAR_API_KEY=
 KAVENEGAR_SENDER=
 ADMIN_SMS_NUMBERS=
 ENV
+  if [ -n "$OUTBOUND_PROXY" ]; then cat >> .env <<ENV
+# outbound proxy (Telegram, OpenAI, npm, GitHub)
+HTTPS_PROXY=$OUTBOUND_PROXY
+HTTP_PROXY=$OUTBOUND_PROXY
+NO_PROXY=localhost,127.0.0.1,api,postgres,redis,web,migrate,bot
+NODE_USE_ENV_PROXY=1
+ENV
+  fi
+  if [ -n "${SHARED_WEB:-}" ]; then cat >> .env <<ENV
+# another web server owns 80/443 and forwards https://$SITE to $SHARED_WEB
+SITE_ADDR=:80
+HTTP_BIND=$SHARED_WEB
+HTTPS_BIND=127.0.0.1:18443
+ENV
+  fi
   chmod 600 .env
   echo ".env created."
 fi
@@ -96,7 +118,7 @@ if [ ! -f .seeded ]; then
   echo "Loading the Aban 1405 catalog..."
   docker compose run --rm api node node_modules/@iplast/db/dist/seed.js && touch .seeded
 fi
-echo "Done. Public IP: $(curl -fsS https://api.ipify.org || echo unknown)"
+echo "Done. Public IP: ${PUBLIC_IP:-$(curl -fsS --noproxy '*' https://api.ipify.org || echo unknown)}"
 SITE_HOST=$(grep '^SITE_HOST=' .env | cut -d= -f2)
 echo "Mini app: https://$SITE_HOST   Admin panel: https://$SITE_HOST/admin/ (or /admin in the bot)"
 case "$SITE_HOST" in *.sslip.io) ;; *) echo "Point the DNS A record of $SITE_HOST to this IP.";; esac

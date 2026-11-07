@@ -4,7 +4,8 @@
 #   /api/*    → API
 # SITE_HOST is app.<domain> when there is a domain, otherwise <server-ip>.sslip.io
 # (a free name that points to the server's IP, so HTTPS works without buying or setting up a domain).
-{$SITE_HOST} {
+# SITE_ADDR is SITE_HOST, or ":80" when another web server on the machine terminates HTTPS and forwards here.
+{$SITE_ADDR} {
 	# bot-to-API calls stay inside the Docker network
 	handle /api/internal/* {
 		respond 404

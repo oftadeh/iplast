@@ -18,13 +18,13 @@ services:
     volumes: [redisdata:/data]
 
   migrate:
-    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api } }
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api, HTTPS_PROXY: "${HTTPS_PROXY:-}", HTTP_PROXY: "${HTTP_PROXY:-}", NO_PROXY: "${NO_PROXY:-}", https_proxy: "${HTTPS_PROXY:-}", http_proxy: "${HTTP_PROXY:-}", no_proxy: "${NO_PROXY:-}" } }
     env_file: .env
     command: ["./node_modules/.bin/prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
     depends_on: { postgres: { condition: service_healthy } }
 
   api:
-    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api } }
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api, HTTPS_PROXY: "${HTTPS_PROXY:-}", HTTP_PROXY: "${HTTP_PROXY:-}", NO_PROXY: "${NO_PROXY:-}", https_proxy: "${HTTPS_PROXY:-}", http_proxy: "${HTTP_PROXY:-}", no_proxy: "${NO_PROXY:-}" } }
     restart: unless-stopped
     env_file: .env
     volumes: [uploads:/data/uploads]   # product photos added in the admin panel
@@ -33,18 +33,20 @@ services:
       redis: { condition: service_started }
 
   bot:
-    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: bot } }
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: bot, HTTPS_PROXY: "${HTTPS_PROXY:-}", HTTP_PROXY: "${HTTP_PROXY:-}", NO_PROXY: "${NO_PROXY:-}", https_proxy: "${HTTPS_PROXY:-}", http_proxy: "${HTTP_PROXY:-}", no_proxy: "${NO_PROXY:-}" } }
     restart: unless-stopped
     env_file: .env
     depends_on:
       migrate: { condition: service_completed_successfully }
 
   # mini app (/) + admin panel (/admin/) + API behind HTTPS on SITE_HOST
+  # (build args: an optional outbound proxy for servers that cannot reach npm/Telegram directly)
   web:
-    build: { context: ., dockerfile: infra/Dockerfile.web }
+    build: { context: ., dockerfile: infra/Dockerfile.web, args: { HTTPS_PROXY: "${HTTPS_PROXY:-}", HTTP_PROXY: "${HTTP_PROXY:-}", NO_PROXY: "${NO_PROXY:-}", https_proxy: "${HTTPS_PROXY:-}", http_proxy: "${HTTP_PROXY:-}", no_proxy: "${NO_PROXY:-}" } }
     restart: unless-stopped
-    environment: { SITE_HOST: "${SITE_HOST}" }
-    ports: ["80:80", "443:443"]
+    # SITE_ADDR=":80" when another web server on this machine already owns ports 80/443 and forwards here
+    environment: { SITE_HOST: "${SITE_HOST}", SITE_ADDR: "${SITE_ADDR:-${SITE_HOST}}" }
+    ports: ["${HTTP_BIND:-80}:80", "${HTTPS_BIND:-443}:443"]
     volumes: [caddydata:/data]
     depends_on: [api]
 
