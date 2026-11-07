@@ -1,6 +1,9 @@
 import { Bot, InlineKeyboard, Context } from 'grammy';
 import { PrismaClient, MessageKind } from '@iplast/db';
 import { Agent } from 'node:https';
+import { request } from 'node:http';
+import { connect } from 'node:tls';
+import type { Socket } from 'node:net';
 
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error('BOT_TOKEN is not set');
@@ -10,10 +13,33 @@ const SUPPORT = ids(process.env.SUPPORT_TELEGRAM_IDS);
 
 const prisma = new PrismaClient();
 // On a server that reaches Telegram only through a proxy, HTTPS_PROXY is set in .env.
-// grammY uses its own HTTP client, so the proxy is passed as an agent (Node 22.21+ reads proxyEnv).
-const proxied = !!(process.env.HTTPS_PROXY || process.env.https_proxy);
+// grammY uses its own HTTP client (node-fetch), which ignores HTTPS_PROXY, so requests go through an agent
+// that opens an HTTP CONNECT tunnel to the proxy and runs TLS to Telegram inside it.
+class TunnelAgent extends Agent {
+  private proxy: URL;
+  constructor(proxy: string) {
+    super({ keepAlive: true });
+    this.proxy = new URL(proxy);
+  }
+  createConnection(o: { host?: string; port?: number; servername?: string }, cb: (err: Error | null, s?: Socket) => void) {
+    const target = `${o.host}:${o.port || 443}`;
+    const req = request({ host: this.proxy.hostname, port: Number(this.proxy.port) || 80, method: 'CONNECT', path: target, headers: { host: target } });
+    req.once('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        return cb(new Error(`proxy CONNECT ${target} → ${res.statusCode}`));
+      }
+      cb(null, connect({ ...(o as object), socket, servername: o.servername || o.host }));
+    });
+    req.once('error', e => cb(e));
+    req.end();
+    return undefined;
+  }
+}
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+const proxied = !!proxyUrl;
 const bot = new Bot(token, proxied
-  ? { client: { baseFetchConfig: { agent: new Agent({ keepAlive: true, proxyEnv: process.env } as never), compress: true } } }
+  ? { client: { baseFetchConfig: { agent: new TunnelAgent(proxyUrl!), compress: true } } }
   : undefined);
 
 let rr = 0;
