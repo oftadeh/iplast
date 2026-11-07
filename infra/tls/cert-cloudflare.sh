@@ -31,8 +31,8 @@ if [ ! -x "$DIR/lego" ]; then
 fi
 
 export CF_DNS_API_TOKEN_FILE="$DIR/cf-token" HTTPS_PROXY="$PROXY" HTTP_PROXY="$PROXY"
-ARGS=(--accept-tos --email "admin@${HOST#*.}" --path "$DIR/lego" --dns cloudflare --dns.propagation-wait 90s -d "$HOST")
-CRT="$DIR/lego/certificates/$HOST.crt"
+ARGS=(--accept-tos --email "admin@${HOST#*.}" --path "$DIR/data" --dns cloudflare --dns.propagation-wait 90s -d "$HOST")
+CRT="$DIR/data/certificates/$HOST.crt"
 BEFORE=$(stat -c %Y "$CRT" 2>/dev/null || echo 0)
 if [ -s "$CRT" ]; then "$DIR/lego" "${ARGS[@]}" renew --days 30; else "$DIR/lego" "${ARGS[@]}" run; fi
 AFTER=$(stat -c %Y "$CRT")
@@ -41,7 +41,7 @@ AFTER=$(stat -c %Y "$CRT")
 DATA=$(docker volume inspect -f '{{.Mountpoint}}' "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$CADDY_CONTAINER")")
 mkdir -p "$DATA/iplast"
 install -m 644 "$CRT" "$DATA/iplast/cert.crt"
-install -m 600 "$DIR/lego/certificates/$HOST.key" "$DATA/iplast/cert.key"
+install -m 600 "$DIR/data/certificates/$HOST.key" "$DATA/iplast/cert.key"
 
 python3 - "$CADDYFILE" "$HOST" "$UPSTREAM" <<'PY'
 import sys
