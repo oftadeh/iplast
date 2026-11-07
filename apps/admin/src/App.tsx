@@ -4,6 +4,7 @@ import { OrdersPage } from './pages/Orders';
 import { CustomersPage } from './pages/Customers';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
+import { ConversationsPage } from './pages/Conversations';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -11,6 +12,7 @@ export const useAdmin = () => useContext(AdminCtx);
 
 const SECTIONS = [
   { id: 'orders', title: 'سفارش‌ها' },
+  { id: 'conversations', title: 'گفتگوهای ربات' },
   { id: 'customers', title: 'مشتریان' },
   { id: 'prices', title: 'لیست قیمت' },
   { id: 'staff', title: 'پشتیبان‌ها و مدیران', admin: true },
@@ -47,6 +49,7 @@ export function App() {
         <main>
           {section === 'orders' && <OrdersPage focus={focus} onFocus={setFocus} />}
           {section === 'customers' && <CustomersPage focus={focus} onFocus={setFocus} />}
+          {section === 'conversations' && <ConversationsPage focus={focus} onFocus={setFocus} />}
           {section === 'prices' && <PricesPage />}
           {section === 'staff' && me.staffRole === 'ADMIN' && <StaffPage />}
         </main>

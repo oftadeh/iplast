@@ -395,7 +395,12 @@ model Message {
   telegramFileId String?
   fileKey        String? // copy in object storage
   byUserId       String?
+  // where the bot copied this message in a support agent's chat, so a Reply there finds the customer
+  relayChatId    BigInt?
+  relayMessageId Int?
   createdAt      DateTime         @default(now())
+
+  @@index([relayChatId, relayMessageId])
 }
 
 // ───────────── Misc ─────────────
