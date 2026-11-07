@@ -18,9 +18,14 @@ const SECTIONS = [
   { id: 'staff', title: 'پشتیبان‌ها و مدیران', admin: true },
 ] as const;
 
+interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
+/** Opened inside Telegram (from the mini app or the bot's /admin): signs in with the user's own Telegram account. */
+const tgApp = (): TgApp | undefined => { const w = (window as unknown as { Telegram?: { WebApp?: TgApp } }).Telegram?.WebApp; return w?.initData ? w : undefined; };
+
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
-  const [checking, setChecking] = useState(!!getToken());
+  const [checking, setChecking] = useState(!!getToken() || !!tgApp());
+  const [denied, setDenied] = useState(false);
   const [section, setSection] = useState<string>(() => location.hash.slice(1).split('/')[0] || 'orders');
   const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
   const [toastText, setToastText] = useState('');
@@ -28,12 +33,31 @@ export function App() {
   const toast = useCallback((s: string) => { setToastText(s); clearTimeout(t.current); t.current = window.setTimeout(() => setToastText(''), 2500); }, []);
 
   const loadMe = useCallback(() => {
-    api<Me>('/me').then(m => { if (!m.staffRole) { setToken(null); setMe(null); } else setMe(m); }, () => setMe(null)).finally(() => setChecking(false));
+    api<Me>('/me').then(m => { if (!m.staffRole) { setToken(null); setMe(null); setDenied(true); } else setMe(m); }, () => setMe(null)).finally(() => setChecking(false));
   }, []);
-  useEffect(() => { setUnauthorizedHandler(() => setMe(null)); if (getToken()) loadMe(); }, [loadMe]);
+  useEffect(() => {
+    setUnauthorizedHandler(() => setMe(null));
+    const app = tgApp();
+    if (app) {
+      app.ready(); app.expand();
+      const theme = () => { if (app.colorScheme) document.documentElement.dataset.theme = app.colorScheme; };
+      theme(); app.onEvent?.('themeChanged', theme);
+      app.BackButton?.show(); app.BackButton?.onClick(() => { location.href = '/'; });
+      // roles always come fresh from the database, so sign in again on every open
+      api<{ token: string }>('/auth/telegram', { method: 'POST', body: { initData: app.initData } })
+        .then(r => { setToken(r.token); loadMe(); }, () => { setChecking(false); setDenied(true); });
+    } else if (getToken()) loadMe();
+  }, [loadMe]);
   useEffect(() => { history.replaceState(null, '', `#${section}${focus ? '/' + focus : ''}`); }, [section, focus]);
 
   if (checking) return <div className="login"><div className="card">در حال بررسی ورود…</div></div>;
+  if (!me && tgApp()) return (
+    <div className="login"><div className="card">
+      <h1>{denied ? 'دسترسی ندارید' : 'ورود ناموفق بود'}</h1>
+      <p className="muted small" style={{ margin: 0 }}>{denied ? 'این بخش فقط برای مدیران و کارشناسان فروش است. اگر باید دسترسی داشته باشید، از مدیر بخواهید آیدی تلگرام شما را در بخش «پشتیبان‌ها و مدیران» اضافه کند.' : 'دوباره از داخل ربات باز کنید.'}</p>
+      <a className="btn" href="/">بازگشت به فروشگاه</a>
+    </div></div>
+  );
   if (!me) return <Login onDone={loadMe} />;
 
   const open = (s: string, id?: string) => { setSection(s); setFocus(id); };
@@ -44,7 +68,7 @@ export function App() {
         <aside className="side">
           <div className="logo">اصفهان پلاست <small>پنل مدیریت iPlast</small></div>
           <nav>{visible.map(s => <button key={s.id} type="button" aria-current={s.id === section ? 'page' : undefined} onClick={() => open(s.id)}>{s.title}</button>)}</nav>
-          <div className="who"><span>{personName(me)} · {ROLE_FA[me.staffRole!]}</span><button type="button" onClick={() => { setToken(null); setMe(null); }}>خروج</button></div>
+          <div className="who"><span>{personName(me)} · {ROLE_FA[me.staffRole!]}</span>{tgApp() ? <a href="/" style={{ color: 'inherit' }}>بازگشت به فروشگاه</a> : <button type="button" onClick={() => { setToken(null); setMe(null); }}>خروج</button>}</div>
         </aside>
         <main>
           {section === 'orders' && <OrdersPage focus={focus} onFocus={setFocus} />}

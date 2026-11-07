@@ -1,7 +1,10 @@
-# app.<domain>   → mini app (customer panel)
-# admin.<domain> → admin panel
-# both proxy /api/* to the API container
-app.{$DOMAIN} {
+# One HTTPS host serves everything the bot opens:
+#   /         → mini app (customer panel)
+#   /admin/   → admin panel (opens inside Telegram for staff; roles come from the database)
+#   /api/*    → API
+# SITE_HOST is app.<domain> when there is a domain, otherwise <server-ip>.sslip.io
+# (a free name that points to the server's IP, so HTTPS works without buying or setting up a domain).
+{$SITE_HOST} {
 	# bot-to-API calls stay inside the Docker network
 	handle /api/internal/* {
 		respond 404
@@ -9,27 +12,14 @@ app.{$DOMAIN} {
 	handle /api/* {
 		reverse_proxy api:3000
 	}
-	handle {
-		root * /srv/miniapp
+	redir /admin /admin/
+	handle_path /admin/* {
+		root * /srv/admin
 		try_files {path} /index.html
 		file_server
 	}
-}
-
-admin.{$DOMAIN} {
-	# bot-to-API calls stay inside the Docker network
-	handle /api/internal/* {
-		respond 404
-	}
-	handle /api/* {
-		reverse_proxy api:3000
-	}
-	handle /products/* {
-		root * /srv/miniapp
-		file_server
-	}
 	handle {
-		root * /srv/admin
+		root * /srv/miniapp
 		try_files {path} /index.html
 		file_server
 	}

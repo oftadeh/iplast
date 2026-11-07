@@ -90,6 +90,13 @@ bot.command('start', async ctx => {
 
 bot.command('id', ctx => ctx.reply(`آیدی عددی شما: ${ctx.from?.id}`));
 
+// Staff: the admin panel opens inside Telegram, signed in with their own Telegram account
+bot.command('admin', async ctx => {
+  if (!ctx.from || !(await staff()).all.has(ctx.from.id)) return ctx.reply('این بخش فقط برای مدیران و کارشناسان فروش است.');
+  if (!MINIAPP_URL) return ctx.reply('پنل مدیریت هنوز روی سرور فعال نشده است.');
+  await ctx.reply('پنل مدیریت اصفهان پلاست:', { reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', `${MINIAPP_URL.replace(/\/+$/, '')}/admin/`) });
+});
+
 function kindOf(ctx: Context): MessageKind | null {
   const m = ctx.message;
   if (!m) return null;

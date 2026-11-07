@@ -38,12 +38,11 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
 
-  # mini app + admin panel behind HTTPS; runs only when a domain is set (COMPOSE_PROFILES=web in .env)
+  # mini app (/) + admin panel (/admin/) + API behind HTTPS on SITE_HOST
   web:
-    profiles: [web]
     build: { context: ., dockerfile: infra/Dockerfile.web }
     restart: unless-stopped
-    environment: { DOMAIN: "${DOMAIN}" }
+    environment: { SITE_HOST: "${SITE_HOST}" }
     ports: ["80:80", "443:443"]
     volumes: [caddydata:/data]
     depends_on: [api]

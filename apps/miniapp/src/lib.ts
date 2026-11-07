@@ -30,7 +30,7 @@ export interface Account {
   support: { firstName: string | null; lastName: string | null; username: string | null } | null;
   members: { id: string; firstName: string | null; lastName: string | null; username: string | null; role: string }[];
 }
-export interface Me { id: string; firstName: string | null; lastName: string | null; accounts: Account[] }
+export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
 export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
 export interface Order {
   id: string; number: number; status: string; statusFa: string; createdAt: string; note: string | null; total: string;
