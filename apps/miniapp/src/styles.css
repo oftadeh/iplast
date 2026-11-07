@@ -1,0 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap');
+:root { --brand: #6A1734; --brand-2: #9B2450; --drop: #3E9BE0; --bg: #F6F2F4; --fg: #1E0A12; --surface: #fff; --muted: #7A6670; }
+:root[data-theme="dark"] { --bg: #120A0E; --fg: #F6EEF1; --surface: #1E1318; --muted: #A9939D; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Vazirmatn, sans-serif; background: var(--bg); color: var(--fg); }
+.app { padding: 16px; }
+h1 { font-weight: 900; }
+.muted { color: var(--muted); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card { background: var(--surface); border-radius: 20px; padding: 14px; display: grid; gap: 4px; }
+.card small { color: var(--muted); }

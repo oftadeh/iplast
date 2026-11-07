@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes: [redisdata:/data]
+
+  migrate:
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api } }
+    env_file: .env
+    command: ["npx", "prisma@5.22.0", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  api:
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: api } }
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+
+  bot:
+    build: { context: ., dockerfile: infra/Dockerfile.node, args: { APP: bot } }
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build: { context: ., dockerfile: infra/Dockerfile.web }
+    restart: unless-stopped
+    environment: { DOMAIN: "${DOMAIN}" }
+    ports: ["80:80", "443:443"]
+    volumes: [caddydata:/data]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:

@@ -1,0 +1,417 @@
+// iPlast data model. Prices are stored in Rial as BigInt.
+// A missing price is NULL with status INQUIRY, never zero.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────── Catalog ─────────────
+
+model Category {
+  id        String          @id @default(cuid())
+  slug      String          @unique
+  name      String
+  sortOrder Int             @default(0)
+  parentId  String?
+  parent    Category?       @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[]      @relation("CategoryTree")
+  families  ProductFamily[]
+}
+
+model Brand {
+  id       String          @id @default(cuid())
+  name     String          @unique
+  families ProductFamily[]
+}
+
+model ProductFamily {
+  id          String       @id @default(cuid())
+  slug        String       @unique
+  name        String
+  description String?
+  model       String? // e.g. IPT, قالب آلومینیومی
+  unitName    String       @default("عدد")
+  packName    String? // کارتن / کیسه / بسته
+  isActive    Boolean      @default(true)
+  sortOrder   Int          @default(0)
+  categoryId  String
+  category    Category     @relation(fields: [categoryId], references: [id])
+  brandId     String?
+  brand       Brand?       @relation(fields: [brandId], references: [id])
+  axes        OptionAxis[]
+  variants    Variant[]
+  media       Media[]
+  synonyms    Synonym[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model OptionAxis {
+  id        String          @id @default(cuid())
+  familyId  String
+  family    ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  name      String // سایز لوله، سایز رزوه، فشار
+  unit      String? // mm, inch, atm
+  sortOrder Int             @default(0)
+  values    VariantOption[]
+
+  @@unique([familyId, name])
+}
+
+model Variant {
+  id             String          @id @default(cuid())
+  sku            String          @unique // internal, because accounting codes repeat
+  accountingCode String? // کد کالا from the price list (NOT unique)
+  title          String // original row text from the price list
+  familyId       String
+  family         ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  perPack        Int? // تعداد در کارتن
+  isActive       Boolean         @default(true)
+  options        VariantOption[]
+  prices         Price[]
+  customerPrices CustomerPrice[]
+  orderItems     OrderItem[]
+
+  @@index([accountingCode])
+}
+
+model VariantOption {
+  variantId String
+  variant   Variant    @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  axisId    String
+  axis      OptionAxis @relation(fields: [axisId], references: [id], onDelete: Cascade)
+  value     String
+
+  @@id([variantId, axisId])
+}
+
+model Synonym {
+  id       String         @id @default(cuid())
+  term     String // نری، کوپلینگ، ...
+  familyId String?
+  family   ProductFamily? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([term])
+}
+
+model Media {
+  id        String         @id @default(cuid())
+  familyId  String?
+  family    ProductFamily? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  key       String // object-storage key
+  mime      String
+  width     Int?
+  height    Int?
+  isPrimary Boolean        @default(false)
+  source    String? // e.g. "pdf:jame:p4" or "upload"
+  createdAt DateTime       @default(now())
+}
+
+// ───────────── Pricing ─────────────
+
+enum PriceListStatus {
+  DRAFT // uploaded, waiting for review
+  ACTIVE
+  ARCHIVED
+}
+
+enum PriceStatus {
+  PRICED
+  INQUIRY // بزودی / * / missing → shown as «استعلامی»
+}
+
+model PriceList {
+  id          String          @id @default(cuid())
+  title       String // لیست قیمت آبان ۱۴۰۵
+  sourceFile  String? // uploaded PDF/Excel key
+  status      PriceListStatus @default(DRAFT)
+  validFrom   DateTime?
+  publishedAt DateTime?
+  publishedBy String?
+  prices      Price[]
+  importRows  PriceImportRow[]
+  createdAt   DateTime        @default(now())
+}
+
+model Price {
+  id          String      @id @default(cuid())
+  priceListId String
+  priceList   PriceList   @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  variantId   String
+  variant     Variant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  amount      BigInt? // Rial; NULL when status = INQUIRY
+  status      PriceStatus @default(PRICED)
+  note        String? // original text like «بزودی»
+
+  @@unique([priceListId, variantId])
+}
+
+enum ImportMatch {
+  MATCHED
+  AMBIGUOUS
+  NEW
+  UNMATCHED
+}
+
+// One row parsed from an uploaded price-list PDF/Excel, kept for the diff preview.
+model PriceImportRow {
+  id             String      @id @default(cuid())
+  priceListId    String
+  priceList      PriceList   @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  page           Int?
+  familyTitle    String?
+  rawText        String
+  accountingCode String?
+  perPack        Int?
+  amount         BigInt?
+  status         PriceStatus @default(PRICED)
+  match          ImportMatch @default(UNMATCHED)
+  variantId      String?
+  resolvedBy     String?
+}
+
+model PriceGroup {
+  id          String     @id @default(cuid())
+  name        String     @unique // نماینده، عمده، ...
+  discountPct Decimal    @default(0) @db.Decimal(5, 2)
+  customers   Customer[]
+}
+
+model CustomerPrice {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  amount     BigInt
+  validUntil DateTime?
+
+  @@unique([customerId, variantId])
+}
+
+// ───────────── People ─────────────
+
+enum StaffRole {
+  ADMIN
+  SALES // پشتیبان / کارشناس فروش
+}
+
+model User {
+  id          String           @id @default(cuid())
+  telegramId  BigInt           @unique
+  username    String?
+  firstName   String?
+  lastName    String?
+  phone       String?
+  staffRole   StaffRole? // set for admins and sales-support agents
+  isActive    Boolean          @default(true)
+  memberships CustomerMember[]
+  supportOf   Customer[]       @relation("AssignedSupport")
+  ordersPlaced Order[]         @relation("PlacedBy")
+  createdAt   DateTime         @default(now())
+  lastSeenAt  DateTime?
+}
+
+enum CustomerType {
+  RETAIL
+  DEALER
+  CONTRACTOR
+}
+
+model Customer {
+  id          String           @id @default(cuid())
+  name        String // company / shop name
+  type        CustomerType     @default(RETAIL)
+  city        String?
+  address     String?
+  nationalId  String?
+  isApproved  Boolean          @default(false)
+  priceGroupId String?
+  priceGroup  PriceGroup?      @relation(fields: [priceGroupId], references: [id])
+  supportId   String? // fixed sales-support agent
+  support     User?            @relation("AssignedSupport", fields: [supportId], references: [id])
+  members     CustomerMember[]
+  terms       PaymentTerms?
+  prices      CustomerPrice[]
+  orders      Order[]
+  conversations Conversation[]
+  createdAt   DateTime         @default(now())
+}
+
+enum MemberRole {
+  OWNER // مدیر حساب: sees all orders of the company
+  BUYER // کارشناس خرید: places orders, sees own orders
+  VIEWER
+}
+
+model CustomerMember {
+  customerId String
+  customer   Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       MemberRole @default(BUYER)
+  addedAt    DateTime   @default(now())
+
+  @@id([customerId, userId])
+}
+
+model Invite {
+  id         String     @id @default(cuid())
+  customerId String
+  role       MemberRole @default(BUYER)
+  token      String     @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdBy  String
+}
+
+// Cash/cheque terms set per customer in the admin panel; default in the customer cart.
+model PaymentTerms {
+  customerId          String   @id
+  customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  cashPercent         Int      @default(100) // 0..100; cheque = 100 - cash
+  chequeDueDays       Int[]    @default([]) // e.g. [60, 90]
+  cashDiscountPct     Decimal  @default(0) @db.Decimal(5, 2)
+  chequeMarkupPct     Decimal  @default(0) @db.Decimal(5, 2)
+  updatedBy           String?
+  updatedAt           DateTime @updatedAt
+}
+
+// ───────────── Orders ─────────────
+
+enum OrderStatus {
+  SUBMITTED
+  SALES_REVIEW
+  NEEDS_FIX
+  PROFORMA_SENT
+  PROFORMA_EXPIRED
+  CONFIRMED
+  PREPARING
+  SHIPPED
+  DELIVERED
+  REJECTED
+  CANCELLED
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  number        Int         @unique @default(autoincrement())
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  placedById    String
+  placedBy      User        @relation("PlacedBy", fields: [placedById], references: [id])
+  status        OrderStatus @default(SUBMITTED)
+  note          String?
+  channel       String      @default("miniapp") // miniapp | bot | assistant | admin
+  termsSnapshot Json? // PaymentTerms at submit time
+  priceListId   String?
+  idempotencyKey String?    @unique
+  items         OrderItem[]
+  events        OrderStatusEvent[]
+  proformas     Proforma[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         String      @id @default(cuid())
+  orderId    String
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    Variant     @relation(fields: [variantId], references: [id])
+  title      String // snapshot
+  quantity   Int // in units (عدد)
+  packs      Int? // as entered by the customer, if by pack
+  unitPrice  BigInt? // snapshot, NULL for inquiry items
+  priceStatus PriceStatus
+}
+
+model OrderStatusEvent {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  byUserId  String?
+  comment   String?
+  createdAt DateTime    @default(now())
+}
+
+model Proforma {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  version   Int
+  total     BigInt
+  pdfKey    String?
+  issuedBy  String
+  issuedAt  DateTime @default(now())
+  expiresAt DateTime // default issuedAt + 48h
+  acceptedAt DateTime?
+
+  @@unique([orderId, version])
+}
+
+// ───────────── Bot conversations ─────────────
+
+enum MessageKind {
+  TEXT
+  VOICE
+  PHOTO
+  DOCUMENT
+}
+
+enum MessageDirection {
+  IN // from customer
+  OUT // from staff/bot
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  userTelegramId BigInt
+  assigneeId String? // sales-support user id
+  isOpen     Boolean   @default(true)
+  messages   Message[]
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userTelegramId])
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      MessageDirection
+  kind           MessageKind
+  text           String?
+  telegramFileId String?
+  fileKey        String? // copy in object storage
+  byUserId       String?
+  createdAt      DateTime         @default(now())
+}
+
+// ───────────── Misc ─────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String // price.publish, terms.update, order.status ...
+  entity    String
+  entityId  String
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+model Setting {
+  key   String @id
+  value Json
+}

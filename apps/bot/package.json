@@ -1,0 +1,17 @@
+{
+  "name": "@iplast/bot",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "dev": "tsc -p tsconfig.json && node dist/main.js"
+  },
+  "dependencies": {
+    "@iplast/db": "workspace:*",
+    "grammy": "1.31.0"
+  },
+  "devDependencies": { "@types/node": "22.9.0", "typescript": "5.6.3" }
+}

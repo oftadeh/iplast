@@ -1,0 +1,24 @@
+# app.<domain>   → mini app (customer panel)
+# admin.<domain> → admin panel
+# both proxy /api/* to the API container
+app.{$DOMAIN} {
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv/miniapp
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+admin.{$DOMAIN} {
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv/admin
+		try_files {path} /index.html
+		file_server
+	}
+}
