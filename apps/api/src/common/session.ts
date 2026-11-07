@@ -13,14 +13,19 @@ export const Session = createParamDecorator((_: unknown, ctx: ExecutionContext):
 export class SessionGuard implements CanActivate {
   constructor(private readonly auth: AuthService, private readonly reflector: Reflector) {}
 
-  canActivate(ctx: ExecutionContext): boolean {
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<Request & { session?: SessionClaims }>();
     const header = req.headers.authorization ?? '';
     if (!header.startsWith('Bearer ')) throw new UnauthorizedException();
     const claims = this.auth.verifyToken(header.slice(7));
-    req.session = claims;
     const roles = this.reflector.getAllAndOverride<string[] | undefined>(STAFF_KEY, [ctx.getHandler(), ctx.getClass()]);
-    if (roles && (!claims.staff || !roles.includes(claims.staff))) throw new ForbiddenException('دسترسی ندارید');
+    if (roles) {
+      // the role is read again from the database, so a removed or changed staff member loses access at once
+      const staff = await this.auth.currentStaffRole(claims.sub);
+      if (!staff || !roles.includes(staff)) throw new ForbiddenException('دسترسی ندارید');
+      claims.staff = staff;
+    }
+    req.session = claims;
     return true;
   }
 }

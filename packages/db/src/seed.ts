@@ -1,5 +1,5 @@
 /**
- * Seeds categories, the curated Aban 1405 catalog (19 families, 200 sizes) and product photos.
+ * Seeds categories, the curated Aban 1405 catalog (98 families, 883 sizes from the two Aban 1405 price lists) and product photos.
  * Safe to run more than once: rows are upserted by slug / sku.
  * Usage: DATABASE_URL=... node dist/seed.js
  */
@@ -64,7 +64,7 @@ export async function seed(prisma: PrismaClient) {
     }
     for (const [vi, v] of f.variants.entries()) {
       const sku = `${f.id}-${String(vi + 1).padStart(3, '0')}`;
-      const title = `${f.name} ${v.o.join(' × ')}`;
+      const title = `${f.name} ${v.o.join('، ')}`;
       const variant = await prisma.variant.upsert({
         where: { sku },
         create: { sku, title, familyId: fam.id, accountingCode: v.c, perPack: v.q },

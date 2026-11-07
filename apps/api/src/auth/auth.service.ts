@@ -31,8 +31,22 @@ export class AuthService implements OnModuleInit {
     return jwt.sign(claims, this.env('JWT_SECRET'), { expiresIn: '8h' });
   }
 
+  private roleCache = new Map<string, { role: string | null; at: number }>();
+  /** The staff role as it is now in the database (cached for a few seconds). Null for inactive or non-staff users. */
+  async currentStaffRole(userId: string) {
+    const hit = this.roleCache.get(userId);
+    if (hit && Date.now() - hit.at < 5_000) return hit.role;
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { staffRole: true, isActive: true } });
+    const role = u?.isActive && u.staffRole ? u.staffRole : null;
+    this.roleCache.set(userId, { role, at: Date.now() });
+    return role;
+  }
+
   /** Admin panel login, step 1: a 6-digit code is sent by the bot to an active staff member. */
   async requestCode(telegramId: bigint) {
+    const prev = this.codes.get(String(telegramId));
+    // one code a minute: a new code would otherwise reset the 5-try limit
+    if (prev && prev.expires - 4 * 60_000 > Date.now()) return { sent: true };
     const user = await this.prisma.user.findUnique({ where: { telegramId } });
     // Same answer whether or not the ID is staff, so the endpoint does not reveal who is staff.
     if (user?.staffRole && user.isActive) {

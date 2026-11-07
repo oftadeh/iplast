@@ -22,7 +22,7 @@ async function call(method, path, body, token, expect = 200) {
 let n = 0; const step = (m) => console.log(`✓ ${++n}. ${m}`);
 
 const fams = await call('GET', '/api/catalog/families');
-assert.equal(fams.length, 19); step('catalog lists 19 families');
+assert.equal(fams.length, 98); step("catalog lists 98 families");
 const male = await call('GET', '/api/catalog/families/male-adapter');
 const priced = male.variants.find(v => v.price !== null);
 const famWithInquiry = await Promise.all(fams.map(f => call('GET', `/api/catalog/families/${f.slug}`)));

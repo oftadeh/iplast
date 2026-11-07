@@ -68,5 +68,141 @@
   "file": "rs-valve.webp",
   "source": "pdf:J23-28",
   "sibling": true
+ },
+ "p004": {
+  "file": "p004.webp",
+  "source": "pdf:J05-07"
+ },
+ "p006": {
+  "file": "p006.webp",
+  "source": "pdf:J05-09"
+ },
+ "p011": {
+  "file": "p011.webp",
+  "source": "pdf:J08-13"
+ },
+ "p012": {
+  "file": "p012.webp",
+  "source": "pdf:J08-14"
+ },
+ "p013": {
+  "file": "p013.webp",
+  "source": "pdf:J09-15"
+ },
+ "p014": {
+  "file": "p014.webp",
+  "source": "pdf:J11-16"
+ },
+ "p024": {
+  "file": "p024.webp",
+  "source": "pdf:J14-18"
+ },
+ "p025": {
+  "file": "p025.webp",
+  "source": "pdf:J14-19"
+ },
+ "p016": {
+  "file": "p016.webp",
+  "source": "pdf:J14-20"
+ },
+ "p018": {
+  "file": "p018.webp",
+  "source": "pdf:J15-22"
+ },
+ "p019": {
+  "file": "p019.webp",
+  "source": "pdf:J15-24"
+ },
+ "p020": {
+  "file": "p020.webp",
+  "source": "pdf:J16-25"
+ },
+ "p021": {
+  "file": "p021.webp",
+  "source": "pdf:J16-26"
+ },
+ "p065": {
+  "file": "p065.webp",
+  "source": "pdf:J27-31"
+ },
+ "p066": {
+  "file": "p066.webp",
+  "source": "pdf:J27-32"
+ },
+ "p067": {
+  "file": "p067.webp",
+  "source": "pdf:J28-33"
+ },
+ "p068": {
+  "file": "p068.webp",
+  "source": "pdf:J28-34"
+ },
+ "p070": {
+  "file": "p070.webp",
+  "source": "pdf:J28-35"
+ },
+ "p059": {
+  "file": "p059.webp",
+  "source": "pdf:J02-01"
+ },
+ "p095": {
+  "file": "p095.webp",
+  "source": "pdf:N04-40"
+ },
+ "p097": {
+  "file": "p097.webp",
+  "source": "pdf:N04-42"
+ },
+ "p098": {
+  "file": "p098.webp",
+  "source": "pdf:N04-43"
+ },
+ "p078": {
+  "file": "p078.webp",
+  "source": "pdf:N05-45"
+ },
+ "p079": {
+  "file": "p079.webp",
+  "source": "pdf:N05-46"
+ },
+ "p080": {
+  "file": "p080.webp",
+  "source": "pdf:N05-47"
+ },
+ "p081": {
+  "file": "p081.webp",
+  "source": "pdf:N06-50"
+ },
+ "p082": {
+  "file": "p082.webp",
+  "source": "pdf:N07-51"
+ },
+ "p086": {
+  "file": "p086.webp",
+  "source": "pdf:N08-54"
+ },
+ "p087": {
+  "file": "p087.webp",
+  "source": "pdf:N08-55"
+ },
+ "p088": {
+  "file": "p088.webp",
+  "source": "pdf:N09-56"
+ },
+ "p089": {
+  "file": "p089.webp",
+  "source": "pdf:N09-57"
+ },
+ "p090": {
+  "file": "p090.webp",
+  "source": "pdf:N09-58"
+ },
+ "p091": {
+  "file": "p091.webp",
+  "source": "pdf:N10-59"
+ },
+ "p093": {
+  "file": "p093.webp",
+  "source": "pdf:N10-61"
  }
 }
