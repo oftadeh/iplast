@@ -58,7 +58,8 @@ services:
     image: node:22-bookworm-slim
     profiles: [proxy]
     restart: unless-stopped
-    volumes: ["/opt/iplast-proxy:/opt/iplast-proxy:ro"]
+    # the slim image has no CA bundle; xray needs one to verify TLS to the VPN server
+    volumes: ["/opt/iplast-proxy:/opt/iplast-proxy:ro", "/etc/ssl/certs:/etc/ssl/certs:ro"]
     command: ["/opt/iplast-proxy/xray", "run", "-config", "/opt/iplast-proxy/config-docker.json"]
 
 volumes:
