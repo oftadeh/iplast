@@ -422,3 +422,19 @@ model Setting {
   key   String @id
   value Json
 }
+
+// An order drafted by the AI assistant from a customer's text or voice; opened in the mini app cart.
+model AssistantDraft {
+  id         String   @id @default(cuid())
+  userId     String
+  source     String // miniapp | bot-text | bot-voice
+  inputText  String
+  reply      String
+  items      Json // [{variantId, quantity, mode, packs}]
+  unclear    Json? // phrases the assistant could not match
+  model      String?
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

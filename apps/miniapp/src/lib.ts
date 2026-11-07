@@ -77,6 +77,16 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   return r.json() as Promise<T>;
 }
 
+export async function apiForm<T>(path: string, body: FormData): Promise<T> {
+  const r = await fetch('/api' + path, { method: 'POST', body, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!r.ok) {
+    let msg = 'خطا در ارتباط با سرور';
+    try { const j = await r.json(); if (typeof j?.message === 'string') msg = j.message; } catch { /* */ }
+    throw new ApiError(r.status, msg);
+  }
+  return r.json() as Promise<T>;
+}
+
 /** Tiny fetch hook: data, error, reload. */
 export function useApi<T>(path: string | null, deps: unknown[] = []) {
   const [state, set] = useState<{ data: T | null; error: string | null; loading: boolean }>({ data: null, error: null, loading: !!path });

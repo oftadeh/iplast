@@ -2,6 +2,10 @@
 # admin.<domain> → admin panel
 # both proxy /api/* to the API container
 app.{$DOMAIN} {
+	# bot-to-API calls stay inside the Docker network
+	handle /api/internal/* {
+		respond 404
+	}
 	handle /api/* {
 		reverse_proxy api:3000
 	}
@@ -13,6 +17,10 @@ app.{$DOMAIN} {
 }
 
 admin.{$DOMAIN} {
+	# bot-to-API calls stay inside the Docker network
+	handle /api/internal/* {
+		respond 404
+	}
 	handle /api/* {
 		reverse_proxy api:3000
 	}

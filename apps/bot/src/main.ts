@@ -27,6 +27,30 @@ async function staff() {
   return staffCache;
 }
 
+const API_INTERNAL_URL = process.env.API_INTERNAL_URL ?? 'http://api:3000/api';
+const INTERNAL_KEY = process.env.INTERNAL_KEY ?? '';
+
+/**
+ * Order assistant (OpenAI, in the API service): turns a text or voice order into a draft cart.
+ * Returns null when the assistant is off or found nothing to order, so the human agent handles it alone.
+ */
+async function assistantDraft(from: { id: number; first_name?: string; username?: string }, text?: string, fileId?: string) {
+  if (!INTERNAL_KEY || process.env.ASSISTANT_IN_BOT === '0') return null;
+  try {
+    const r = await fetch(`${API_INTERNAL_URL}/internal/assistant`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_KEY },
+      body: JSON.stringify({ telegramId: String(from.id), firstName: from.first_name, username: from.username, text, fileId }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json() as { enabled: boolean; draftId?: string; hasItems?: boolean; heard?: string | null; text?: string };
+    return j.enabled && j.hasItems ? j : null;
+  } catch (e) {
+    console.error('assistant failed', e);
+    return null;
+  }
+}
+
 const openAppKeyboard = () => MINIAPP_URL ? new InlineKeyboard().webApp('🛒 باز کردن فروشگاه', MINIAPP_URL) : undefined;
 
 bot.command('start', async ctx => {
@@ -108,13 +132,10 @@ bot.on('message', async ctx => {
   });
   await prisma.conversation.update({ where: { id: conv.id }, data: { isOpen: true } }); // bumps updatedAt for the panel list
   const agent = await pickSupport(from.id);
-  if (!agent) {
-    await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
-    return;
-  }
   const name = [from.first_name, from.last_name].filter(Boolean).join(' ') + (from.username ? ` (@${from.username})` : '');
   const company = user?.memberships[0]?.customer.name;
-  try {
+  if (!agent) await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
+  else try {
     await ctx.api.sendMessage(agent, `پیام از ${name}${company ? ` · ${company}` : ''}\nبرای پاسخ، روی پیام زیر Reply بزنید.`);
     const copy = await ctx.api.copyMessage(agent, ctx.chat.id, m.message_id);
     await prisma.message.update({ where: { id: saved.id }, data: { relayChatId: BigInt(agent), relayMessageId: copy.message_id } });
@@ -123,6 +144,19 @@ bot.on('message', async ctx => {
     // the agent has not started the bot yet, or blocked it
     console.error('relay failed', agent, e);
     await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
+  }
+
+  // The assistant drafts a cart from text or voice orders; the human agent still sees and answers everything.
+  if (kind === 'TEXT' || kind === 'VOICE') {
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    const d = await assistantDraft(from, m.text, m.voice?.file_id ?? m.audio?.file_id);
+    if (d?.text && d.draftId) {
+      const heard = d.heard ? `🎙 شنیدم: «${d.heard}»\n\n` : '';
+      const kb = MINIAPP_URL ? new InlineKeyboard().webApp('🛒 بررسی و ثبت در سبد', `${MINIAPP_URL}${MINIAPP_URL.includes('?') ? '&' : '?'}draft=${d.draftId}`) : undefined;
+      await ctx.reply(heard + d.text, { reply_markup: kb });
+      await prisma.message.create({ data: { conversationId: conv.id, direction: 'OUT', kind: 'TEXT', text: `[دستیار]\n${heard}${d.text}` } });
+      if (agent) await ctx.api.sendMessage(agent, `🤖 پیش‌نویس دستیار برای ${name}:\n${heard}${d.text}`).catch(() => {});
+    }
   }
 });
 

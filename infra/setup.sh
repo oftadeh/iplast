@@ -26,6 +26,7 @@ cd "$DIR"
 if [ ! -f .env ]; then
   BOT_TOKEN="${BOT_TOKEN:-$(ask 'Telegram bot token: ')}"
   ADMIN_ID="${ADMIN_ID:-$(ask 'Your numeric Telegram ID (send /id to the bot later if unsure, Enter to skip): ')}"
+  OPENAI_KEY="${OPENAI_API_KEY:-$(ask 'OpenAI API key for the order assistant (Enter to skip, add later in .env): ')}"
   DOMAIN="${DOMAIN:-$DOMAIN_DEFAULT}"
   PGPASS="$(openssl rand -hex 24)"
   cat > .env <<ENV
@@ -43,10 +44,19 @@ DATABASE_URL=postgresql://iplast:$PGPASS@postgres:5432/iplast?schema=public
 REDIS_URL=redis://redis:6379
 JWT_SECRET=$(openssl rand -hex 32)
 API_PORT=3000
+# order assistant (OpenAI). Empty key = assistant off; everything else still works.
+OPENAI_API_KEY=$OPENAI_KEY
+OPENAI_MODEL=
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe
+# bot → API calls inside the Docker network only
+INTERNAL_KEY=$(openssl rand -hex 32)
+API_INTERNAL_URL=http://api:3000/api
 ENV
   chmod 600 .env
   echo ".env created."
 fi
+# settings added after the first install
+grep -q '^INTERNAL_KEY=' .env || printf '\nINTERNAL_KEY=%s\nAPI_INTERNAL_URL=http://api:3000/api\nOPENAI_API_KEY=\nOPENAI_MODEL=\nOPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe\n' "$(openssl rand -hex 32)" >> .env
 
 install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy
 cat > /etc/systemd/system/iplast-autodeploy.service <<UNIT

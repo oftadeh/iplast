@@ -3,7 +3,7 @@ import { useApp } from './App';
 import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
-  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, fa, lineTotal, lineUnits, personName, photoUrl, short, useApi,
+  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, personName, photoUrl, short, useApi,
 } from './lib';
 import { BOT_USERNAME, haptic, openSupportChat } from './telegram';
 
@@ -36,7 +36,7 @@ function LoginNeeded({ what }: { what: string }) {
 
 // ───────── home ─────────
 export function HomeScreen() {
-  const { go, me } = useApp();
+  const { go, me, aiEnabled } = useApp();
   const cats = useApi<Category[]>('/catalog/categories');
   const fams = useApi<FamilyCard[]>('/catalog/families');
   const [q, setQ] = useState('');
@@ -58,7 +58,7 @@ export function HomeScreen() {
         {hero && <img className="photo hero-photo" src={photoUrl(hero.media[0].key)!} alt="" />}
         <div className="row">
           <button type="button" className="pill white" onClick={() => go({ name: 'catalog' })}>مشاهده محصولات</button>
-          <button type="button" className="pill glass" onClick={openSupportChat}><Icon n="mic" s={16} /> سفارش با پیام</button>
+          <button type="button" className="pill glass" onClick={() => (aiEnabled ? go({ name: 'assistant' }) : openSupportChat())}><Icon n="mic" s={16} /> سفارش سریع</button>
         </div>
         {hasList && <span className="stamp"><i />لیست قیمت فعال است</span>}
       </section>
@@ -358,3 +358,88 @@ const STATUS_LABEL: Record<string, string> = {
   PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید شد', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
+
+// ───────── quick order assistant ─────────
+export interface DraftView { id: string; reply: string; unclear: string[]; lines: (CartLineLike & { quantity: number })[]; total: string; inputText: string }
+type CartLineLike = import('./lib').CartLine;
+
+export function AssistantScreen() {
+  const { authed, add, setCart, cart, go, toast } = useApp();
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [chat, setChat] = useState<({ me: string } | { d: DraftView })[]>([]);
+  const [rec, setRec] = useState<MediaRecorder | null>(null);
+
+  const ask = async (body: () => Promise<DraftView>, mine: string) => {
+    setBusy(true); setChat(c => [...c, { me: mine }]);
+    try { const d = await body(); setChat(c => [...c, { d }]); haptic('success'); }
+    catch (e) { setChat(c => c.slice(0, -1)); toast(e instanceof ApiError ? e.message : 'دستیار پاسخ نداد'); haptic('error'); }
+    finally { setBusy(false); }
+  };
+  const send = () => { const t = text.trim(); if (!t || busy) return; setText(''); ask(() => api<DraftView>('/assistant/order', { method: 'POST', body: { text: t } }), t); };
+
+  const record = async () => {
+    if (rec) { rec.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const r = new MediaRecorder(stream); const chunks: Blob[] = [];
+      r.ondataavailable = e => chunks.push(e.data);
+      r.onstop = () => {
+        stream.getTracks().forEach(t => t.stop()); setRec(null);
+        const blob = new Blob(chunks, { type: r.mimeType || 'audio/webm' });
+        const ext = (r.mimeType || '').includes('mp4') ? 'm4a' : (r.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+        ask(async () => {
+          const fd = new FormData(); fd.append('file', blob, `voice.${ext}`);
+          return apiForm<DraftView>('/assistant/voice', fd);
+        }, '🎙 پیام صوتی');
+      };
+      r.start(); setRec(r); haptic();
+    } catch { toast('دسترسی به میکروفون ممکن نشد؛ می‌توانید در ربات ویس بفرستید'); }
+  };
+
+  const addAll = (d: DraftView) => {
+    let next = [...cart];
+    for (const l of d.lines) {
+      const line = { variantId: l.variantId, slug: l.slug, name: l.name, label: l.label, photo: l.photo, perPack: l.perPack, packName: l.packName, unitName: l.unitName, price: l.price, n: l.n, mode: l.mode };
+      const ex = next.findIndex(c => c.variantId === line.variantId && c.mode === line.mode);
+      next = ex >= 0 ? next.map((c, i) => (i === ex ? { ...c, n: c.n + line.n } : c)) : [...next, line];
+    }
+    setCart(next); haptic('success'); go({ name: 'cart' });
+  };
+  void add;
+
+  return (
+    <>
+      <div className="ai-top"><div className="ai-orb"><Icon n="mic" s={30} /></div><h1>سفارش را بنویسید یا بگویید</h1><p>همان‌طور که پشت تلفن می‌گویید. اقلام فقط از کاتالوگ و لیست قیمت انتخاب می‌شوند.</p></div>
+      {authed === false && <LoginNeeded what="سفارش سریع" />}
+      <div className="chat">
+        {chat.map((m, i) => 'me' in m ? <div key={i} className="me">{m.me}</div> : (
+          <div key={i} className="bot">
+            <div className="hd"><Icon n="chat" s={14} /> دستیار سفارش</div>
+            <div>{m.d.reply}</div>
+            {m.d.lines.map(l => (
+              <div className="it" key={l.variantId + l.mode}>
+                <div className="r1"><b>{l.name} <bdi>{l.label}</bdi></b><span className={`st ${l.price ? 'ok' : 'ask'}`}>{l.price ? 'قیمت‌دار' : 'استعلامی'}</span></div>
+                <span className="from num">{l.mode === 'pack' ? `${fa(l.n)} ${l.packName ?? 'بسته'} = ${fa(l.quantity)} ${l.unitName}` : `${fa(l.quantity)} ${l.unitName}`}{l.price ? ` · ${fa(BigInt(l.price) * BigInt(l.quantity))} ریال` : ''}</span>
+              </div>
+            ))}
+            {m.d.unclear.length > 0 && <div className="notice warn" style={{ margin: '6px 0 0' }}>مشخص نشد: {m.d.unclear.join('، ')}</div>}
+            {m.d.lines.length > 0 && <>
+              <div className="tot"><span>جمع تقریبی</span><b className="num">{fa(m.d.total)} ریال</b></div>
+              <button type="button" className="cta" style={{ marginTop: 8 }} onClick={() => addAll(m.d)}><span>افزودن به سبد</span><small className="num">{fa(m.d.lines.length)} قلم</small></button>
+            </>}
+          </div>
+        ))}
+        {busy && <div className="bot"><div className="hd"><Icon n="chat" s={14} /> دستیار سفارش</div><div className="skel" style={{ height: 18 }} /></div>}
+      </div>
+      {!chat.length && (
+        <div className="sugg">{['دو کارتن نری ۶۳ در ۲', 'سه کارتن زانو ۵۰', 'یک کیسه رابط ۳۲ و یک کارتن درپوش ۴۰', 'فیلتر دیسکی ۳ اینچ هلیکس کوتاه'].map(s => <button key={s} type="button" className="chip" onClick={() => setText(s)}>{s}</button>)}</div>
+      )}
+      <div className="composer">
+        <textarea rows={2} aria-label="متن سفارش" placeholder="مثلاً: دو کارتن نری ۶۳ در ۲ و یک کیسه رابط ۵۰" value={text} onChange={e => setText(e.target.value)} disabled={!authed} />
+        {typeof MediaRecorder !== 'undefined' && <button type="button" className="icb" aria-label={rec ? 'پایان ضبط' : 'پیام صوتی'} disabled={!authed || busy} onClick={record} style={rec ? { background: 'var(--bad)', color: '#fff' } : undefined}><Icon n="mic" s={18} /></button>}
+        <button type="button" className="icb send" aria-label="ارسال" disabled={!authed || busy || !text.trim()} onClick={send}><Icon n="send" s={18} /></button>
+      </div>
+    </>
+  );
+}

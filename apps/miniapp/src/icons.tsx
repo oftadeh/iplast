@@ -12,6 +12,7 @@ const P: Record<string, string> = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   file: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>',
+  send: '<path d="M20 4L3 11l7 2 2 7z"/>',
   pipe: '<path d="M3 9h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H3z"/><ellipse cx="18" cy="12" rx="3" ry="3"/><path d="M7 9v6M11 9v6"/>',
 };
 
