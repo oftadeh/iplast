@@ -46,8 +46,8 @@ JWT_SECRET=$(openssl rand -hex 32)
 API_PORT=3000
 # order assistant (OpenAI). Empty key = assistant off; everything else still works.
 OPENAI_API_KEY=$OPENAI_KEY
-OPENAI_MODEL=
-OPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe
+OPENAI_MODEL=gpt-6-luna
+OPENAI_TRANSCRIBE_MODEL=gpt-transcribe
 # bot → API calls inside the Docker network only
 INTERNAL_KEY=$(openssl rand -hex 32)
 API_INTERNAL_URL=http://api:3000/api
@@ -56,7 +56,7 @@ ENV
   echo ".env created."
 fi
 # settings added after the first install
-grep -q '^INTERNAL_KEY=' .env || printf '\nINTERNAL_KEY=%s\nAPI_INTERNAL_URL=http://api:3000/api\nOPENAI_API_KEY=\nOPENAI_MODEL=\nOPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe\n' "$(openssl rand -hex 32)" >> .env
+grep -q '^INTERNAL_KEY=' .env || printf '\nINTERNAL_KEY=%s\nAPI_INTERNAL_URL=http://api:3000/api\nOPENAI_API_KEY=\nOPENAI_MODEL=gpt-6-luna\nOPENAI_TRANSCRIBE_MODEL=gpt-transcribe\n' "$(openssl rand -hex 32)" >> .env
 
 install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy
 cat > /etc/systemd/system/iplast-autodeploy.service <<UNIT

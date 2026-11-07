@@ -28,6 +28,7 @@ const INSTRUCTIONS = `تو دستیار سفارش «اصفهان پلاست» �
 - اگر سایز یا کالا مبهم بود یا در کاتالوگ نبود، آن را در unclear بنویس و در reply کوتاه بپرس؛ حدس نزن.
 - درباره‌ی قیمت فقط عدد همان نتیجه را بگو؛ «استعلامی» یعنی قیمت را کارشناس فروش اعلام می‌کند.
 - reply کوتاه باشد (حداکثر دو جمله) و فهرست اقلام را تکرار نکند؛ برنامه خودش فهرست را نشان می‌دهد.
+- تو سفارش را ثبت نمی‌کنی؛ فقط پیش‌نویس می‌سازی که مشتری خودش بررسی و ثبت می‌کند. هرگز نگو «ثبت شد» یا «سفارش شما ثبت شد»؛ بگو «پیش‌نویس آماده شد».
 - اگر پیام سفارش نبود (سؤال یا احوال‌پرسی)، items خالی و پاسخ کوتاه بده.`;
 
 const FA = '۰۱۲۳۴۵۶۷۸۹';
@@ -67,16 +68,21 @@ export class AssistantService {
   async searchCatalog(query: string) {
     const words = en(query).split(/[\s،,]+/).map(w => w.trim()).filter(w => w.length >= 2 && !/^[\d/½¼¾.×x*"″]+$/.test(w) && !STOP.has(w));
     const terms = words.length ? words.map(fa) : [query.trim()];
+    // «سه راه» and «سه‌راه» are the same word: also try neighbours joined with a zero-width non-joiner or nothing
+    for (let i = 0; i + 1 < words.length; i++) terms.push(fa(words[i] + '\u200c' + words[i + 1]), fa(words[i] + words[i + 1]));
     const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
     const fams = await this.prisma.productFamily.findMany({
       where: { isActive: true, OR: terms.flatMap(t => [{ name: { contains: t } }, { synonyms: { some: { term: { contains: t } } } }]) },
-      take: 6, orderBy: { sortOrder: 'asc' },
+      take: 30, orderBy: { sortOrder: 'asc' },
       include: {
         axes: { orderBy: { sortOrder: 'asc' } },
         variants: { where: { isActive: true }, orderBy: { sku: 'asc' }, take: 60, include: { options: true, prices: list ? { where: { priceListId: list.id } } : { where: { id: '-' } } } },
       },
     });
-    return fams.map(f => ({
+    // best matches first: families whose name holds more of the words
+    const score = (name: string) => terms.filter(t => name.includes(t)).length;
+    fams.sort((a, b) => score(b.name) - score(a.name));
+    return fams.slice(0, 6).map(f => ({
       family: f.name, unit: f.unitName, pack: f.packName, axes: f.axes.map(a => a.name),
       sizes: f.variants.map(v => {
         const p = v.prices[0];
@@ -95,7 +101,7 @@ export class AssistantService {
       name: 'search_catalog',
       description: 'جست‌وجو در کاتالوگ و لیست قیمت فعال. نام کالا را بده (مثلاً «اتصال نر» یا «فیلتر دیسکی»)؛ همه‌ی سایزها با شناسه، تعداد در بسته و قیمت برمی‌گردد.',
       parameters: z.object({ query: z.string().describe('نام کالا، بدون عدد سایز') }),
-      execute: async ({ query }) => JSON.stringify(await this.searchCatalog(query)),
+      execute: async ({ query }) => { const r = await this.searchCatalog(query); this.log.debug(`search_catalog «${query}» → ${r.map(f => f.family).join('، ') || '—'}`); return JSON.stringify(r); },
     });
     return new Agent({
       name: 'iPlast order assistant',
@@ -109,7 +115,7 @@ export class AssistantService {
   /** Persian speech to text for voice notes. */
   async transcribe(audio: Buffer, filename = 'voice.ogg'): Promise<string> {
     this.ensure();
-    const model = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe';
+    const model = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-transcribe';
     const r = await this.client!.audio.transcriptions.create({ file: await toFile(audio, filename), model, language: 'fa' });
     return (r as { text: string }).text.trim();
   }
@@ -138,7 +144,7 @@ export class AssistantService {
       lines.push({ variantId: v.variantId, quantity: pack ? i.quantity * v.perPack! : i.quantity, mode: pack ? 'pack' : 'unit', packs: pack ? i.quantity : null });
     }
     const d = await this.prisma.assistantDraft.create({
-      data: { userId, source, inputText: input, reply: out.reply.slice(0, 1000), items: lines as object[], unclear: out.unclear.slice(0, 20), model: process.env.OPENAI_MODEL ?? null },
+      data: { userId, source, inputText: input, reply: out.reply.replace(/(سفارش(\s*شما)?\s*)?ثبت شد/g, 'در پیش‌نویس آمد').slice(0, 1000), items: lines as object[], unclear: out.unclear.slice(0, 20), model: process.env.OPENAI_MODEL ?? null },
     });
     return this.view(d.id, userId, customerId);
   }

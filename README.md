@@ -54,4 +54,4 @@ curl -fsSL https://raw.githubusercontent.com/oftadeh/iplast/main/infra/setup.sh 
 
 مشتری در ربات یا در صفحه‌ی «سفارش سریع» مینی‌اپ سفارشش را می‌نویسد یا ویس می‌فرستد. دستیار با OpenAI Agents SDK فقط از کاتالوگ و لیست قیمت فعال اقلام را پیدا می‌کند و پیش‌نویس سبد می‌سازد. مشتری با دکمه‌ی «بررسی و ثبت در سبد» آن را در مینی‌اپ باز می‌کند. کارشناس فروش همه‌ی پیام‌ها و پیش‌نویس‌ها را می‌بیند.
 
-تنظیمات در `.env`: `OPENAI_API_KEY` (خالی = خاموش)، `OPENAI_MODEL` (اختیاری)، `OPENAI_TRANSCRIBE_MODEL`.
+تنظیمات در `.env`: `OPENAI_API_KEY` (خالی = خاموش)، `OPENAI_MODEL` (پیش‌فرض `gpt-6-luna`)، `OPENAI_TRANSCRIBE_MODEL` (پیش‌فرض `gpt-transcribe`).
