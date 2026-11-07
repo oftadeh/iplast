@@ -22,6 +22,9 @@ if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then exit 0; fi
 
 git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
+# host tools that live outside the repo: this script itself and the daily backup timer
+install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy 2>/dev/null || true
+[ -f /etc/systemd/system/iplast-backup.timer ] || bash infra/backup.sh --install >/dev/null 2>&1 || true
 # servers that use the outbound proxy (see infra/proxy): keep its host tools current
 if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi
 LOG=/var/log/iplast-deploy.log

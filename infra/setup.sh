@@ -121,6 +121,7 @@ if [ ! -f .seeded ]; then
   echo "Loading the Aban 1405 catalog..."
   docker compose run --rm api node node_modules/@iplast/db/dist/seed.js && touch .seeded
 fi
+bash infra/backup.sh --install || true
 echo "Done. Public IP: ${PUBLIC_IP:-$(curl -fsS --noproxy '*' https://api.ipify.org || echo unknown)}"
 SITE_HOST=$(grep '^SITE_HOST=' .env | cut -d= -f2)
 echo "Mini app: https://$SITE_HOST   Admin panel: https://$SITE_HOST/admin/ (or /admin in the bot)"

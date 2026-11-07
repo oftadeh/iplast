@@ -1,0 +1,230 @@
+# دستورالعمل ساخت و نصب iPlast | اصفهان پلاست
+
+این سند همه‌ی کارهایی را که برای ساختن، نصب، نگهداری و بازگردانی iPlast لازم است، از صفر تا سرور در حال کار، یک‌جا جمع می‌کند. توضیح امکانات برنامه در [README.md](../README.md) است.
+
+> **هیچ توکن، رمز یا کلیدی در این مخزن نیست و نباید باشد.** همه‌ی رمزها فقط در `/opt/iplast/.env` روی سرور هستند.
+
+---
+
+## ۱. برنامه چیست
+
+| بخش | فناوری | توضیح |
+|---|---|---|
+| مینی‌اپ مشتری | React + Vite | داخل تلگرام باز می‌شود (`/`) |
+| پنل مدیریت | React + Vite | همان آدرس، مسیر `/admin/`؛ ورود با حساب تلگرام |
+| API | NestJS 10 + Prisma | احراز هویت با initData تلگرام و JWT کوتاه‌مدت (`/api/*`) |
+| ربات | grammY 1.31 | `@iplast_sellerbot`: دکمه مینی‌اپ، سفارش متنی و صوتی، تأییدها، اعلان‌ها |
+| پایگاه داده | PostgreSQL 16 | مدل در `packages/db/prisma/schema.prisma` |
+| صف و کش | Redis 7 | |
+| وب‌سرور | Caddy | فایل‌های مینی‌اپ و پنل، و پراکسی `/api` |
+| پراکسی خروجی | xray (V2Ray) | فقط برای سرور داخل ایران |
+
+ساختار مخزن (pnpm monorepo):
+
+```
+apps/miniapp   apps/admin   apps/api   apps/bot
+packages/db (Prisma، seed کاتالوگ آبان ۱۴۰۵)   packages/shared (initData، ریال، نقد/چک)
+infra/         Dockerfileها، Caddyfile، setup.sh، autodeploy.sh، backup.sh، proxy/، tls/
+docker-compose.yml
+```
+
+سرویس‌های Docker Compose: `postgres`، `redis`، `migrate` (یک بار `prisma migrate deploy`)، `api`، `bot`، `web` (Caddy) و، روی سرور ایران، `proxy`.
+
+---
+
+## ۲. پیش‌نیازها
+
+- سرور اوبونتو ۲۲.۰۴ یا ۲۴.۰۴، حداقل ۲ گیگ رم و ۲۰ گیگ دیسک، دسترسی root (SSH یا کنسول VNC).
+- یک ربات تلگرام از [@BotFather](https://t.me/BotFather) و توکن آن.
+- آیدی عددی تلگرام مدیر ارشد (مثلاً از [@userinfobot](https://t.me/userinfobot)).
+- اختیاری: کلید OpenAI برای دستیار سفارش و به‌روزرسانی قیمت از PDF؛ کلید کاوه‌نگار برای پیامک.
+- یک نام دامنه با HTTPS. تلگرام مینی‌اپ را فقط روی HTTPS باز می‌کند.
+- **سرور داخل ایران:** یک لینک اشتراک V2Ray (subscription) یا چند لینک `vless://`، `vmess://` یا `trojan://`، و یک دامنه روی Cloudflare.
+
+---
+
+## ۳. نصب روی سرور خارج از ایران
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oftadeh/iplast/main/infra/setup.sh | sudo bash
+```
+
+`setup.sh` این کارها را می‌کند:
+1. Docker و git را نصب می‌کند و کد را در `/opt/iplast` می‌گذارد.
+2. توکن ربات، آیدی مدیر، کلید OpenAI و دامنه را می‌پرسد و `.env` را با رمزهای تصادفی می‌سازد (`chmod 600`).
+3. به‌روزرسانی خودکار (`iplast-autodeploy.timer`) و پشتیبان‌گیری روزانه (`iplast-backup.timer`) را نصب می‌کند.
+4. همه‌چیز را می‌سازد و بالا می‌آورد و کاتالوگ (۹۸ خانواده، ۸۸۳ سایز) را یک بار بارگذاری می‌کند (`.seeded`).
+
+اگر دامنه را خالی بگذارید، آدرس `<آی‌پی-با-خط‌تیره>.sslip.io` ساخته می‌شود و Caddy خودش گواهی Let's Encrypt می‌گیرد. برای رفتن به دامنه‌ی واقعی، رکورد A `app.<domain>` را به آی‌پی سرور بدهید و اجرا کنید:
+
+```bash
+sudo bash /opt/iplast/infra/enable-web.sh isfahanplast.co
+```
+
+---
+
+## ۴. نصب روی سرور داخل ایران (نصب فعلی)
+
+نصب فعلی روی سرور mobinhost با آی‌پی `87.107.129.163` و آدرس `https://iplast.iplas.co` است. این سرور مشکل‌هایی دارد که سرور خارج ندارد:
+
+| مشکل | راه‌حل |
+|---|---|
+| تلگرام، OpenAI، گیت‌هاب و npm مستقیم در دسترس نیستند | xray روی خود سرور (`infra/proxy`) |
+| پورت‌های ۸۰ و ۴۴۳ دست Caddy پروژه‌ی دیگری (niva) است | `web` روی `172.17.0.1:8088` با HTTP؛ Caddy مشترک HTTPS را می‌دهد |
+| Let's Encrypt از خارج به سرور نمی‌رسد | گواهی از راه DNS کلادفلر (`infra/tls/cert-cloudflare.sh`) |
+
+> روی این سرور پروژه‌های niva، karnik و keyfitapp هم هستند. به آن‌ها دست نزنید؛ تنها تغییر در niva یک بلوک `iplast.iplas.co` در Caddyfile آن است که اسکریپت گواهی می‌سازد.
+
+### ۴.۱ پراکسی (xray)
+1. باینری xray را در `/opt/iplast-proxy/xray` بگذارید (از [Xray-core releases](https://github.com/XTLS/Xray-core/releases)، با یک کانفیگ اولیه که از اشتراک ساخته شده؛ تا پراکسی بالا نیامده دانلود مستقیم از گیت‌هاب ممکن است کار نکند و باید فایل را دستی منتقل کنید).
+2. ابزارهای میزبان را نصب کنید: `sudo bash /opt/iplast/infra/proxy/install.sh`.
+   این دستور سرویس `iplast-proxy` (xray روی `127.0.0.1:10809`)، `iplast-proxy-apply.path` و بررسی هر ۵ دقیقه (`iplast-proxy-check.timer`) را نصب می‌کند و `git config http.proxy` را تنظیم می‌کند.
+3. همان کانفیگ داخل Docker هم به‌صورت سرویس `proxy` (پروفایل `proxy`) روی `proxy:10809` اجرا می‌شود، چون فایروال میزبان اجازه نمی‌دهد کانتینرها به پورت‌های میزبان وصل شوند. کانتینر پراکسی `/etc/ssl/certs` میزبان را mount می‌کند، چون ایمیج slim گواهی‌های CA ندارد و بدون آن xray خطای `x509: certificate signed by unknown authority` می‌دهد.
+4. **عوض کردن اشتراک:** در پنل مدیریت، بخش «پراکسی سرور» (فقط مدیر ارشد)، لینک جدید را بگذارید. هر سرور اول با `api.telegram.org` آزمایش می‌شود و بعد فعال می‌شود. اگر سرور فعال قطع شود، هر ۵ دقیقه یکی دیگر از همان اشتراک جایگزین می‌شود.
+
+### ۴.۲ نصب برنامه
+```bash
+sudo OUTBOUND_PROXY=http://127.0.0.1:10809 SHARED_WEB=172.17.0.1:8088 bash /opt/iplast/infra/setup.sh
+```
+
+متغیرهایی که این حالت به `.env` اضافه می‌کند:
+```
+BUILD_PROXY=http://127.0.0.1:10809      # git و ساخت ایمیج روی میزبان
+COMPOSE_PROFILES=proxy
+HTTPS_PROXY=http://proxy:10809          # api و bot داخل Docker
+HTTP_PROXY=http://proxy:10809
+NO_PROXY=localhost,127.0.0.1,api,postgres,redis,web,migrate,bot
+NODE_USE_ENV_PROXY=1                    # fetch سراسری Node 22 از پراکسی رد شود (API)
+PROXY_INBOX=/opt/iplast-proxy/inbox     # وضعیت پراکسی و اشتراک جدید از پنل
+SITE_ADDR=:80
+HTTP_BIND=172.17.0.1:8088
+HTTPS_BIND=127.0.0.1:18443
+```
+
+**نکته‌ی ربات:** grammY از node-fetch استفاده می‌کند و `NODE_USE_ENV_PROXY` روی آن اثری ندارد. Agent با گزینه‌ی `proxyEnv` در Node 22 هم نادیده گرفته می‌شود. به همین دلیل `apps/bot/src/main.ts` یک `TunnelAgent` دارد که برای هر درخواست تلگرام از `HTTPS_PROXY` تونل `CONNECT` باز می‌کند.
+
+### ۴.۳ دامنه و HTTPS با Cloudflare
+1. دامنه (`iplas.co`) را به Cloudflare اضافه کنید و Nameserverها را نزد ثبت‌کننده‌ی دامنه به این دو عوض کنید: `aarav.ns.cloudflare.com` و `kenia.ns.cloudflare.com`. صبر کنید تا وضعیت دامنه در Cloudflare **Active** شود.
+2. رکورد `A` برای `iplast` با مقدار `87.107.129.163` بسازید و آن را روی **DNS only** (ابر خاکستری) بگذارید. پراکسی Cloudflare به سرور داخل ایران نمی‌رسد.
+3. در Cloudflare یک API Token با الگوی «Edit zone DNS» و محدود به همین zone بسازید.
+4. روی سرور اجرا کنید:
+   ```bash
+   sudo bash /opt/iplast/infra/tls/cert-cloudflare.sh iplast.iplas.co
+   ```
+   بار اول توکن را بدون نمایش می‌پرسد و در `/opt/iplast-tls/cf-token` (`chmod 600`) ذخیره می‌کند. بعد این کارها را انجام می‌دهد:
+   - lego را از راه پراکسی دانلود می‌کند و گواهی Let's Encrypt را با چالش DNS-01 می‌گیرد.
+   - گواهی را در volume داده‌ی Caddy مشترک (`/data/iplast/`) کپی می‌کند.
+   - بلوک `iplast.iplas.co` را در `/opt/niva/deploy/panel-ip.Caddyfile` جایگزین می‌کند و Caddy را از راه stdin بارگذاری مجدد می‌کند.
+   - `SITE_HOST` و `MINIAPP_URL` را در `.env` عوض می‌کند و سرویس‌ها را بالا می‌آورد. ربات دکمه‌ی منو را خودش روی آدرس جدید می‌گذارد.
+   - تمدید هفتگی را با `iplast-tls.timer` نصب می‌کند.
+5. خطای `failed to find zone` یعنی دامنه هنوز در Cloudflare فعال نشده است.
+
+---
+
+## ۵. به‌روزرسانی (Deploy)
+
+نیازی به SSH ورودی نیست. `iplast-autodeploy.timer` هر ۲ دقیقه `origin/main` را بررسی می‌کند. اگر commit جدیدی باشد، این کارها را می‌کند:
+- `git reset --hard origin/main`
+- ابزارهای میزبان (پراکسی، خود autodeploy و پشتیبان‌گیری) را به‌روز می‌کند.
+- `docker compose up -d --build --remove-orphans` را اجرا می‌کند. این کار ۳ تا ۵ دقیقه طول می‌کشد.
+
+نتیجه، موفق یا ناموفق، با ربات برای اولین مدیر فرستاده می‌شود و لاگ در `/var/log/iplast-deploy.log` است. برای deploy دستی:
+
+```bash
+sudo FORCE=1 /usr/local/bin/iplast-autodeploy
+```
+
+---
+
+## ۶. پشتیبان‌گیری
+
+`infra/backup.sh` هر شب ساعت ۰۳:۳۰ اجرا می‌شود (`iplast-backup.timer`). اولین بار هم ۱۰ دقیقه بعد از نصب اجرا می‌شود. خروجی در `/opt/iplast-backups/<تاریخ_ساعت>/` است و فقط root به آن دسترسی دارد. ۱۴ نسخه‌ی آخر نگه داشته می‌شود (`BACKUP_KEEP` در `.env`).
+
+| فایل | محتوا |
+|---|---|
+| `db.sql.gz` | dump کامل PostgreSQL |
+| `uploads.tar.gz` | عکس‌های محصول که در پنل بارگذاری شده‌اند |
+| `settings.tar.gz` | `.env`، اشتراک و کانفیگ پراکسی، توکن Cloudflare و حساب Let's Encrypt (**شامل رمزها؛ فقط روی سرور**) |
+| `commit.txt`، `SHA256SUMS`، `backup.log` | نسخه‌ی کد، چک‌سام‌ها و گزارش |
+
+فایل `db.sql.gz` (اگر کمتر از ۴۵ مگابایت باشد) با ربات برای اولین مدیر هم فرستاده می‌شود تا یک نسخه بیرون از سرور بماند. برای خاموش کردن این ارسال، `BACKUP_TELEGRAM=0` را در `.env` بگذارید. `settings.tar.gz` هرگز ارسال نمی‌شود.
+
+دستورها:
+```bash
+sudo bash /opt/iplast/infra/backup.sh             # همین حالا
+ls -l /opt/iplast-backups/                         # فهرست نسخه‌ها
+systemctl list-timers iplast-backup.timer          # زمان اجرای بعدی
+```
+
+برای امنیت بیشتر، گاهی پوشه‌ی `/opt/iplast-backups` را به جای دیگری هم کپی کنید.
+
+### بازگردانی پشتیبان
+```bash
+cd /opt/iplast
+B=/opt/iplast-backups/<تاریخ_ساعت>
+# تنظیمات (روی سرور نو، قبل از setup.sh):
+sudo tar -xzf $B/settings.tar.gz -C /
+# پایگاه داده:
+docker compose stop api bot
+gunzip -c $B/db.sql.gz | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# عکس‌ها:
+docker compose exec -T api sh -c 'tar -xzf - -C /data/uploads' < $B/uploads.tar.gz
+docker compose up -d
+```
+
+روی سرور نو، تنظیمات را پیش از `setup.sh` بازگردانید. در این حالت `setup.sh` همان `.env` قبلی را نگه می‌دارد. بعد `touch /opt/iplast/.seeded` را اجرا کنید تا کاتالوگ دوباره روی داده‌ها بارگذاری نشود، و سپس پایگاه داده و عکس‌ها را بازگردانید.
+
+---
+
+## ۷. مدیر ارشد و کارکنان
+
+- آیدی‌های `ADMIN_TELEGRAM_IDS` در `.env` فقط بار اول مدیر ارشد ساخته می‌شوند. بعد از آن نقش‌ها فقط از پایگاه داده خوانده می‌شوند.
+- **انتقال مدیر ارشد:** در پنل، بخش «کارکنان»، آیدی نفر جدید را با نقش «مدیر ارشد» اضافه کنید. بعد مدیر جدید حساب قبلی را غیرفعال می‌کند.
+- اگر هیچ مدیر ارشد فعالی نماند، با راه‌اندازی دوباره، آیدی داخل `.env` دوباره مدیر ارشد می‌شود.
+- پنل مدیریت با کارت «پنل مدیریت» در مینی‌اپ یا دستور `/admin` در ربات باز می‌شود.
+
+---
+
+## ۸. توسعه‌ی محلی
+
+```bash
+pnpm install
+cp .env.example .env          # DATABASE_URL را به localhost بدهید
+pnpm db:migrate
+pnpm --filter @iplast/shared build && pnpm --filter @iplast/shared test
+pnpm dev:api                  # http://localhost:3000/api/health
+pnpm dev:miniapp ; pnpm dev:admin ; pnpm dev:bot
+pnpm typecheck
+```
+
+بارگذاری کاتالوگ روی سرور:
+```bash
+docker compose run --rm api node node_modules/@iplast/db/dist/seed.js
+```
+
+---
+
+## ۹. عیب‌یابی
+
+| نشانه | بررسی |
+|---|---|
+| ربات جواب نمی‌دهد | `docker compose logs --tail 50 bot`. خطای `ECONNRESET` یعنی پراکسی کار نمی‌کند: `docker compose logs proxy`، `systemctl status iplast-proxy` و وضعیت در پنل ← «پراکسی سرور» |
+| `x509: unknown authority` در لاگ proxy | mount `/etc/ssl/certs` در `docker-compose.yml` |
+| deploy انجام نمی‌شود | `journalctl -u iplast-autodeploy -n 50` و `/var/log/iplast-deploy.log`. `git fetch` به پراکسی میزبان نیاز دارد |
+| سایت باز نمی‌شود | `curl -sI http://172.17.0.1:8088` (کانتینر web)، بعد Caddy مشترک: `docker logs --tail 50 niva-panel-proxy-1` |
+| Caddy تغییر Caddyfile را نمی‌بیند | فایل bind-mount است و inode آن عوض شده. با stdin بارگذاری مجدد کنید: `docker exec -i niva-panel-proxy-1 caddy reload --adapter caddyfile --config /dev/stdin < /opt/niva/deploy/panel-ip.Caddyfile` |
+| گواهی تمدید نشد | `journalctl -u iplast-tls -n 50`. توکن Cloudflare باید معتبر باشد |
+| پشتیبان‌گیری | `/opt/iplast-backups/<آخرین>/backup.log` و `journalctl -u iplast-backup -n 30` |
+| از خارج ایران باز نمی‌شود | طبیعی است: سرور فقط از داخل ایران در دسترس است. کاربر با VPN ممکن است نتواند وصل شود |
+
+**تایپ در کنسول VNC مرورگر:** نویسه‌های shift‌دار (`:`، `_`، `|`، `>`، `&`) گاهی اشتباه تایپ می‌شوند. دستورها را کوتاه وارد کنید و قبل از Enter بررسی کنید، یا دستور را از یک فایل اسکریپت اجرا کنید.
+
+---
+
+## ۱۰. امنیت
+
+- توکن ربات، رمز پایگاه داده، `JWT_SECRET`، `INTERNAL_KEY` و کلیدهای OpenAI، کاوه‌نگار و Cloudflare فقط در `.env` و `/opt/iplast-tls` روی سرور هستند (`chmod 600`).
+- اگر توکنی جایی دیده یا فرستاده شده، آن را عوض کنید:
+  - ربات: در @BotFather دستور `/revoke` را بزنید، توکن جدید را در `BOT_TOKEN` بگذارید و `docker compose up -d` را اجرا کنید.
+  - Cloudflare: توکن قبلی را در داشبورد Cloudflare حذف کنید و فایل `/opt/iplast-tls/cf-token` را با توکن جدید بازنویسی کنید.
+- نسخه‌ی پشتیبان `settings.tar.gz` شامل همه‌ی این رمزهاست. آن را جایی نفرستید.

@@ -62,4 +62,7 @@ if [ -f .env ]; then
   grep -q '^COMPOSE_PROFILES=' .env || printf 'COMPOSE_PROFILES=proxy\n' >> .env
   grep -q '^PROXY_INBOX=' .env || printf 'PROXY_INBOX=%s/inbox\n' "$HOME_DIR" >> .env
 fi
+# host tools that live outside the repo: keep the auto-deploy copy current and the daily backup installed
+install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy
+[ -f /etc/systemd/system/iplast-backup.timer ] || bash infra/backup.sh --install || true
 echo "proxy tools installed"
