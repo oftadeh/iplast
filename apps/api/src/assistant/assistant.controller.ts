@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService, STATUS_FA } from '../orders/orders.service';
 import { audit } from '../common/audit';
 import { AssistantService } from './assistant.service';
+import { AccountingService } from '../accounting/accounting';
 
 function checkKey(key: string | undefined) {
   const want = process.env.INTERNAL_KEY ?? '';
@@ -104,17 +105,30 @@ export class InternalAssistantController {
 export class InternalOrdersController {
   constructor(private readonly prisma: PrismaService, private readonly orders: OrdersService) {}
 
-  @Post('status')
-  async status(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; orderId?: string; status?: string }) {
+  /** Buttons under the proforma messages: sales_ok, final_ok, reject. */
+  @Post('decide')
+  async decide(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; orderId?: string; action?: string }) {
     checkKey(key);
-    const tg = tgId(b.telegramId);
-    const support = (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(s => s.trim()).includes(String(tg));
-    const staff = await this.prisma.user.findUnique({ where: { telegramId: tg } });
-    if (!staff?.isActive || (!staff.staffRole && !support)) throw new UnauthorizedException();
-    const status = b.status as keyof typeof STATUS_FA;
-    if (!['CONFIRMED', 'SALES_REVIEW', 'REJECTED'].includes(String(status))) throw new BadRequestException('وضعیت نامعتبر است');
-    const r = await this.orders.setStatus(staff.id, String(b.orderId), status);
-    await audit(this.prisma, staff.id, 'order.status', 'Order', String(b.orderId), { status: r.before }, { status, via: 'bot' });
-    return { number: r.number, statusFa: STATUS_FA[status] };
+    const staff = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
+    if (!staff?.isActive || !staff.staffRole) throw new UnauthorizedException();
+    if (!['sales_ok', 'final_ok', 'reject'].includes(String(b.action))) throw new BadRequestException('کار نامعتبر است');
+    const before = await this.prisma.order.findUnique({ where: { id: String(b.orderId) }, select: { status: true, number: true } });
+    const r = await this.orders.decide(staff.id, String(b.orderId), String(b.action));
+    await audit(this.prisma, staff.id, 'order.decide', 'Order', String(b.orderId), before, { action: b.action, status: r.status, via: 'bot' });
+    return { number: before?.number, status: r.status, statusFa: STATUS_FA[r.status] };
+  }
+}
+
+/** Buttons under a receipt photo a customer sent: the agent or a manager accepts or rejects it. */
+@Controller('internal/payments')
+export class InternalPaymentsController {
+  constructor(private readonly prisma: PrismaService, private readonly acc: AccountingService) {}
+
+  @Post('review')
+  async review(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; paymentId?: string; ok?: boolean }) {
+    checkKey(key);
+    const staff = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
+    if (!staff?.isActive || !staff.staffRole) throw new UnauthorizedException();
+    return this.acc.review(staff.id, String(b.paymentId), !!b.ok);
   }
 }

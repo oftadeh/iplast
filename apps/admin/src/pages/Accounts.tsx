@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, rial, toEnDigits, useApi } from '../lib';
+import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, personName, rial, toEnDigits, useApi, useBlobUrl, type Staff } from '../lib';
 
 interface Balance { id: string; name: string; city: string | null; invoices: number; invoiced: string; paid: string; pendingCheques: string; balance: string }
 interface ToInvoice { id: string; number: number; createdAt: string; customer: { id: string; name: string }; items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null }[] }
 interface Invoice { id: string; number: number; status: 'ISSUED' | 'CANCELLED'; issuedAt: string; total: string; itemCount: number; order: { number: number } | null }
-interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; statusFa: string; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; note: string | null; invoice: { number: number } | null }
+interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; statusFa: string; hasReceipt: boolean; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; note: string | null; invoice: { number: number } | null }
 interface Account {
-  customer: { id: string; name: string; city: string | null };
-  summary: { invoiced: string; paid: string; pendingCheques: string; balance: string; balanceAfterCheques: string };
+  customer: {
+    id: string; name: string; city: string | null;
+    terms: { cashPercent: number; chequeDueDays: number[]; cashDiscountPct: string; chequeMarkupPct: string } | null;
+    support: { id: string; firstName: string | null; lastName: string | null; username: string | null } | null;
+  };
+  summary: { invoiced: string; paid: string; pendingCheques: string; reported: string; balance: string; balanceAfterCheques: string };
   invoices: Invoice[]; payments: Payment[];
   statement: { kind: string; id: string; title: string; at: string; debit: string; credit: string; balance: string }[];
 }
 
 const clean = (s: string) => toEnDigits(s).replace(/[,،٬\s]/g, '');
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'ثبت نشد');
-const PAY_ST: Record<string, string> = { PENDING: 'ask', CLEARED: 'ok', BOUNCED: 'no', CANCELLED: 'gray' };
+const PAY_ST: Record<string, string> = { REPORTED: 'new', PENDING: 'ask', CLEARED: 'ok', BOUNCED: 'no', CANCELLED: 'gray' };
 
 /** Customer accounts: issue invoices for confirmed orders, record money received, follow each balance. */
 export function AccountsPage({ focus, onFocus }: { focus?: string; onFocus: (id?: string) => void }) {
@@ -119,6 +123,11 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
   const payStatus = async (pid: string, status: string, ok: string) => {
     try { await api(`/admin/accounts/payments/${pid}`, { method: 'PATCH', body: { status } }); toast(ok); a.reload(); } catch (e) { toast(err(e)); }
   };
+  const review = async (pid: string, ok: boolean) => {
+    const comment = ok ? undefined : prompt('دلیل رد؟ (برای مشتری فرستاده می‌شود)');
+    if (comment === null) return;
+    try { const r = await api<{ statusFa: string }>(`/admin/accounts/payments/${pid}/review`, { method: 'POST', body: { ok, comment } }); toast(r.statusFa); a.reload(); } catch (e) { toast(err(e)); }
+  };
   const cancel = async (iid: string) => {
     const reason = prompt('دلیل ابطال فاکتور؟');
     if (reason === null) return;
@@ -137,7 +146,9 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
           <div><span>دریافت‌شده</span><b className="num">{rial(s.paid)}</b></div>
           <div><span>چک در جریان</span><b className="num">{rial(s.pendingCheques)}</b></div>
         </div>
+        {BigInt(s.reported) > 0n && <p className="small" style={{ margin: 0 }}><span className="st new">منتظر بررسی</span> <span className="num">{rial(s.reported)}</span> رسید از طرف مشتری (در تب «دریافتی‌ها»)</p>}
       </div>
+      <TermsCard customerId={id} c={d.customer} onDone={a.reload} />
       {can && <AddPayment customerId={id} invoices={d.invoices.filter(i => i.status === 'ISSUED')} onDone={a.reload} />}
       <div className="chips">
         {([['statement', 'گردش حساب'], ['invoices', `فاکتورها (${fa(d.invoices.length)})`], ['payments', `دریافتی‌ها (${fa(d.payments.length)})`]] as const).map(([k, t]) => (
@@ -172,6 +183,13 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
               <div className="between"><b className="num">{rial(p.amount)}</b><span className={`st ${PAY_ST[p.status]}`}>{p.status === 'PENDING' ? 'در جریان' : p.statusFa}</span></div>
               <span className="muted small num">{p.methodFa}{p.chequeNumber ? ` ${p.chequeNumber}` : ''}{p.bank ? ` · ${p.bank}` : ''}{p.dueDate ? ` · سررسید ${dayFa(p.dueDate)}` : ''} · ثبت {dayFa(p.receivedAt)}{p.invoice ? ` · بابت فاکتور ${fa(p.invoice.number)}` : ''}</span>
               {p.note && <span className="small">{p.note}</span>}
+              {p.hasReceipt && <Receipt id={p.id} />}
+              {p.status === 'REPORTED' && (
+                <div className="decide" style={{ padding: 0 }}>
+                  <button type="button" className="btn ok-fill sm" onClick={() => review(p.id, true)}>✓ تأیید رسید</button>
+                  <button type="button" className="btn danger sm" onClick={() => review(p.id, false)}>رد</button>
+                </div>
+              )}
               {can && p.status === 'PENDING' && (
                 <div className="decide" style={{ padding: 0 }}>
                   <button type="button" className="btn ok-fill sm" onClick={() => payStatus(p.id, 'CLEARED', 'چک وصول شد')}>✓ وصول شد</button>
@@ -262,5 +280,67 @@ export function InvoiceView({ id, onBack }: { id: string; onBack: () => void }) 
         {i.note && <p className="note" style={{ margin: 0 }}>{i.note}</p>}
       </div>
     </>
+  );
+}
+
+function Receipt({ id }: { id: string }) {
+  const url = useBlobUrl(`/admin/accounts/payments/${id}/receipt`);
+  const [big, setBig] = useState(false);
+  if (!url) return <span className="muted small">در حال بارگذاری عکس…</span>;
+  return <img src={url} alt="عکس رسید" onClick={() => setBig(b => !b)} style={{ width: big ? '100%' : 96, borderRadius: 10, border: '1px solid var(--line)', cursor: 'zoom-in' }} />;
+}
+
+/** Cash/cheque split, cheque due days and the customer's sales agent. Managers change them; agents only see them. */
+function TermsCard({ customerId, c, onDone }: { customerId: string; c: Account['customer']; onDone: () => void }) {
+  const { me, toast } = useAdmin();
+  const can = me.staffRole === 'ADMIN';
+  const staff = useApi<Staff[]>(can ? '/admin/staff' : null);
+  const t = c.terms;
+  const init = () => ({
+    cash: String(t?.cashPercent ?? 100), days: (t?.chequeDueDays ?? []).join('، '),
+    disc: String(Number(t?.cashDiscountPct ?? 0)), markup: String(Number(t?.chequeMarkupPct ?? 0)), support: c.support?.id ?? '',
+  });
+  const [f, setF] = useState(init);
+  const [edit, setEdit] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const set = (k: keyof ReturnType<typeof init>) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const cash = Number(clean(f.cash));
+  const save = async () => {
+    setBusy(true);
+    try {
+      const days = toEnDigits(f.days).split(/[^0-9]+/).filter(Boolean).map(Number);
+      await api(`/admin/customers/${customerId}/terms`, { method: 'PUT', body: { cashPercent: cash, chequeDueDays: days, cashDiscountPct: Number(clean(f.disc) || 0), chequeMarkupPct: Number(clean(f.markup) || 0) } });
+      if (f.support !== (c.support?.id ?? '')) await api(`/admin/customers/${customerId}`, { method: 'PATCH', body: { supportId: f.support || null } });
+      toast('شرایط پرداخت ذخیره شد'); setEdit(false); onDone();
+    } catch (e) { toast(err(e)); } finally { setBusy(false); }
+  };
+  const tc = t?.cashPercent ?? 100;
+  if (!edit) return (
+    <div className="card pad stack">
+      <div className="between"><h2 style={{ margin: 0 }}>شرایط پرداخت و کارشناس</h2>{can && <button type="button" className="btn sm" onClick={() => { setF(init()); setEdit(true); }}>ویرایش</button>}</div>
+      <span className="num"><b>نقد {fa(tc)}٪</b> · <b>چک {fa(100 - tc)}٪</b>{t?.chequeDueDays.length ? ` · سررسید چک: ${t.chequeDueDays.map(d => fa(d)).join('، ')} روزه` : ''}</span>
+      <span className="small">کارشناس فروش: <b>{c.support ? personName(c.support) : 'تعیین نشده'}</b>{!c.support && <span className="muted"> (پیش‌فاکتورها برای همه‌ی کارشناسان می‌رود)</span>}</span>
+    </div>
+  );
+  return (
+    <div className="card pad stack">
+      <h2 style={{ margin: 0 }}>شرایط پرداخت و کارشناس</h2>
+      <div className="row2">
+        <label className="stack small">سهم نقد (٪)<input className="in num" inputMode="numeric" value={f.cash} onChange={set('cash')} /></label>
+        <label className="stack small">سهم چک (٪)<input className="in num" value={Number.isFinite(cash) && cash >= 0 && cash <= 100 ? fa(100 - cash) : '—'} disabled /></label>
+      </div>
+      <label className="stack small">سررسید چک‌ها (روز، با ویرگول جدا کنید)<input className="in num" inputMode="numeric" placeholder="مثلاً ۶۰، ۹۰" value={f.days} onChange={set('days')} /></label>
+      <label className="stack small">کارشناس فروش این مشتری
+        <select className="in" value={f.support} onChange={set('support')}>
+          <option value="">تعیین نشده (همه‌ی کارشناسان)</option>
+          {(staff.data ?? []).filter(u => u.isActive).map(u => <option key={u.id} value={u.id}>{personName(u)} · {u.staffRole === 'ADMIN' ? 'مدیر' : 'کارشناس فروش'}</option>)}
+        </select>
+      </label>
+      <p className="muted small" style={{ margin: 0 }}>این درصدها پیش‌فرض سبد خرید همین مشتری می‌شود و پیش‌فاکتورهای بعدی با آن حساب می‌شوند.</p>
+      <div className="decide" style={{ padding: 0 }}>
+        <button type="button" className="btn ok-fill" disabled={busy} onClick={save}>ذخیره</button>
+        <button type="button" className="btn" onClick={() => setEdit(false)}>انصراف</button>
+      </div>
+    </div>
   );
 }

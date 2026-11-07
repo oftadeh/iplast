@@ -1,6 +1,12 @@
 import {
-  BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, NotFoundException, Param, Patch, Post, Query, UseGuards,
+  BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, NotFoundException, Param, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { randomBytes } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { OrdersService } from '../orders/orders.service';
 import { PaymentMethod, PaymentStatus } from '@iplast/db';
 import { formatRial, splitCashCheque } from '@iplast/shared';
 import { Session, SessionGuard, Staff } from '../common/session';
@@ -18,14 +24,78 @@ function rialOf(v: unknown, what: string, allowZero = false): bigint {
   if (!allowZero && n <= 0n) throw new BadRequestException(`${what} باید بیشتر از صفر باشد`);
   return n;
 }
+const RECEIPTS = join(process.env.UPLOAD_DIR ?? '/data/uploads', 'receipts'); // private: served only to the customer and staff
+const IMAGE: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 const METHODS: PaymentMethod[] = ['CASH', 'TRANSFER', 'CHEQUE'];
-const STATUSES: PaymentStatus[] = ['PENDING', 'CLEARED', 'BOUNCED', 'CANCELLED'];
+const STATUSES: PaymentStatus[] = ['REPORTED', 'PENDING', 'CLEARED', 'BOUNCED', 'CANCELLED'];
 export const METHOD_FA: Record<PaymentMethod, string> = { CASH: 'نقد', TRANSFER: 'واریز / کارت‌به‌کارت', CHEQUE: 'چک' };
-export const PAY_STATUS_FA: Record<PaymentStatus, string> = { PENDING: 'در جریان (هنوز وصول نشده)', CLEARED: 'وصول شد', BOUNCED: 'برگشتی', CANCELLED: 'باطل' };
+export const PAY_STATUS_FA: Record<PaymentStatus, string> = { REPORTED: 'ارسال‌شده توسط مشتری، منتظر بررسی', PENDING: 'در جریان (هنوز وصول نشده)', CLEARED: 'وصول شد', BOUNCED: 'برگشتی', CANCELLED: 'باطل' };
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService) {}
+  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly orders: OrdersService) {}
+
+  /**
+   * A customer reports a payment from the mini app with a photo of the cheque or bank receipt.
+   * It goes to their sales agent and the managers (photo + approve/reject buttons in the bot) and waits for review.
+   */
+  async report(userId: string, customerId: string, b: { amount?: unknown; method?: string; chequeNumber?: string; bank?: string; dueDate?: string; note?: string; invoiceId?: string }, file?: { buffer: Buffer; mimetype: string }) {
+    const ext = file && IMAGE[file.mimetype];
+    if (!file?.buffer?.length || !ext) throw new BadRequestException('عکس چک یا فیش واریزی را انتخاب کنید (JPG یا PNG)');
+    const method = b.method as PaymentMethod;
+    if (!METHODS.includes(method)) throw new BadRequestException('نوع پرداخت را انتخاب کنید');
+    const amount = rialOf(b.amount, 'مبلغ');
+    const due = b.dueDate ? new Date(b.dueDate) : null;
+    if (method === 'CHEQUE' && (!due || isNaN(due.getTime()))) throw new BadRequestException('تاریخ سررسید چک را وارد کنید');
+    if (b.invoiceId && !(await this.prisma.invoice.findFirst({ where: { id: b.invoiceId, customerId } }))) throw new BadRequestException('فاکتور نامعتبر است');
+    mkdirSync(RECEIPTS, { recursive: true });
+    const name = `${randomBytes(12).toString('hex')}.${ext}`;
+    writeFileSync(join(RECEIPTS, name), file.buffer);
+    const p = await this.prisma.payment.create({
+      data: {
+        customerId, invoiceId: b.invoiceId || null, amount, method, status: 'REPORTED', dueDate: due,
+        chequeNumber: b.chequeNumber?.trim().slice(0, 40) || null, bank: b.bank?.trim().slice(0, 60) || null, note: b.note?.trim().slice(0, 500) || null,
+        receiptKey: name, reportedById: userId, createdById: userId,
+      },
+      include: { customer: true, invoice: { select: { number: true } } },
+    });
+    const u = await this.prisma.user.findUnique({ where: { id: userId } });
+    const who = [u?.firstName, u?.lastName].filter(Boolean).join(' ') || 'مشتری';
+    const caption = `💳 ${METHOD_FA[method]} ارسالی مشتری\nمشتری: ${p.customer.name} (${who})\nمبلغ: ${formatRial(amount)}${p.chequeNumber ? `\nشماره چک: ${p.chequeNumber}` : ''}${p.bank ? ` · ${p.bank}` : ''}${due ? `\nسررسید: ${due.toLocaleDateString('fa-IR')}` : ''}${p.invoice ? `\nبابت فاکتور ${p.invoice.number}` : ''}${p.note ? `\nتوضیح: ${p.note}` : ''}`;
+    const kb = { inline_keyboard: [[{ text: '✅ تأیید دریافت', callback_data: `pay:${p.id}:ok` }, { text: '❌ رد', callback_data: `pay:${p.id}:no` }]] };
+    const to = new Map<string, bigint>();
+    for (const a of await this.orders.salesAgentsOf(customerId)) to.set(a.id, a.telegramId);
+    for (const a of await this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } })) to.set(a.id, a.telegramId);
+    for (const t of to.values()) await this.tg.sendPhoto(t, file.buffer, `receipt.${ext}`, caption, kb);
+    return { id: p.id, status: p.status };
+  }
+
+  /** Sales agent or manager checks a reported payment: accepted (a cheque then waits to clear) or rejected. */
+  async review(byUserId: string, id: string, ok: boolean, comment?: string) {
+    const [u, p] = await Promise.all([this.prisma.user.findUnique({ where: { id: byUserId } }), this.prisma.payment.findUnique({ where: { id }, include: { customer: true } })]);
+    if (!p) throw new NotFoundException();
+    if (!u?.staffRole || !u.isActive) throw new ForbiddenException('دسترسی ندارید');
+    if (u.staffRole !== 'ADMIN' && p.customer.supportId && p.customer.supportId !== u.id) throw new ForbiddenException('این مشتری کارشناس دیگری دارد');
+    if (p.status !== 'REPORTED') throw new BadRequestException(`این پرداخت قبلاً بررسی شده است (${PAY_STATUS_FA[p.status]})`);
+    const status: PaymentStatus = !ok ? 'CANCELLED' : p.method === 'CHEQUE' ? 'PENDING' : 'CLEARED';
+    const note = [p.note, comment?.trim() && `بررسی: ${comment.trim().slice(0, 300)}`].filter(Boolean).join('\n') || null;
+    await this.prisma.payment.update({ where: { id }, data: { status, note, createdById: byUserId } });
+    await audit(this.prisma, byUserId, 'payment.review', 'Payment', id, { status: p.status }, { status, comment });
+    if (p.reportedById) {
+      const r = await this.prisma.user.findUnique({ where: { id: p.reportedById } });
+      if (r) await this.tg.send(r.telegramId, ok
+        ? `✅ ${METHOD_FA[p.method]} ${formatRial(p.amount)} تأیید شد${p.method === 'CHEQUE' ? ' و پس از وصول از مانده‌ی حساب کم می‌شود' : ' و از مانده‌ی حساب کم شد'}.`
+        : `❌ ${METHOD_FA[p.method]} ${formatRial(p.amount)} تأیید نشد.${comment ? `\nتوضیح: ${comment}` : ''}\nبرای هماهنگی همین‌جا پیام بدهید.`);
+    }
+    return { status, statusFa: PAY_STATUS_FA[status] };
+  }
+
+  receiptPath(p: { receiptKey: string | null }) {
+    if (!p.receiptKey || !/^[a-f0-9]+\.(jpg|png|webp)$/.test(p.receiptKey)) throw new NotFoundException();
+    const path = join(RECEIPTS, p.receiptKey);
+    if (!existsSync(path)) throw new NotFoundException();
+    return path;
+  }
 
   /**
    * The customer's account: invoices (debit), money received (credit), cheques still pending, and a statement
@@ -33,7 +103,7 @@ export class AccountingService {
    */
   async account(customerId: string) {
     const [customer, invoices, payments] = await Promise.all([
-      this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true, city: true, terms: true } }),
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true, city: true, terms: true, support: { select: { id: true, firstName: true, lastName: true, username: true } } } }),
       this.prisma.invoice.findMany({ where: { customerId }, orderBy: { issuedAt: 'desc' }, include: { _count: { select: { items: true } }, order: { select: { number: true } } } }),
       this.prisma.payment.findMany({ where: { customerId }, orderBy: { receivedAt: 'desc' }, include: { invoice: { select: { number: true } } } }),
     ]);
@@ -41,6 +111,7 @@ export class AccountingService {
     const issued = invoices.filter(i => i.status === 'ISSUED');
     const cleared = payments.filter(p => p.status === 'CLEARED');
     const pending = payments.filter(p => p.status === 'PENDING');
+    const reported = payments.filter(p => p.status === 'REPORTED').reduce((x, p) => x + p.amount, 0n);
     const invoiced = issued.reduce((s, i) => s + i.total, 0n);
     const paid = cleared.reduce((s, p) => s + p.amount, 0n);
     const pendingCheques = pending.reduce((s, p) => s + p.amount, 0n);
@@ -54,9 +125,9 @@ export class AccountingService {
 
     return {
       customer,
-      summary: { invoiced, paid, pendingCheques, balance: invoiced - paid, balanceAfterCheques: invoiced - paid - pendingCheques },
+      summary: { invoiced, paid, pendingCheques, reported, balance: invoiced - paid, balanceAfterCheques: invoiced - paid - pendingCheques },
       invoices: invoices.map(({ _count, ...i }) => ({ ...i, itemCount: _count.items })),
-      payments: payments.map(p => ({ ...p, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })),
+      payments: payments.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })),
       statement,
     };
   }
@@ -181,6 +252,21 @@ export class AdminAccountsController {
   @Post('invoices') @Staff('ADMIN') issue(@Session() s: SessionClaims, @Body() b: Parameters<AccountingService['issueFromOrder']>[1]) { return this.acc.issueFromOrder(s.sub, b); }
   @Post('invoices/:id/cancel') @Staff('ADMIN') cancel(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { reason?: string }) { return this.acc.cancelInvoice(s.sub, id, b?.reason?.slice(0, 300)); }
   @Post('payments') @Staff('ADMIN') pay(@Session() s: SessionClaims, @Body() b: Parameters<AccountingService['addPayment']>[1]) { return this.acc.addPayment(s.sub, b); }
+  /** Payments customers sent from the mini app, waiting for review. */
+  @Get('reported')
+  reported() {
+    return this.prisma.payment.findMany({ where: { status: 'REPORTED' }, orderBy: { createdAt: 'asc' }, include: { customer: { select: { id: true, name: true } }, invoice: { select: { number: true } } } })
+      .then(ps => ps.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, methodFa: METHOD_FA[p.method] })));
+  }
+  @Post('payments/:id/review') review(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { ok?: boolean; comment?: string }) { return this.acc.review(s.sub, id, !!b?.ok, b?.comment); }
+  @Get('payments/:id/receipt')
+  async receipt(@Param('id') id: string, @Res() res: Response) {
+    const p = await this.prisma.payment.findUnique({ where: { id } });
+    if (!p) throw new NotFoundException();
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.type(p.receiptKey!.split('.').pop()!);
+    createReadStream(this.acc.receiptPath(p)).pipe(res);
+  }
   @Patch('payments/:id') @Staff('ADMIN') payStatus(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { status?: string }) { return this.acc.setPaymentStatus(s.sub, id, String(b?.status)); }
 }
 
@@ -201,6 +287,26 @@ export class MyAccountController {
   @Get()
   async mine(@Session() s: SessionClaims, @Query('customerId') customerId?: string) {
     return this.acc.account(await this.customerOf(s.sub, customerId));
+  }
+
+  /** Report a payment with a photo of the cheque or bank receipt. Buyers may send too. */
+  @Post('payments')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  async report(@Session() s: SessionClaims, @UploadedFile() file: { buffer: Buffer; mimetype: string } | undefined, @Body() b: Record<string, string>) {
+    const ms = await this.prisma.customerMember.findMany({ where: { userId: s.sub } });
+    const m = b.customerId ? ms.find(x => x.customerId === b.customerId) : ms.find(x => x.role !== 'VIEWER') ?? ms[0];
+    if (!m) throw new NotFoundException('هنوز حساب مشتری ندارید');
+    return this.acc.report(s.sub, m.customerId, b, file);
+  }
+
+  @Get('payments/:id/receipt')
+  async receipt(@Session() s: SessionClaims, @Param('id') id: string, @Res() res: Response) {
+    const p = await this.prisma.payment.findUnique({ where: { id } });
+    if (!p) throw new NotFoundException();
+    if (p.reportedById !== s.sub) await this.customerOf(s.sub, p.customerId);
+    res.type(p.receiptKey?.split('.').pop() ?? 'jpg');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    createReadStream(this.acc.receiptPath(p)).pipe(res);
   }
 
   @Get('invoices/:id')

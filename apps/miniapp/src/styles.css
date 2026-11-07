@@ -333,3 +333,15 @@ img.photo{display:block;object-fit:contain}
 .ledger em{font-style:normal;font-weight:800}.ledger .dr{color:var(--bad)}.ledger .cr{color:var(--ok)}
 .invhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 16px 12px;font-size:13px;color:var(--muted)}
 .invhead .link{border:0;background:none;color:var(--link);font-weight:700;padding:0}
+.stackf{display:grid;gap:12px;margin-top:12px}
+.photo-in{margin-inline:16px;border:1.5px dashed var(--line);border-radius:22px;background:var(--surface);min-height:150px;display:grid;place-items:center;overflow:hidden;position:relative;text-align:center}
+.photo-in span{display:grid;gap:4px;justify-items:center;color:var(--muted);padding:20px}
+.photo-in b{color:var(--fg);font-size:14px}.photo-in small{font-size:12px}
+.photo-in img{width:100%;max-height:320px;object-fit:contain}
+.photo-in input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.jdate{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;direction:rtl}
+.field textarea,.field select{font:inherit}
+.agent{margin:12px 16px 0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:12px 14px}
+.agent .av{width:40px;height:40px;border-radius:14px;display:grid;place-items:center;background:var(--drop-soft);color:var(--drop)}
+.agent small{display:block;color:var(--muted);font-size:11px}.agent b{font-size:14px}
+.agent .cta{width:auto;height:40px;padding:0 18px;border-radius:14px;font-size:14px}

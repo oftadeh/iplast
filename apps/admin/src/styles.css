@@ -151,3 +151,7 @@ fieldset.plain{border:0;padding:0;margin:0;min-width:0}
 .prow.static{cursor:default}.prow.static:hover{background:none}
 .linkish{background:none;border:0;padding:0;text-align:right;color:inherit}
 @media print{.side,.head{display:none!important}.shell{display:block}main{padding:0}.card{box-shadow:none;border:0}}
+.paycard{display:grid;grid-template-columns:88px minmax(0,1fr);gap:12px;padding:14px 16px;align-items:start}
+.receipt{width:88px;height:88px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);padding:0;overflow:hidden;display:grid;place-items:center;text-align:center}
+.receipt img{width:100%;height:100%;object-fit:cover}
+.receipt-big{display:block;width:calc(100% - 32px);margin:0 16px 12px;border-radius:12px;border:1px solid var(--line)}

@@ -130,17 +130,31 @@ bot.callbackQuery(/^cd:([a-z0-9]{10,40})$/, async ctx => {
   }
 });
 
-// Staff order buttons under «🧾 سفارش جدید»: confirm, under review, reject
-bot.callbackQuery(/^os:([a-z0-9]{10,40}):(CONFIRMED|SALES_REVIEW|REJECTED)$/, async ctx => {
+// Proforma buttons: «تأیید کارشناس» for the sales agent, «تأیید نهایی» for managers, «رد» for both
+bot.callbackQuery(/^os:([a-z0-9]{10,40}):(sales_ok|final_ok|reject)$/, async ctx => {
   try {
-    const r = await internal<{ number: number; statusFa: string }>('/internal/orders/status', { telegramId: String(ctx.from.id), orderId: ctx.match[1], status: ctx.match[2] });
+    const r = await internal<{ number: number; statusFa: string }>('/internal/orders/decide', { telegramId: String(ctx.from.id), orderId: ctx.match[1], action: ctx.match[2] });
     await ctx.answerCallbackQuery({ text: `سفارش #${r.number}: ${r.statusFa}` });
     const who = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ');
     const old = ctx.callbackQuery.message?.text ?? '';
-    // final states drop the buttons; «در بررسی» keeps them for the final decision
-    await ctx.editMessageText(`${old}\n\n▫️ ${r.statusFa} (${who})`, ctx.match[2] === 'SALES_REVIEW' ? { reply_markup: ctx.callbackQuery.message?.reply_markup } : {}).catch(() => {});
+    await ctx.editMessageText(`${old}\n\n▫️ ${r.statusFa} (${who})`).catch(() => {});
   } catch (e) {
-    await ctx.answerCallbackQuery({ text: (e as Error).message === 'Unauthorized' ? 'فقط کارکنان فروش' : (e as Error).message, show_alert: true });
+    const m = (e as Error).message;
+    await ctx.answerCallbackQuery({ text: m === 'Unauthorized' ? 'فقط کارکنان فروش' : m, show_alert: true });
+  }
+});
+
+// Receipt photo buttons: the agent or a manager accepts or rejects a payment the customer sent
+bot.callbackQuery(/^pay:([a-z0-9]{10,40}):(ok|no)$/, async ctx => {
+  try {
+    const r = await internal<{ statusFa: string }>('/internal/payments/review', { telegramId: String(ctx.from.id), paymentId: ctx.match[1], ok: ctx.match[2] === 'ok' });
+    await ctx.answerCallbackQuery({ text: r.statusFa });
+    const who = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ');
+    const old = ctx.callbackQuery.message?.caption ?? '';
+    await ctx.editMessageCaption({ caption: `${old}\n\n▫️ ${r.statusFa} (${who})` }).catch(() => {});
+  } catch (e) {
+    const m = (e as Error).message;
+    await ctx.answerCallbackQuery({ text: m === 'Unauthorized' ? 'فقط کارکنان فروش' : m, show_alert: true });
   }
 });
 

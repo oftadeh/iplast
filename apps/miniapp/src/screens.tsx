@@ -283,8 +283,8 @@ export function CartScreen() {
 }
 
 // ───────── orders ─────────
-const STEPS: [string, string][] = [['ثبت‌شده', 'از مینی‌اپ یا ربات'], ['بررسی واحد فروش', 'قیمت نهایی، موجودی، تخفیف'], ['پیش‌فاکتور', 'با اعتبار ۴۸ ساعت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
-const STEP_OF: Record<string, number> = { SUBMITTED: 0, SALES_REVIEW: 1, NEEDS_FIX: 1, PROFORMA_SENT: 2, PROFORMA_EXPIRED: 2, CONFIRMED: 3, PREPARING: 3, SHIPPED: 4, DELIVERED: 6 };
+const STEPS: [string, string][] = [['پیش‌فاکتور ثبت شد', 'از مینی‌اپ یا ربات'], ['تأیید کارشناس فروش', 'کارشناس شما قیمت و موجودی را بررسی می‌کند'], ['تأیید نهایی مدیر', 'کارشناس تأیید کرد؛ منتظر تأیید نهایی مدیریت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
+const STEP_OF: Record<string, number> = { SUBMITTED: 1, SALES_REVIEW: 1, NEEDS_FIX: 1, SALES_APPROVED: 2, PROFORMA_SENT: 2, PROFORMA_EXPIRED: 2, CONFIRMED: 3, PREPARING: 3, SHIPPED: 4, DELIVERED: 6 };
 const stClass = (s: string) => (s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' ? 'ask' : s === 'DELIVERED' ? 'ok' : 'info');
 const dateFa = (d: string) => new Date(d).toLocaleDateString('fa-IR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -325,14 +325,15 @@ export function OrderScreen({ id }: { id: string }) {
       <div style={{ height: 16 }} />
       <section className="ostat">
         <div className="r">
-          <div><p className="num">سفارش #{fa(d.number)} · {d.customer.name}</p><h2>{d.statusFa}</h2><p>{stopped ? (lastComment ?? '') : at < 6 ? STEPS[Math.min(at, 5)][1] : 'سفارش تحویل شد'}</p></div>
+          <div><p className="num">{at <= 2 && !stopped ? 'پیش‌فاکتور' : 'سفارش'} #{fa(d.number)} · {d.customer.name}</p><h2>{d.statusFa}</h2><p>{stopped ? (lastComment ?? '') : at < 6 ? STEPS[Math.min(at, 5)][1] : 'سفارش تحویل شد'}</p></div>
           <svg className="ring" viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="34" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="8" />
             {!stopped && <circle cx="42" cy="42" r="34" fill="none" stroke="#fff" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${C * pct} ${C}`} transform="rotate(-90 42 42)" />}
             <text x="42" y="48" textAnchor="middle" fill="#fff" fontSize="17" fontWeight="900">{stopped ? '—' : `${fa(Math.min(at + 1, 6))}/${fa(6)}`}</text></svg>
         </div>
         {!stopped && <div className="bar">{STEPS.map((_, i) => <i key={i} className={i < at ? 'on' : i === at ? 'now' : ''} />)}</div>}
       </section>
-      {d.status === 'NEEDS_FIX' && lastComment && <div className="notice warn">پیام واحد فروش: {lastComment}</div>}
+      <AgentCard customerId={d.customer.id} />
+      {d.status === 'NEEDS_FIX' && lastComment && <div className="notice warn" style={{ marginTop: 10 }}>پیام کارشناس فروش: {lastComment}</div>}
 
       <div className="items">
         {d.items.map(i => (
@@ -356,14 +357,26 @@ export function OrderScreen({ id }: { id: string }) {
           ))}
         </ol>
       )}
-      <div className="pad"><button type="button" className="cta ghost" onClick={openSupportChat}><Icon n="chat" s={18} />&nbsp; پیام به کارشناس فروش</button></div>
     </>
   );
 }
 
+/** Who the customer's sales agent is, and a button to talk to them (messages go through the bot to the agent). */
+function AgentCard({ customerId }: { customerId: string }) {
+  const { me } = useApp();
+  const sup = me?.accounts.find(a => a.customerId === customerId)?.support;
+  return (
+    <div className="agent">
+      <span className="av"><Icon n="chat" s={18} /></span>
+      <span><small>کارشناس فروش شما</small><b>{sup ? personName(sup) : 'واحد فروش اصفهان پلاست'}</b></span>
+      <button type="button" className="cta" onClick={openSupportChat}>گفتگو</button>
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<string, string> = {
-  SUBMITTED: 'ثبت‌شده', SALES_REVIEW: 'در بررسی واحد فروش', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
-  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید شد', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
+  SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', NEEDS_FIX: 'نیاز به اصلاح', SALES_APPROVED: 'تأیید کارشناس فروش', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
+  PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی مدیر', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
 

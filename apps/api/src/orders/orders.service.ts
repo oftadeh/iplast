@@ -15,7 +15,7 @@ export interface OrderInput {
 }
 
 export const STATUS_FA: Record<OrderStatus, string> = {
-  SUBMITTED: 'ثبت‌شده', SALES_REVIEW: 'در بررسی واحد فروش', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
+  SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', SALES_APPROVED: 'تأیید کارشناس؛ منتظر تأیید نهایی مدیر', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
   PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید شد', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
@@ -76,25 +76,85 @@ export class OrdersService {
     return items.reduce((s, i) => s + (i.unitPrice ?? 0n) * BigInt(i.quantity), 0n);
   }
 
-  private async notifyNewOrder(orderId: string) {
-    const o = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true, customer: { include: { support: true } }, placedBy: true } });
+  /** Who handles a customer's orders: their own sales agent, else every active sales agent, else the managers. */
+  async salesAgentsOf(customerId: string) {
+    const c = await this.prisma.customer.findUnique({ where: { id: customerId }, include: { support: true } });
+    if (c?.support?.isActive && c.support.staffRole) return [c.support];
+    const sales = await this.prisma.user.findMany({ where: { staffRole: 'SALES', isActive: true } });
+    if (sales.length) return sales;
+    return this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } });
+  }
+  private admins() { return this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } }); }
+
+  private async orderText(orderId: string, head: string) {
+    const o = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true, customer: true, placedBy: true } });
     const total = this.orderTotal(o.items);
     const inq = o.items.filter(i => i.unitPrice === null).length;
     const who = [o.placedBy.firstName, o.placedBy.lastName].filter(Boolean).join(' ') || `کاربر ${o.placedBy.telegramId}`;
     const lines = o.items.slice(0, 40).map((i, n) => `${n + 1}. ${i.title} — ${i.packs ? `${i.packs} بسته (${i.quantity})` : i.quantity}${i.unitPrice === null ? ' — استعلامی' : ''}`);
     if (o.items.length > 40) lines.push(`… و ${o.items.length - 40} قلم دیگر`);
-    const text = `🧾 سفارش جدید #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی)` : ''} · جمع تقریبی: ${formatRial(total)}${o.note ? `\nتوضیح: ${o.note}` : ''}`;
-    // staff can move the order on right from the chat (handled by the bot), also when there is no admin panel yet
+    const cash = (o.termsSnapshot as { cashPercent?: number } | null)?.cashPercent ?? 100;
+    return { o, text: `${head} #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی)` : ''} · جمع تقریبی: ${formatRial(total)} · نقد ${cash}٪ / چک ${100 - cash}٪${o.note ? `\nتوضیح: ${o.note}` : ''}` };
+  }
+
+  /** Step 1: the customer's sales agent gets the proforma with approve / reject buttons (handled by the bot). */
+  private async notifyNewOrder(orderId: string) {
+    const { o, text } = await this.orderText(orderId, '🧾 پیش‌فاکتور جدید');
+    const agents = await this.salesAgentsOf(o.customerId);
     const kb = { inline_keyboard: [[
-      { text: '✅ تأیید', callback_data: `os:${o.id}:CONFIRMED` },
-      { text: '🕓 در بررسی', callback_data: `os:${o.id}:SALES_REVIEW` },
-      { text: '❌ رد', callback_data: `os:${o.id}:REJECTED` },
+      { text: '✅ تأیید کارشناس', callback_data: `os:${o.id}:sales_ok` },
+      { text: '❌ رد', callback_data: `os:${o.id}:reject` },
     ]] };
-    const targets = new Set<string>();
-    if (o.customer.support?.isActive) targets.add(String(o.customer.support.telegramId));
-    else for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean)) targets.add(id);
-    for (const t of targets) await this.tg.send(t, text, kb);
-    await this.tg.send(o.placedBy.telegramId, `سفارش #${o.number} ثبت شد و برای واحد فروش ارسال شد. نتیجه بررسی همین‌جا اطلاع داده می‌شود.`);
+    for (const a of agents) await this.tg.send(a.telegramId, `${text}\n\nبعد از هماهنگی با مشتری، تأیید کنید تا برای تأیید نهایی مدیر برود.`, kb);
+    for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(Boolean))
+      if (!agents.some(a => String(a.telegramId) === id)) await this.tg.send(id, text, kb);
+    const agent = agents.length === 1 && agents[0].staffRole === 'SALES' ? [agents[0].firstName, agents[0].lastName].filter(Boolean).join(' ') : '';
+    await this.tg.send(o.placedBy.telegramId, `پیش‌فاکتور #${o.number} ثبت شد و برای ${agent ? `کارشناس فروش شما، ${agent}،` : 'کارشناس فروش'} ارسال شد.\nبرای هماهنگی قیمت، تحویل و پرداخت، همین‌جا در ربات پیام یا ویس بدهید؛ مستقیم به کارشناس‌تان می‌رسد.`);
+  }
+
+  /**
+   * The two-step approval: the customer's sales agent approves («تأیید کارشناس»), then a manager gives the final
+   * approval. A manager may approve directly only when there are no sales agents at all. Either may reject or ask for a fix.
+   */
+  async decide(byUserId: string, orderId: string, action: string, comment?: string): Promise<{ status: OrderStatus }> {
+    const [u, o] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: byUserId } }),
+      this.prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } }),
+    ]);
+    if (!o) throw new NotFoundException();
+    if (!u?.staffRole || !u.isActive) throw new ForbiddenException('دسترسی ندارید');
+    const isAdmin = u.staffRole === 'ADMIN';
+    const open: OrderStatus[] = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX'];
+    const note = comment?.trim().slice(0, 1000) || undefined;
+    const by = [u.firstName, u.lastName].filter(Boolean).join(' ') || 'کارشناس';
+    if (action === 'sales_ok') {
+      if (!open.includes(o.status)) throw new BadRequestException(o.status === 'SALES_APPROVED' ? 'قبلاً تأیید کارشناس خورده است' : 'این پیش‌فاکتور دیگر منتظر تأیید کارشناس نیست');
+      if (!isAdmin && o.customer.supportId && o.customer.supportId !== u.id) throw new ForbiddenException('این مشتری کارشناس دیگری دارد');
+      await this.setStatus(byUserId, orderId, 'SALES_APPROVED', note);
+      const { text } = await this.orderText(orderId, `✅ تأیید کارشناس (${by}) — منتظر تأیید نهایی`);
+      const kb = { inline_keyboard: [[{ text: '✅ تأیید نهایی', callback_data: `os:${o.id}:final_ok` }, { text: '❌ رد', callback_data: `os:${o.id}:reject` }]] };
+      const admins = await this.admins();
+      for (const a of admins) if (a.id !== byUserId) await this.tg.send(a.telegramId, `${text}${note ? `\nنظر کارشناس: ${note}` : ''}`, kb);
+      await this.tg.sms(`اصفهان پلاست: پیش‌فاکتور ${o.number} (${o.customer.name}) تأیید کارشناس خورد و منتظر تأیید نهایی شماست.`);
+      if (isAdmin && admins.length === 1) return this.decide(byUserId, orderId, 'final_ok', note);
+      return { status: 'SALES_APPROVED' as OrderStatus };
+    }
+    if (action === 'final_ok') {
+      if (!isAdmin) throw new ForbiddenException('تأیید نهایی با مدیر است');
+      const noSales = !(await this.prisma.user.count({ where: { staffRole: 'SALES', isActive: true } }));
+      if (o.status !== 'SALES_APPROVED' && !(noSales && open.includes(o.status))) throw new BadRequestException('اول کارشناس فروش باید تأیید کند');
+      await this.setStatus(byUserId, orderId, 'CONFIRMED', note);
+      return { status: 'CONFIRMED' as OrderStatus };
+    }
+    if (action === 'fix' || action === 'reject') {
+      if (![...open, 'SALES_APPROVED'].includes(o.status)) throw new BadRequestException('این سفارش دیگر قابل تغییر نیست');
+      if (!isAdmin && o.customer.supportId && o.customer.supportId !== u.id) throw new ForbiddenException('این مشتری کارشناس دیگری دارد');
+      if (action === 'fix' && !note) throw new BadRequestException('بنویسید چه چیزی باید اصلاح شود');
+      const status: OrderStatus = action === 'fix' ? 'NEEDS_FIX' : 'REJECTED';
+      await this.setStatus(byUserId, orderId, status, note);
+      return { status };
+    }
+    throw new BadRequestException('کار نامعتبر است');
   }
 
   /** Moves an order to a new status and tells the person who placed it, through the bot. */

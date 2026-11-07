@@ -9,7 +9,7 @@ export const personName = (p?: { firstName?: string | null; lastName?: string | 
   p ? [p.firstName, p.lastName].filter(Boolean).join(' ') || (p.username ? '@' + p.username : 'بی‌نام') : '—';
 
 export const STATUS_CLASS = (s: string) =>
-  s === 'SUBMITTED' ? 'new' : s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' ? 'ask' : s === 'DELIVERED' ? 'ok' : '';
+  s === 'SUBMITTED' ? 'new' : s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' ? 'ask' : s === 'DELIVERED' || s === 'SALES_APPROVED' ? 'ok' : '';
 export const ROLE_FA: Record<string, string> = { OWNER: 'مدیر حساب', BUYER: 'کارشناس خرید', VIEWER: 'فقط مشاهده', ADMIN: 'مدیر', SALES: 'کارشناس فروش' };
 export const TYPE_FA: Record<string, string> = { RETAIL: 'خرده‌فروش', DEALER: 'نماینده', CONTRACTOR: 'پیمانکار' };
 
@@ -76,3 +76,18 @@ export function jalaliToday(): [number, number, number] {
   return [g('year'), g('month'), g('day')];
 }
 export const dayFa = (d: string) => new Date(d).toLocaleDateString('fa-IR', { year: 'numeric', month: 'long', day: 'numeric' });
+
+/** Loads a private file (a receipt photo) with the login header and gives back a local URL for <img>. */
+export function useBlobUrl(path: string | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!path) return;
+    let live = true, made: string | null = null;
+    fetch('/api' + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.blob() : null)
+      .then(b => { if (b && live) { made = URL.createObjectURL(b); setUrl(made); } })
+      .catch(() => {});
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+  }, [path]);
+  return url;
+}

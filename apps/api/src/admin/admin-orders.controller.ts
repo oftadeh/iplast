@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { OrderStatus } from '@iplast/db';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
@@ -17,13 +17,14 @@ export class AdminOrdersController {
 
   @Get()
   async list(@Query('status') status?: string, @Query('q') q?: string) {
+    const wanted = (status ?? '').split(',').filter(x => STATUSES.includes(x as OrderStatus)) as OrderStatus[];
     const where = {
-      ...(status && STATUSES.includes(status as OrderStatus) ? { status: status as OrderStatus } : {}),
+      ...(wanted.length ? { status: { in: wanted } } : {}),
       ...(q ? { OR: [{ customer: { name: { contains: q } } }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])] } : {}),
     };
     const rows = await this.prisma.order.findMany({
       where, orderBy: { createdAt: 'desc' }, take: 100,
-      include: { items: true, customer: { select: { id: true, name: true } }, placedBy: { select: { firstName: true, lastName: true, username: true } } },
+      include: { items: true, customer: { select: { id: true, name: true, support: { select: { firstName: true, lastName: true } } } }, placedBy: { select: { firstName: true, lastName: true, username: true } } },
     });
     const counts = await this.prisma.order.groupBy({ by: ['status'], _count: true });
     return {
@@ -35,11 +36,21 @@ export class AdminOrdersController {
 
   @Get(':id') one(@Session() s: SessionClaims, @Param('id') id: string) { return this.orders.get(s.sub, id, true); }
 
-  /** Moves an order to a new status and tells the person who placed it, through the bot. */
+  /** Approval steps: sales_ok (sales agent), final_ok (manager), fix (with a note), reject. */
+  @Post(':id/decide')
+  async decide(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { action?: string; comment?: string }) {
+    const before = await this.prisma.order.findUnique({ where: { id }, select: { status: true } });
+    const r = await this.orders.decide(s.sub, id, String(b?.action), b?.comment);
+    await audit(this.prisma, s.sub, 'order.decide', 'Order', id, before, { action: b?.action, status: r.status, comment: b?.comment });
+    return this.orders.get(s.sub, id, true);
+  }
+
+  /** After the final approval: preparing, shipped, delivered, or cancelled. Managers only. */
   @Patch(':id/status')
+  @Staff('ADMIN')
   async setStatus(@Session() s: SessionClaims, @Param('id') id: string, @Body() body: { status?: string; comment?: string }) {
     const status = body?.status as OrderStatus;
-    if (!STATUSES.includes(status)) throw new BadRequestException('وضعیت نامعتبر است');
+    if (!(['PREPARING', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as OrderStatus[]).includes(status)) throw new BadRequestException('وضعیت نامعتبر است');
     const comment = body.comment?.slice(0, 1000);
     const r = await this.orders.setStatus(s.sub, id, status, comment);
     await audit(this.prisma, s.sub, 'order.status', 'Order', id, { status: r.before }, { status, comment });

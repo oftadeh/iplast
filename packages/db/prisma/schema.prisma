@@ -292,6 +292,7 @@ model PaymentTerms {
 enum OrderStatus {
   SUBMITTED
   SALES_REVIEW
+  SALES_APPROVED // approved by the customer's sales agent, waiting for the manager's final approval
   NEEDS_FIX
   PROFORMA_SENT
   PROFORMA_EXPIRED
@@ -503,6 +504,8 @@ model Payment {
   dueDate      DateTime? // cheque date (سررسید)
   receivedAt   DateTime      @default(now())
   note         String?
+  receiptKey   String? // photo of the cheque or bank receipt (private upload)
+  reportedById String? // customer user who sent it from the mini app
   createdById  String
   createdAt    DateTime      @default(now())
 
@@ -516,6 +519,7 @@ enum PaymentMethod {
 }
 
 enum PaymentStatus {
+  REPORTED // sent by the customer with a photo of the cheque/receipt, waiting for staff to check
   PENDING // cheque received, not cleared yet
   CLEARED
   BOUNCED // برگشتی

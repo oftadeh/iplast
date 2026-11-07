@@ -19,6 +19,11 @@ export class AuthService implements OnModuleInit {
     for (const id of ids) {
       await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'ADMIN' }, update: { staffRole: 'ADMIN', isActive: true } });
     }
+    // SUPPORT_TELEGRAM_IDS are sales agents unless they already have a role
+    for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x) && !ids.includes(x))) {
+      const u = await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'SALES' }, update: {} });
+      if (!u.staffRole) await this.prisma.user.update({ where: { id: u.id }, data: { staffRole: 'SALES' } });
+    }
   }
 
   private sign(user: { id: string; telegramId: bigint; staffRole: string | null }) {

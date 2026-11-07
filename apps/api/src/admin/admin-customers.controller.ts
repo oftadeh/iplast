@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { CustomerType, MemberRole } from '@iplast/db';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
@@ -33,7 +33,7 @@ export class AdminCustomersController {
   async one(@Param('id') id: string) {
     const c = await this.prisma.customer.findUnique({
       where: { id },
-      include: { terms: true, support: true, priceGroup: true, members: { include: { user: true } }, orders: { orderBy: { createdAt: 'desc' }, take: 20 } },
+      include: { terms: true, support: { select: { id: true, firstName: true, lastName: true, username: true, staffRole: true } }, priceGroup: true, members: { include: { user: true } }, orders: { orderBy: { createdAt: 'desc' }, take: 20 } },
     });
     if (!c) throw new NotFoundException();
     return c;
@@ -52,6 +52,7 @@ export class AdminCustomersController {
   async update(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { name?: string; city?: string; address?: string; type?: string; isApproved?: boolean; supportId?: string | null }) {
     const before = await this.prisma.customer.findUnique({ where: { id } });
     if (!before) throw new NotFoundException();
+    if (b.supportId !== undefined && b.supportId !== before.supportId && s.staff !== 'ADMIN') throw new ForbiddenException('تعیین کارشناس فقط با مدیر است');
     if (b.supportId) {
       const sup = await this.prisma.user.findUnique({ where: { id: b.supportId } });
       if (!sup?.staffRole) throw new BadRequestException('پشتیبان نامعتبر است');

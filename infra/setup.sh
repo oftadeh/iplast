@@ -57,12 +57,17 @@ OPENAI_TRANSCRIBE_MODEL=gpt-transcribe
 # bot → API calls inside the Docker network only
 INTERNAL_KEY=$(openssl rand -hex 32)
 API_INTERNAL_URL=http://api:3000/api
+# SMS to managers when a sales agent approves a proforma (Kavenegar). Empty = Telegram message only.
+KAVENEGAR_API_KEY=
+KAVENEGAR_SENDER=
+ADMIN_SMS_NUMBERS=
 ENV
   chmod 600 .env
   echo ".env created."
 fi
 # settings added after the first install
 grep -q '^INTERNAL_KEY=' .env || printf '\nINTERNAL_KEY=%s\nAPI_INTERNAL_URL=http://api:3000/api\nOPENAI_API_KEY=\nOPENAI_MODEL=gpt-6-luna\nOPENAI_TRANSCRIBE_MODEL=gpt-transcribe\n' "$(openssl rand -hex 32)" >> .env
+grep -q '^KAVENEGAR_API_KEY=' .env || printf '\nKAVENEGAR_API_KEY=\nKAVENEGAR_SENDER=\nADMIN_SMS_NUMBERS=\n' >> .env
 
 install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy
 cat > /etc/systemd/system/iplast-autodeploy.service <<UNIT

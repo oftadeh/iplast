@@ -17,11 +17,11 @@ import { AdminConversationsController } from './admin/admin-conversations.contro
 import { AccountingService, AdminAccountsController, MyAccountController } from './accounting/accounting';
 import { PriceAiService } from './prices/price-ai.service';
 import { AdminProductsController, MediaController } from './admin/admin-products.controller';
-import { AssistantController, InternalAssistantController, InternalOrdersController } from './assistant/assistant.controller';
+import { AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController } from './assistant/assistant.controller';
 import { AssistantService } from './assistant/assistant.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController],
   providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService],
 })
 export class AppModule {}
