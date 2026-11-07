@@ -7,6 +7,7 @@ import { PricesPage } from './pages/Prices';
 import { AccountsPage } from './pages/Accounts';
 import { WarehousePage } from './pages/Warehouse';
 import { MessagesPage } from './pages/Messages';
+import { ProxyPage } from './pages/Proxy';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -23,6 +24,7 @@ const SECTIONS: { id: string; title: string; roles: Role[] }[] = [
   { id: 'prices', title: 'به‌روزرسانی قیمت', roles: ['ADMIN', 'SALES'] },
   { id: 'accounts', title: 'حساب مشتریان', roles: ['ADMIN', 'SALES'] },
   { id: 'staff', title: 'کارکنان', roles: ['ADMIN'] },
+  { id: 'proxy', title: 'پراکسی سرور', roles: ['ADMIN'] },
 ];
 
 interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
@@ -86,6 +88,7 @@ export function App() {
           {current === 'prices' && <PricesPage />}
           {current === 'accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
           {current === 'staff' && <StaffPage />}
+          {current === 'proxy' && <ProxyPage />}
         </main>
       </div>
       {toastText && <div className="toast" role="status">{toastText}</div>}

@@ -75,6 +75,7 @@ HTTPS_PROXY=$OUTBOUND_PROXY
 HTTP_PROXY=$OUTBOUND_PROXY
 NO_PROXY=localhost,127.0.0.1,api,postgres,redis,web,migrate,bot
 NODE_USE_ENV_PROXY=1
+PROXY_INBOX=/opt/iplast-proxy/inbox
 ENV
   fi
   if [ -n "${SHARED_WEB:-}" ]; then cat >> .env <<ENV

@@ -20,6 +20,8 @@ if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then exit 0; fi
 
 git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
+# servers that use the outbound proxy (see infra/proxy): keep its host tools current
+if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; fi
 LOG=/var/log/iplast-deploy.log
 if docker compose up -d --build --remove-orphans >"$LOG" 2>&1; then
   sleep 8
