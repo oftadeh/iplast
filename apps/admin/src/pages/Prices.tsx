@@ -16,6 +16,7 @@ const MATCH_ST: Record<string, [string, string]> = { MATCHED: ['وصل شد', 'o
 const changed = (r: Row) => !!r.variant && r.hadOld && r.amount !== r.oldAmount;
 const FILTERS: [string, string, (r: Row) => boolean][] = [
   ['review', 'نیاز به بررسی', r => r.match === 'AMBIGUOUS' || r.match === 'UNMATCHED'],
+  ['ai', 'کار هوش مصنوعی', r => r.resolvedBy === 'ai'],
   ['changed', 'تغییر قیمت', changed],
   ['matched', 'وصل‌شده', r => !!r.variant],
   ['new', 'در کاتالوگ نیست', r => r.match === 'NEW'],
@@ -30,29 +31,34 @@ export function PricesPage() {
   const current = sel ?? draft?.id ?? null;
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const ai = useApi<{ enabled: boolean }>('/admin/prices/ai').data?.enabled ?? false;
 
   const upload = async (file: File) => {
     setBusy(true);
     try {
       const fd = new FormData(); fd.append('file', file);
-      const qs = draft ? `?listId=${draft.id}` : '';
+      const qs = `?ai=${ai ? 1 : 0}${draft ? `&listId=${draft.id}` : ''}`;
       const r = await fetch(`/api/admin/prices/import${qs}`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${getToken()}` } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new ApiError(r.status, j?.message ?? 'بارگذاری نشد');
-      toast(`${fa(Object.values(j.counts as Record<string, number>).reduce((a, b) => a + b, 0))} ردیف از فایل خوانده شد`);
+      const n = fa(Object.values(j.counts as Record<string, number>).reduce((a, b) => a + b, 0));
+      toast(j.ai ? `${n} ردیف خوانده شد؛ هوش مصنوعی ${fa(j.ai.matched + j.ai.suggested)} ردیف دیگر را هم وصل کرد` : `${n} ردیف از فایل خوانده شد`);
       setSel(j.list.id); lists.reload();
     } catch (e) { toast(e instanceof ApiError ? e.message : 'بارگذاری نشد'); } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
   return (
     <>
-      <div className="head"><h1>لیست قیمت</h1>
+      <div className="head"><h1>به‌روزرسانی قیمت{ai ? <span className="st ai" style={{ marginInlineStart: 8, verticalAlign: 'middle' }}>هوش مصنوعی</span> : null}</h1>
         <div className="row">
           <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
-          <button type="button" className="btn primary" disabled={busy} onClick={() => fileRef.current?.click()}>{busy ? 'در حال خواندن PDF…' : draft ? 'افزودن PDF دیگر به پیش‌نویس' : 'بارگذاری PDF لیست قیمت'}</button>
+          <button type="button" className="btn primary" disabled={busy} onClick={() => fileRef.current?.click()}>{busy ? (ai ? 'هوش مصنوعی در حال خواندن PDF… (تا یک دقیقه)' : 'در حال خواندن PDF…') : draft ? 'افزودن PDF دیگر به پیش‌نویس' : 'بارگذاری PDF لیست قیمت'}</button>
         </div>
       </div>
-      <div className="note">PDF لیست قیمت را بارگذاری کنید. هر ردیف با «کد کالا» به سایز مربوطش در کاتالوگ وصل می‌شود. کدهای تکراری و ردیف‌های بدون کد را بررسی کنید، تغییرات را ببینید و بعد منتشر کنید. تا انتشار، مشتریان همان لیست فعلی را می‌بینند. اگر لیست ماه در چند فایل است، فایل‌ها را یکی‌یکی به همین پیش‌نویس اضافه کنید.</div>
+      <div className="note">
+        <b>۱.</b> PDF لیست قیمت را بارگذاری کنید. {ai ? 'ردیف‌ها با «کد کالا» به سایزها وصل می‌شوند و هوش مصنوعی ردیف‌های بدون کد یا با کد تکراری را از روی نام و سایز وصل می‌کند؛ PDF اسکن‌شده را هم خودش می‌خواند.' : 'هر ردیف با «کد کالا» به سایز مربوطش وصل می‌شود.'}
+        {' '}<b>۲.</b> تغییر قیمت‌ها و ردیف‌های «نیاز به بررسی» را نگاه کنید. <b>۳.</b> «انتشار» بزنید؛ از همان لحظه مشتریان قیمت جدید را می‌بینند. تا انتشار، لیست فعلی برقرار است.
+      </div>
 
       {lists.data && lists.data.length > 0 && (
         <div className="card tablewrap">
@@ -70,13 +76,13 @@ export function PricesPage() {
           </table>
         </div>
       )}
-      {current ? <ListDetail key={current} id={current} isAdmin={me.staffRole === 'ADMIN'} onChanged={() => { lists.reload(); }} onGone={() => { setSel(null); lists.reload(); }} />
+      {current ? <ListDetail key={current} id={current} ai={ai} isAdmin={me.staffRole === 'ADMIN'} onChanged={() => { lists.reload(); }} onGone={() => { setSel(null); lists.reload(); }} />
         : lists.data && !lists.data.length && <div className="empty">هنوز لیستی بارگذاری نشده است.</div>}
     </>
   );
 }
 
-function ListDetail({ id, isAdmin, onChanged, onGone }: { id: string; isAdmin: boolean; onChanged: () => void; onGone: () => void }) {
+function ListDetail({ id, ai, isAdmin, onChanged, onGone }: { id: string; ai: boolean; isAdmin: boolean; onChanged: () => void; onGone: () => void }) {
   const { toast } = useAdmin();
   const d = useApi<Detail>(`/admin/prices/lists/${id}`);
   const [filter, setFilter] = useState('review');
@@ -102,6 +108,14 @@ function ListDetail({ id, isAdmin, onChanged, onGone }: { id: string; isAdmin: b
     if (!confirm('این پیش‌نویس حذف شود؟')) return;
     try { await api(`/admin/prices/lists/${id}`, { method: 'DELETE' }); toast('پیش‌نویس حذف شد'); onGone(); } catch (e) { toast(e instanceof ApiError ? e.message : 'حذف نشد'); }
   };
+  const aiMatch = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ checked: number; matched: number; suggested: number }>(`/admin/prices/lists/${id}/ai-match`, { method: 'POST' });
+      toast(r.matched + r.suggested ? `هوش مصنوعی ${fa(r.matched)} ردیف را وصل کرد${r.suggested ? ` و ${fa(r.suggested)} پیشنهاد داد` : ''}` : 'ردیف مطمئن دیگری پیدا نشد');
+      d.reload();
+    } catch (e) { toast(e instanceof ApiError ? e.message : 'انجام نشد'); } finally { setBusy(false); }
+  };
   const resolve = async (rowId: string, variantId: string | null) => {
     try { await api(`/admin/prices/rows/${rowId}`, { method: 'PATCH', body: { variantId } }); setEditing(null); d.reload(); } catch (e) { toast(e instanceof ApiError ? e.message : 'ثبت نشد'); }
   };
@@ -121,6 +135,9 @@ function ListDetail({ id, isAdmin, onChanged, onGone }: { id: string; isAdmin: b
           {' '}<b className="num">{fa(x.missingVariants)}</b> سایز کاتالوگ در این فایل‌ها نیست.</p>}
         {x.duplicates > 0 && <div className="err">{fa(x.duplicates)} سایز به بیش از یک ردیف وصل شده است؛ در انتشار فقط ردیف آخر حساب می‌شود. آن‌ها را در «وصل‌شده» بررسی کنید.</div>}
         {(c.NEW ?? 0) > 0 && <p className="muted small" style={{ margin: 0 }}>ردیف‌های «در کاتالوگ نیست» کالاهایی هستند که هنوز در کاتالوگ مینی‌اپ تعریف نشده‌اند؛ با انتشار، قیمتشان جایی نمایش داده نمی‌شود.</p>}
+        {draft && ai && ((c.UNMATCHED ?? 0) + (c.AMBIGUOUS ?? 0) + (c.NEW ?? 0) > 0) && (
+          <button type="button" className="btn" disabled={busy} onClick={aiMatch}>{busy ? 'هوش مصنوعی در حال بررسی…' : '✨ وصل‌کردن ردیف‌های باقی‌مانده با هوش مصنوعی'}</button>
+        )}
         {draft && (isAdmin ? (
           <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
             <div className="row small">
@@ -153,7 +170,7 @@ function ListDetail({ id, isAdmin, onChanged, onGone }: { id: string; isAdmin: b
                   <td className="small">
                     {editing === r.id ? <VariantPicker onPick={v => resolve(r.id, v)} onCancel={() => setEditing(null)} /> : (
                       <div className="stack" style={{ gap: 4 }}>
-                        <span><span className={`st ${MATCH_ST[r.match][1]}`}>{r.resolvedBy ? 'دستی' : MATCH_ST[r.match][0]}</span></span>
+                        <span>{r.resolvedBy === 'ai' ? <span className={`st ai`}>{r.match === 'AMBIGUOUS' ? 'پیشنهاد هوش مصنوعی' : 'هوش مصنوعی'}</span> : <span className={`st ${MATCH_ST[r.match][1]}`}>{r.resolvedBy ? 'دستی' : MATCH_ST[r.match][0]}</span>}</span>
                         {r.variant && <span>{r.variant.title}</span>}
                         {draft && <div className="row">
                           <button type="button" className="btn sm" onClick={() => setEditing(r.id)}>{r.variant ? 'تغییر' : 'انتخاب سایز'}</button>

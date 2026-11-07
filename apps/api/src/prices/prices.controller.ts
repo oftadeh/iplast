@@ -8,6 +8,7 @@ import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { audit } from '../common/audit';
 import { ParsedRow, parsePriceText, pdfToText } from './pdf-parse';
+import { PriceAiService } from './price-ai.service';
 
 interface UploadedPdf { buffer: Buffer; originalname: string; size: number; mimetype: string }
 const MAX_PDF = 25 * 1024 * 1024;
@@ -20,7 +21,10 @@ const MAX_PDF = 25 * 1024 * 1024;
 @UseGuards(SessionGuard)
 @Staff()
 export class PricesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly ai: PriceAiService) {}
+
+  @Get('ai')
+  aiStatus() { return { enabled: this.ai.enabled }; }
 
   @Get('lists')
   async lists() {
@@ -31,25 +35,42 @@ export class PricesController {
   /** Upload one PDF. With listId it is added to that draft (the month's list may come as several files). */
   @Post('import')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PDF } }))
-  async import(@Session() s: SessionClaims, @UploadedFile() file: UploadedPdf | undefined, @Query('listId') listId?: string, @Query('title') title?: string) {
+  async import(@Session() s: SessionClaims, @UploadedFile() file: UploadedPdf | undefined, @Query('listId') listId?: string, @Query('title') title?: string, @Query('ai') useAi?: string) {
     if (!file?.buffer?.length) throw new BadRequestException('فایل PDF را انتخاب کنید');
     if (file.buffer.subarray(0, 5).toString() !== '%PDF-') throw new BadRequestException('این فایل PDF نیست');
-    const text = await pdfToText(file.buffer);
-    const rows = parsePriceText(text);
-    if (!rows.length) throw new BadRequestException('هیچ ردیف قیمتی در این فایل پیدا نشد. اگر PDF اسکن‌شده (عکس) است، نسخه‌ی متنی آن لازم است.');
+    const ai = useAi === '1' && this.ai.enabled;
+    const text = await pdfToText(file.buffer).catch(() => '');
+    let rows = parsePriceText(text);
+    let aiTitle: string | null = null;
+    // scanned PDF or a layout the text rules do not understand: the AI reads the file itself
+    if (ai && rows.length < 5) {
+      try { const x = await this.ai.extract(file.buffer, file.originalname); rows = x.rows; aiTitle = x.title; }
+      catch (e) { throw new BadRequestException('هوش مصنوعی هم نتوانست فایل را بخواند: ' + (e as Error).message); }
+    }
+    if (!rows.length) throw new BadRequestException(this.ai.enabled ? 'هیچ ردیف قیمتی در این فایل پیدا نشد.' : 'هیچ ردیف قیمتی در این فایل پیدا نشد. اگر PDF اسکن‌شده (عکس) است، نسخه‌ی متنی آن لازم است.');
 
     let list = listId ? await this.prisma.priceList.findUnique({ where: { id: listId } }) : null;
     if (listId && (!list || list.status !== 'DRAFT')) throw new BadRequestException('فقط به پیش‌نویس می‌شود فایل اضافه کرد');
     if (!list) {
-      const guessed = guessTitle(text);
+      const guessed = guessTitle(text) ?? aiTitle;
       list = await this.prisma.priceList.create({ data: { title: (title || guessed || 'لیست قیمت جدید').slice(0, 120), sourceFile: file.originalname.slice(0, 200) } });
     } else {
       await this.prisma.priceList.update({ where: { id: list.id }, data: { sourceFile: [list.sourceFile, file.originalname].filter(Boolean).join(' + ').slice(0, 400) } });
     }
     const matched = await this.match(rows, list.id);
     await this.prisma.priceImportRow.createMany({ data: matched });
-    await audit(this.prisma, s.sub, 'price.import', 'PriceList', list.id, null, { file: file.originalname, rows: rows.length });
-    return this.summary(list.id);
+    const aiResult = ai ? await this.ai.matchDraft(list.id) : null;
+    await audit(this.prisma, s.sub, 'price.import', 'PriceList', list.id, null, { file: file.originalname, rows: rows.length, ai: aiResult });
+    return { ...(await this.summary(list.id)), ai: aiResult };
+  }
+
+  /** Lets the AI connect the rows of a draft that are still unmatched or only suggested. */
+  @Post('lists/:id/ai-match')
+  async aiMatch(@Param('id') id: string) {
+    if (!this.ai.enabled) throw new BadRequestException('هوش مصنوعی فعال نیست (OPENAI_API_KEY)');
+    const list = await this.prisma.priceList.findUnique({ where: { id } });
+    if (!list || list.status !== 'DRAFT') throw new BadRequestException('فقط پیش‌نویس');
+    return this.ai.matchDraft(id);
   }
 
   @Get('lists/:id')
@@ -132,7 +153,7 @@ export class PricesController {
     const taken = new Set((await this.prisma.priceImportRow.findMany({ where: { priceListId, variantId: { not: null } }, select: { variantId: true } })).map(r => r.variantId!));
     // rows an admin pointed to a size by hand in an earlier import are recognised again by their text
     const learned = new Map<string, string>();
-    for (const r of await this.prisma.priceImportRow.findMany({ where: { resolvedBy: { not: null }, variantId: { not: null }, NOT: { priceListId } }, orderBy: { id: 'asc' }, select: { familyTitle: true, rawText: true, variantId: true } }))
+    for (const r of await this.prisma.priceImportRow.findMany({ where: { resolvedBy: { notIn: ['ai'] }, variantId: { not: null }, NOT: { priceListId } }, orderBy: { id: 'asc' }, select: { familyTitle: true, rawText: true, variantId: true } }))
       learned.set(`${r.familyTitle}|${r.rawText}`, r.variantId!);
     return rows.map(r => {
       let match: ImportMatch = 'UNMATCHED';

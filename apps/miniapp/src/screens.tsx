@@ -72,6 +72,7 @@ export function HomeScreen() {
       )}
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
+        <button type="button" onClick={() => go({ name: 'account' })}><span className="i"><Icon n="file" s={15} /></span>حساب و فاکتورها</button>
         <button type="button" onClick={() => go({ name: 'cart' })}><span className="i"><Icon n="cart" s={15} /></span>سبد سفارش</button>
         <button type="button" onClick={openSupportChat}><span className="i"><Icon n="chat" s={15} /></span>پیام به کارشناس فروش</button>
       </div>
@@ -292,7 +293,9 @@ export function OrdersScreen() {
   const list = useApi<Order[]>(authed ? '/orders' : null, [authed]);
   return (
     <>
-      <div className="top"><h1>سفارش‌ها</h1></div>
+      <div className="top"><h1>سفارش‌ها</h1>
+        <button type="button" className="acclink" onClick={() => go({ name: 'account' })}><Icon n="file" s={18} /><span><b>حساب من</b><small>فاکتورها، پرداخت‌ها و مانده</small></span><Icon n="arrow" s={16} /></button>
+      </div>
       {authed === false && <LoginNeeded what="دیدن سفارش‌ها" />}
       {authed && (list.error ? <Failed msg={list.error} retry={list.reload} /> : !list.data ? <Loading h={200} /> : !list.data.length ? (
         <div className="empty">هنوز سفارشی ثبت نکرده‌اید.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div>

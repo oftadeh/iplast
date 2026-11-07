@@ -54,3 +54,25 @@ export function useApi<T>(path: string | null) {
 
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole: 'ADMIN' | 'SALES' | null }
 export interface Staff { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; staffRole: 'ADMIN' | 'SALES'; isActive: boolean; _count: { supportOf: number } }
+
+/** Jalali (شمسی) date → ISO date string (YYYY-MM-DD), for cheque due dates. */
+export function jalaliToIso(jy: number, jm: number, jd: number) {
+  jy += 1595;
+  let days = -355668 + 365 * jy + Math.floor(jy / 33) * 8 + Math.floor(((jy % 33) + 3) / 4) + jd + (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
+  let gy = 400 * Math.floor(days / 146097); days %= 146097;
+  if (days > 36524) { gy += 100 * Math.floor(--days / 36524); days %= 36524; if (days >= 365) days++; }
+  gy += 4 * Math.floor(days / 1461); days %= 1461;
+  if (days > 365) { gy += Math.floor((days - 1) / 365); days = (days - 1) % 365; }
+  let gd = days + 1;
+  const ml = [0, 31, (gy % 4 === 0 && gy % 100 !== 0) || gy % 400 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let gm = 1;
+  for (; gm <= 12 && gd > ml[gm]; gm++) gd -= ml[gm];
+  return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')}`;
+}
+/** Today's Jalali year/month/day. */
+export function jalaliToday(): [number, number, number] {
+  const p = new Intl.DateTimeFormat('en-u-ca-persian-nu-latn', { year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(new Date());
+  const g = (t: string) => Number(p.find(x => x.type === t)?.value);
+  return [g('year'), g('month'), g('day')];
+}
+export const dayFa = (d: string) => new Date(d).toLocaleDateString('fa-IR', { year: 'numeric', month: 'long', day: 'numeric' });

@@ -14,12 +14,14 @@ import { AdminCustomersController } from './admin/admin-customers.controller';
 import { AdminStaffController } from './admin/admin-staff.controller';
 import { PricesController } from './prices/prices.controller';
 import { AdminConversationsController } from './admin/admin-conversations.controller';
+import { AccountingService, AdminAccountsController, MyAccountController } from './accounting/accounting';
+import { PriceAiService } from './prices/price-ai.service';
 import { AdminProductsController, MediaController } from './admin/admin-products.controller';
 import { AssistantController, InternalAssistantController, InternalOrdersController } from './assistant/assistant.controller';
 import { AssistantService } from './assistant/assistant.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, AdminProductsController, MediaController],
-  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController],
+  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService],
 })
 export class AppModule {}

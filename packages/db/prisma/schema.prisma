@@ -78,6 +78,7 @@ model Variant {
   prices         Price[]
   customerPrices CustomerPrice[]
   orderItems     OrderItem[]
+  invoiceItems   InvoiceItem[]
 
   @@index([accountingCode])
 }
@@ -128,16 +129,16 @@ enum PriceStatus {
 }
 
 model PriceList {
-  id          String          @id @default(cuid())
+  id          String           @id @default(cuid())
   title       String // لیست قیمت آبان ۱۴۰۵
   sourceFile  String? // uploaded PDF/Excel key
-  status      PriceListStatus @default(DRAFT)
+  status      PriceListStatus  @default(DRAFT)
   validFrom   DateTime?
   publishedAt DateTime?
   publishedBy String?
   prices      Price[]
   importRows  PriceImportRow[]
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime         @default(now())
 }
 
 model Price {
@@ -185,11 +186,11 @@ model PriceGroup {
 }
 
 model CustomerPrice {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   customerId String
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   variantId  String
-  variant    Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variant    Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
   amount     BigInt
   validUntil DateTime?
 
@@ -204,19 +205,19 @@ enum StaffRole {
 }
 
 model User {
-  id          String           @id @default(cuid())
-  telegramId  BigInt           @unique
-  username    String?
-  firstName   String?
-  lastName    String?
-  phone       String?
-  staffRole   StaffRole? // set for admins and sales-support agents
-  isActive    Boolean          @default(true)
-  memberships CustomerMember[]
-  supportOf   Customer[]       @relation("AssignedSupport")
-  ordersPlaced Order[]         @relation("PlacedBy")
-  createdAt   DateTime         @default(now())
-  lastSeenAt  DateTime?
+  id           String           @id @default(cuid())
+  telegramId   BigInt           @unique
+  username     String?
+  firstName    String?
+  lastName     String?
+  phone        String?
+  staffRole    StaffRole? // set for admins and sales-support agents
+  isActive     Boolean          @default(true)
+  memberships  CustomerMember[]
+  supportOf    Customer[]       @relation("AssignedSupport")
+  ordersPlaced Order[]          @relation("PlacedBy")
+  createdAt    DateTime         @default(now())
+  lastSeenAt   DateTime?
 }
 
 enum CustomerType {
@@ -226,23 +227,25 @@ enum CustomerType {
 }
 
 model Customer {
-  id          String           @id @default(cuid())
-  name        String // company / shop name
-  type        CustomerType     @default(RETAIL)
-  city        String?
-  address     String?
-  nationalId  String?
-  isApproved  Boolean          @default(false)
-  priceGroupId String?
-  priceGroup  PriceGroup?      @relation(fields: [priceGroupId], references: [id])
-  supportId   String? // fixed sales-support agent
-  support     User?            @relation("AssignedSupport", fields: [supportId], references: [id])
-  members     CustomerMember[]
-  terms       PaymentTerms?
-  prices      CustomerPrice[]
-  orders      Order[]
+  id            String           @id @default(cuid())
+  name          String // company / shop name
+  type          CustomerType     @default(RETAIL)
+  city          String?
+  address       String?
+  nationalId    String?
+  isApproved    Boolean          @default(false)
+  priceGroupId  String?
+  priceGroup    PriceGroup?      @relation(fields: [priceGroupId], references: [id])
+  supportId     String? // fixed sales-support agent
+  support       User?            @relation("AssignedSupport", fields: [supportId], references: [id])
+  members       CustomerMember[]
+  terms         PaymentTerms?
+  prices        CustomerPrice[]
+  orders        Order[]
   conversations Conversation[]
-  createdAt   DateTime         @default(now())
+  invoices      Invoice[]
+  payments      Payment[]
+  createdAt     DateTime         @default(now())
 }
 
 enum MemberRole {
@@ -274,14 +277,14 @@ model Invite {
 
 // Cash/cheque terms set per customer in the admin panel; default in the customer cart.
 model PaymentTerms {
-  customerId          String   @id
-  customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  cashPercent         Int      @default(100) // 0..100; cheque = 100 - cash
-  chequeDueDays       Int[]    @default([]) // e.g. [60, 90]
-  cashDiscountPct     Decimal  @default(0) @db.Decimal(5, 2)
-  chequeMarkupPct     Decimal  @default(0) @db.Decimal(5, 2)
-  updatedBy           String?
-  updatedAt           DateTime @updatedAt
+  customerId      String   @id
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  cashPercent     Int      @default(100) // 0..100; cheque = 100 - cash
+  chequeDueDays   Int[]    @default([]) // e.g. [60, 90]
+  cashDiscountPct Decimal  @default(0) @db.Decimal(5, 2)
+  chequeMarkupPct Decimal  @default(0) @db.Decimal(5, 2)
+  updatedBy       String?
+  updatedAt       DateTime @updatedAt
 }
 
 // ───────────── Orders ─────────────
@@ -301,35 +304,36 @@ enum OrderStatus {
 }
 
 model Order {
-  id            String      @id @default(cuid())
-  number        Int         @unique @default(autoincrement())
-  customerId    String
-  customer      Customer    @relation(fields: [customerId], references: [id])
-  placedById    String
-  placedBy      User        @relation("PlacedBy", fields: [placedById], references: [id])
-  status        OrderStatus @default(SUBMITTED)
-  note          String?
-  channel       String      @default("miniapp") // miniapp | bot | assistant | admin
-  termsSnapshot Json? // PaymentTerms at submit time
-  priceListId   String?
-  idempotencyKey String?    @unique
-  items         OrderItem[]
-  events        OrderStatusEvent[]
-  proformas     Proforma[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id             String             @id @default(cuid())
+  number         Int                @unique @default(autoincrement())
+  customerId     String
+  customer       Customer           @relation(fields: [customerId], references: [id])
+  placedById     String
+  placedBy       User               @relation("PlacedBy", fields: [placedById], references: [id])
+  status         OrderStatus        @default(SUBMITTED)
+  note           String?
+  channel        String             @default("miniapp") // miniapp | bot | assistant | admin
+  termsSnapshot  Json? // PaymentTerms at submit time
+  priceListId    String?
+  idempotencyKey String?            @unique
+  items          OrderItem[]
+  events         OrderStatusEvent[]
+  proformas      Proforma[]
+  invoices       Invoice[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 }
 
 model OrderItem {
-  id         String      @id @default(cuid())
-  orderId    String
-  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  variantId  String
-  variant    Variant     @relation(fields: [variantId], references: [id])
-  title      String // snapshot
-  quantity   Int // in units (عدد)
-  packs      Int? // as entered by the customer, if by pack
-  unitPrice  BigInt? // snapshot, NULL for inquiry items
+  id          String      @id @default(cuid())
+  orderId     String
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId   String
+  variant     Variant     @relation(fields: [variantId], references: [id])
+  title       String // snapshot
+  quantity    Int // in units (عدد)
+  packs       Int? // as entered by the customer, if by pack
+  unitPrice   BigInt? // snapshot, NULL for inquiry items
   priceStatus PriceStatus
 }
 
@@ -344,15 +348,15 @@ model OrderStatusEvent {
 }
 
 model Proforma {
-  id        String   @id @default(cuid())
-  orderId   String
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  version   Int
-  total     BigInt
-  pdfKey    String?
-  issuedBy  String
-  issuedAt  DateTime @default(now())
-  expiresAt DateTime // default issuedAt + 48h
+  id         String    @id @default(cuid())
+  orderId    String
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  version    Int
+  total      BigInt
+  pdfKey     String?
+  issuedBy   String
+  issuedAt   DateTime  @default(now())
+  expiresAt  DateTime // default issuedAt + 48h
   acceptedAt DateTime?
 
   @@unique([orderId, version])
@@ -373,14 +377,14 @@ enum MessageDirection {
 }
 
 model Conversation {
-  id         String    @id @default(cuid())
-  customerId String?
-  customer   Customer? @relation(fields: [customerId], references: [id])
+  id             String    @id @default(cuid())
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id])
   userTelegramId BigInt
-  assigneeId String? // sales-support user id
-  isOpen     Boolean   @default(true)
-  messages   Message[]
-  updatedAt  DateTime  @updatedAt
+  assigneeId     String? // sales-support user id
+  isOpen         Boolean   @default(true)
+  messages       Message[]
+  updatedAt      DateTime  @updatedAt
 
   @@index([userTelegramId])
 }
@@ -425,16 +429,95 @@ model Setting {
 
 // An order drafted by the AI assistant from a customer's text or voice; opened in the mini app cart.
 model AssistantDraft {
-  id         String   @id @default(cuid())
-  userId     String
-  source     String // miniapp | bot-text | bot-voice
-  inputText  String
-  reply      String
-  items      Json // [{variantId, quantity, mode, packs}]
-  unclear    Json? // phrases the assistant could not match
-  model      String?
-  usedAt     DateTime?
-  createdAt  DateTime @default(now())
+  id        String    @id @default(cuid())
+  userId    String
+  source    String // miniapp | bot-text | bot-voice
+  inputText String
+  reply     String
+  items     Json // [{variantId, quantity, mode, packs}]
+  unclear   Json? // phrases the assistant could not match
+  model     String?
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ───────── customer accounting: invoices issued, money received, balance ─────────
+
+/// Sales invoice (فاکتور فروش). Usually issued from a confirmed order; amounts are frozen at issue time.
+model Invoice {
+  id            String        @id @default(cuid())
+  number        Int           @unique @default(autoincrement())
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id])
+  orderId       String?
+  order         Order?        @relation(fields: [orderId], references: [id])
+  status        InvoiceStatus @default(ISSUED)
+  issuedAt      DateTime      @default(now())
+  issuedById    String
+  subtotal      BigInt // Rial
+  discount      BigInt        @default(0)
+  shipping      BigInt        @default(0)
+  total         BigInt
+  cashPercent   Int           @default(100)
+  chequeDueDays Int[]         @default([])
+  note          String?
+  cancelledAt   DateTime?
+  items         InvoiceItem[]
+  payments      Payment[]
+
+  @@index([customerId, issuedAt])
+}
+
+model InvoiceItem {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  variantId String?
+  variant   Variant? @relation(fields: [variantId], references: [id])
+  title     String
+  quantity  Int
+  packs     Int?
+  unitPrice BigInt
+  total     BigInt
+}
+
+enum InvoiceStatus {
+  ISSUED
+  CANCELLED
+}
+
+/// Money received from a customer: cash, bank transfer or a cheque (counted once it clears).
+model Payment {
+  id           String        @id @default(cuid())
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  invoiceId    String?
+  invoice      Invoice?      @relation(fields: [invoiceId], references: [id])
+  amount       BigInt
+  method       PaymentMethod
+  status       PaymentStatus @default(CLEARED)
+  chequeNumber String?
+  bank         String?
+  dueDate      DateTime? // cheque date (سررسید)
+  receivedAt   DateTime      @default(now())
+  note         String?
+  createdById  String
+  createdAt    DateTime      @default(now())
+
+  @@index([customerId, receivedAt])
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CHEQUE
+}
+
+enum PaymentStatus {
+  PENDING // cheque received, not cleared yet
+  CLEARED
+  BOUNCED // برگشتی
+  CANCELLED
 }

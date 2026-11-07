@@ -3,11 +3,13 @@ import { Icon } from './icons';
 import { CartLine, Family, Me, api, loadCart, login, saveCart } from './lib';
 import { haptic, openSupportChat, tg } from './telegram';
 import { Picker } from './Picker';
+import { AccountScreen, InvoiceScreen } from './account';
 import { AssistantScreen, CartScreen, CatalogScreen, DraftView, HomeScreen, OrderScreen, OrdersScreen, ProductScreen } from './screens';
 
 export type Route =
   | { name: 'home' } | { name: 'catalog'; cat?: string; q?: string } | { name: 'product'; slug: string }
-  | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'assistant' };
+  | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'assistant' }
+  | { name: 'account' } | { name: 'invoice'; id: string };
 
 interface Ctx {
   route: Route; go: (r: Route, replace?: boolean) => void; back: () => void;
@@ -92,7 +94,7 @@ export function App() {
   const count = cart.length;
   const navItems: [Route, string, string][] = [[{ name: 'home' }, 'home', 'خانه'], [{ name: 'catalog' }, 'grid', 'محصولات']];
   const navItems2: [Route, string, string][] = [[{ name: 'orders' }, 'box', 'سفارش‌ها']];
-  const isTab = (n: string) => route.name === n || (n === 'orders' && route.name === 'order') || (n === 'catalog' && route.name === 'product');
+  const isTab = (n: string) => route.name === n || (n === 'orders' && ['order', 'account', 'invoice'].includes(route.name)) || (n === 'catalog' && route.name === 'product');
 
   const ctx: Ctx = { route, go, back, cart, setCart, add, me, authed, reloadMe, quickAdd, toast, aiEnabled };
   return (
@@ -107,6 +109,8 @@ export function App() {
             {route.name === 'orders' && <OrdersScreen />}
             {route.name === 'order' && <OrderScreen id={route.id} />}
             {route.name === 'assistant' && <AssistantScreen />}
+            {route.name === 'account' && <AccountScreen />}
+            {route.name === 'invoice' && <InvoiceScreen id={route.id} />}
           </div>
         </div>
 

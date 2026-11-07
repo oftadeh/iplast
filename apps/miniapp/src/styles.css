@@ -315,3 +315,21 @@ img.photo{display:block;object-fit:contain}
 .staff-entry{display:flex;align-items:center;gap:12px;margin:12px 16px 0;padding:12px 14px;border-radius:16px;background:var(--surface,#fff);border:1px solid color-mix(in srgb,var(--brand,#8A1C46) 30%,transparent);color:inherit;text-decoration:none}
 .staff-entry>svg:first-child{color:var(--brand,#8A1C46)}
 .staff-entry span{display:grid;flex:1;gap:2px}.staff-entry small{opacity:.7;font-size:12px}
+
+/* account («حساب من») */
+.acclink{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;background:var(--surface);border:1px solid var(--line);text-align:right;width:100%;color:inherit}
+.acclink>svg:first-child{color:var(--brand-2)}.acclink span{flex:1;display:grid}.acclink small{color:var(--muted);font-size:12px}
+.ostat.acc{gap:4px;margin-top:4px}.ostat.acc p{margin:0;opacity:.8;font-size:13px}
+.ostat.acc .lbl{font-size:12px;opacity:.75;margin-top:6px}.ostat.acc .big{font-size:28px;font-weight:900;line-height:1.3}.ostat.acc .big small{font-size:13px;font-weight:600}
+.accgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.accgrid>div{background:rgba(255,255,255,.12);border-radius:14px;padding:8px 10px;display:grid}.accgrid span{font-size:11px;opacity:.8}.accgrid b{font-size:14px}
+.seg{display:flex;gap:4px;margin:14px 16px;padding:4px;background:var(--surface-2);border-radius:14px}
+.seg button{flex:1;border:0;background:none;border-radius:10px;padding:8px 4px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-sm)}
+.oc+.oc{margin-top:8px}
+.ledger{margin-inline:16px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:4px 14px}
+.ledger>div{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line)}.ledger>div:first-child{border-top:0}
+.ledger span{display:grid}.ledger small{color:var(--muted);font-size:11.5px}.ledger span:last-child{text-align:left}
+.ledger em{font-style:normal;font-weight:800}.ledger .dr{color:var(--bad)}.ledger .cr{color:var(--ok)}
+.invhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 16px 12px;font-size:13px;color:var(--muted)}
+.invhead .link{border:0;background:none;color:var(--link);font-weight:700;padding:0}

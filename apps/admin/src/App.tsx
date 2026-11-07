@@ -4,6 +4,7 @@ import { ApprovalsPage } from './pages/Approvals';
 import { ProductsPage } from './pages/Products';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
+import { AccountsPage } from './pages/Accounts';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -14,7 +15,8 @@ export const useAdmin = () => useContext(AdminCtx);
 const SECTIONS = [
   { id: 'approvals', title: 'تأییدها' },
   { id: 'products', title: 'کالاها' },
-  { id: 'prices', title: 'لیست قیمت (PDF)' },
+  { id: 'prices', title: 'به‌روزرسانی قیمت' },
+  { id: 'accounts', title: 'حساب مشتریان' },
   { id: 'staff', title: 'کارشناسان', admin: true },
 ] as const;
 
@@ -26,7 +28,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(!!getToken() || !!tgApp());
   const [denied, setDenied] = useState(false);
-  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return ['approvals', 'products', 'prices', 'staff'].includes(h) ? h : 'approvals'; });
+  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return ['approvals', 'products', 'prices', 'accounts', 'staff'].includes(h) ? h : 'approvals'; });
   const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
   const [toastText, setToastText] = useState('');
   const t = useRef<number>();
@@ -74,6 +76,7 @@ export function App() {
           {section === 'approvals' && <ApprovalsPage />}
           {section === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}
           {section === 'prices' && <PricesPage />}
+          {section === 'accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
           {section === 'staff' && me.staffRole === 'ADMIN' && <StaffPage />}
         </main>
       </div>
