@@ -12,9 +12,10 @@ import { OrdersService } from './orders/orders.service';
 import { AdminOrdersController } from './admin/admin-orders.controller';
 import { AdminCustomersController } from './admin/admin-customers.controller';
 import { AdminStaffController } from './admin/admin-staff.controller';
+import { PricesController } from './prices/prices.controller';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController],
   providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService],
 })
 export class AppModule {}
