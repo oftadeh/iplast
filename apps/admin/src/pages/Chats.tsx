@@ -55,7 +55,7 @@ export function ChatsPage({ mode, focus, onFocus }: { mode: 'human' | 'ai' | 'al
 }
 
 function Thread({ id, onBack, onChange }: { id: string; onBack: () => void; onChange: () => void; meId: string }) {
-  const { toast } = useAdmin();
+  const { toast, me } = useAdmin();
   const c = useApi<Conv>(`/admin/conversations/${id}`);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -71,6 +71,10 @@ function Thread({ id, onBack, onChange }: { id: string; onBack: () => void; onCh
     finally { setBusy(false); }
   };
   const close = async (open: boolean) => { await api(`/admin/conversations/${id}`, { method: 'PATCH', body: { isOpen: open } }); c.reload(); onChange(); };
+  const remove = async () => {
+    if (!window.confirm('همه‌ی پیام‌های این گفتگو برای همیشه پاک شود؟ (پیام‌های داخل تلگرام مشتری پاک نمی‌شود)')) return;
+    try { await api(`/admin/conversations/${id}`, { method: 'DELETE' }); toast('گفتگو پاک شد'); onChange(); onBack(); } catch (e) { toast(e instanceof ApiError ? e.message : 'پاک نشد'); }
+  };
   const resume = async () => { await api(`/admin/conversations/${id}/resume`, { method: 'POST' }); toast('گفتگو به ایجنت برگشت'); c.reload(); onChange(); };
 
   if (c.error) return <div className="err" style={{ margin: 12 }}>{c.error}</div>;
@@ -84,6 +88,7 @@ function Thread({ id, onBack, onChange }: { id: string; onBack: () => void; onCh
         <div className="row">
           {d.handoffAt && d.isOpen && <button type="button" className="btn sm" onClick={resume}><Icon n="spark" s={14} /> برگرداندن به ایجنت</button>}
           <button type="button" className="btn sm" onClick={() => close(!d.isOpen)}>{d.isOpen ? 'بستن گفتگو' : 'باز کردن دوباره'}</button>
+          {me.staffRole === 'ADMIN' && <button type="button" className="btn sm ghost" style={{ color: '#b42318' }} onClick={remove}>حذف گفتگو</button>}
         </div>
       </div>
       <div className={d.handoffAt ? 'modebar human' : 'modebar'}>

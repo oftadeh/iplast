@@ -1,10 +1,11 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
 import { req } from '../common/validate';
+import { audit } from '../common/audit';
 import { SalesAgentService } from '../assistant/sales-agent.service';
 
 /** Customer messages sent to the bot (text, voice, photo, PDF), readable and answerable from the admin panel too. */
@@ -71,6 +72,20 @@ export class AdminConversationsController {
       where: { id },
       data: { ...(b.isOpen !== undefined ? { isOpen: !!b.isOpen } : {}), ...(b.assigneeId !== undefined ? { assigneeId: b.assigneeId || null } : {}) },
     });
+  }
+
+  /** Deletes a chat and its messages for good (test chats, or a customer who asks). Managers only. */
+  @Delete(':id')
+  @Staff('ADMIN')
+  async remove(@Session() s: SessionClaims, @Param('id') id: string) {
+    const c = await this.prisma.conversation.findUnique({ where: { id }, include: { _count: { select: { messages: true } } } });
+    if (!c) throw new NotFoundException();
+    await this.prisma.conversation.delete({ where: { id } });
+    // the AI agent's unfinished draft for this person goes too, so a fresh chat starts clean
+    const u = await this.prisma.user.findUnique({ where: { telegramId: c.userTelegramId }, select: { id: true } });
+    if (u) await this.prisma.assistantDraft.deleteMany({ where: { userId: u.id, usedAt: null } });
+    await audit(this.prisma, s.sub, 'conversation.delete', 'Conversation', id, { messages: c._count.messages, userTelegramId: String(c.userTelegramId) }, null);
+    return { ok: true, messages: c._count.messages };
   }
 
   /** Streams a voice note, photo or PDF the customer sent, fetched from Telegram. */
