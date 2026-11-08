@@ -8,22 +8,14 @@ import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentMethod, PaymentStatus } from '@iplast/db';
-import { formatRial, splitCashCheque } from '@iplast/shared';
+import { applyTerms, formatRial, splitCashCheque } from '@iplast/shared';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
 import { audit } from '../common/audit';
+import { rialOf } from '../common/validate';
 
-const FA = '۰۱۲۳۴۵۶۷۸۹';
-const toEn = (s: string) => s.replace(/[۰-۹]/g, d => String(FA.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
-function rialOf(v: unknown, what: string, allowZero = false): bigint {
-  const s = toEn(String(v ?? '')).replace(/[,،٬\s]/g, '');
-  if (!/^\d{1,15}$/.test(s)) throw new BadRequestException(`${what} باید عدد (ریال) باشد`);
-  const n = BigInt(s);
-  if (!allowZero && n <= 0n) throw new BadRequestException(`${what} باید بیشتر از صفر باشد`);
-  return n;
-}
 const RECEIPTS = join(process.env.UPLOAD_DIR ?? '/data/uploads', 'receipts'); // private: served only to the customer and staff
 const IMAGE: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 const METHODS: PaymentMethod[] = ['CASH', 'TRANSFER', 'CHEQUE'];
@@ -33,7 +25,17 @@ export const PAY_STATUS_FA: Record<PaymentStatus, string> = { REPORTED: 'ارس�
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly orders: OrdersService) {}
+  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly orders: OrdersService) {
+    // the manager's final approval issues the invoice from the priced proforma
+    orders.onConfirmed = async (byUserId, orderId) => { await this.issueFromOrder(byUserId, { orderId }); };
+  }
+
+  /** Cash and cheque parts of an issued invoice (cash discount, cheque markup and freight already in total). */
+  private invSplit(inv: { total: bigint; subtotal: bigint; discount: bigint; cashPercent: number; chequeMarkup: bigint }) {
+    const chequeBase = splitCashCheque(inv.subtotal - inv.discount, inv.cashPercent).cheque;
+    const cheque = chequeBase + inv.chequeMarkup;
+    return { cash: inv.total - cheque, cheque };
+  }
 
   /**
    * A customer reports a payment from the mini app with a photo of the cheque or bank receipt.
@@ -139,7 +141,7 @@ export class AccountingService {
     });
     if (!inv) throw new NotFoundException();
     const paid = inv.payments.filter(p => p.status === 'CLEARED').reduce((s, p) => s + p.amount, 0n);
-    return { ...inv, split: splitCashCheque(inv.total, inv.cashPercent), paidAgainst: paid, payments: inv.payments.map(p => ({ ...p, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })) };
+    return { ...inv, split: this.invSplit(inv), paidAgainst: paid, payments: inv.payments.map(p => ({ ...p, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })) };
   }
 
   /** Issues the invoice of a confirmed order. Inquiry items need a price now; discount and shipping are optional. */
@@ -157,14 +159,16 @@ export class AccountingService {
     });
     if (!items.length) throw new BadRequestException('فاکتور بدون قلم صادر نمی‌شود');
     const subtotal = items.reduce((s, i) => s + i.total, 0n);
-    const discount = b.discount ? rialOf(b.discount, 'تخفیف', true) : 0n;
-    const shipping = b.shipping ? rialOf(b.shipping, 'هزینه‌ی حمل', true) : 0n;
+    const discount = b.discount !== undefined && b.discount !== '' ? rialOf(b.discount, 'تخفیف', true) : o.discount;
+    const shipping = b.shipping !== undefined && b.shipping !== '' ? rialOf(b.shipping, 'هزینه‌ی حمل', true) : o.shipping;
     if (discount > subtotal) throw new BadRequestException('تخفیف از جمع فاکتور بیشتر است');
     const terms = (o.termsSnapshot ?? {}) as { cashPercent?: number; chequeDueDays?: number[] };
+    const bd = applyTerms(subtotal, terms, discount, shipping);
     const inv = await this.prisma.invoice.create({
       data: {
-        customerId: o.customerId, orderId: o.id, issuedById: byUserId, subtotal, discount, shipping, total: subtotal - discount + shipping,
-        cashPercent: terms.cashPercent ?? 100, chequeDueDays: terms.chequeDueDays ?? [], note: b.note?.trim().slice(0, 1000) || null,
+        customerId: o.customerId, orderId: o.id, issuedById: byUserId, subtotal, discount, shipping, total: bd.total,
+        cashDiscount: bd.cashDiscount, chequeMarkup: bd.chequeMarkup,
+        cashPercent: bd.cashPercent, chequeDueDays: terms.chequeDueDays ?? [], note: b.note?.trim().slice(0, 1000) || null,
         items: { create: items },
       },
     });

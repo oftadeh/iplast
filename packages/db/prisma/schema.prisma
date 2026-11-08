@@ -246,6 +246,7 @@ model Customer {
   conversations Conversation[]
   invoices      Invoice[]
   payments      Payment[]
+  documents     Document[]
   createdAt     DateTime         @default(now())
 }
 
@@ -322,6 +323,10 @@ model Order {
   events         OrderStatusEvent[]
   proformas      Proforma[]
   invoices       Invoice[]
+  shipments      Shipment[]
+  documents      Document[]
+  discount       BigInt             @default(0) // set by the sales agent on the proforma (Rial)
+  shipping       BigInt             @default(0) // freight added to the proforma (Rial, paid in cash)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 }
@@ -360,6 +365,9 @@ model Proforma {
   issuedAt   DateTime  @default(now())
   expiresAt  DateTime // default issuedAt + 48h
   acceptedAt DateTime?
+  breakdown  Json? // applyTerms() result at issue time: cash / cheque parts, discounts, cheques
+  items      Json? // [{title, quantity, packs, unitPrice}] as priced by the sales agent
+  changed    Boolean   @default(false) // the agent changed prices or items, so the customer must accept it
 
   @@unique([orderId, version])
 }
@@ -464,6 +472,8 @@ model Invoice {
   subtotal      BigInt // Rial
   discount      BigInt        @default(0)
   shipping      BigInt        @default(0)
+  cashDiscount  BigInt        @default(0) // customer's cash discount (already taken off total)
+  chequeMarkup  BigInt        @default(0) // customer's cheque markup (already added to total)
   total         BigInt
   cashPercent   Int           @default(100)
   chequeDueDays Int[]         @default([])
@@ -471,6 +481,7 @@ model Invoice {
   cancelledAt   DateTime?
   items         InvoiceItem[]
   payments      Payment[]
+  documents     Document[]
 
   @@index([customerId, issuedAt])
 }
@@ -512,6 +523,8 @@ model Payment {
   reportedById String? // customer user who sent it from the mini app
   createdById  String
   createdAt    DateTime      @default(now())
+  remindedAt   DateTime? // last due-date reminder sent for this cheque
+  documents    Document[]
 
   @@index([customerId, receivedAt])
 }
@@ -546,4 +559,59 @@ model Broadcast {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ───────────── Shipping and documents ─────────────
+
+/// One load sent for an order (an order may go in several loads).
+model Shipment {
+  id          String     @id @default(cuid())
+  orderId     String
+  order       Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  waybillNo   String? // شماره بارنامه
+  carrier     String? // باربری
+  driverName  String?
+  driverPhone String?
+  plate       String?
+  freight     BigInt? // کرایه (Rial)
+  freightBy   String? // customer | company
+  note        String?
+  shippedAt   DateTime   @default(now())
+  createdById String
+  documents   Document[]
+}
+
+enum DocKind {
+  RECEIPT // فیش واریز
+  CHEQUE // عکس چک
+  INVOICE // فاکتور / پیش‌فاکتور امضاشده
+  WAYBILL // بارنامه
+  CONTRACT // قرارداد
+  OTHER
+}
+
+/// A financial document (photo or PDF) kept on a customer's file, optionally tied to an order, payment, invoice or load.
+model Document {
+  id           String    @id @default(cuid())
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId      String?
+  order        Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  paymentId    String?
+  payment      Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  invoiceId    String?
+  invoice      Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  shipmentId   String?
+  shipment     Shipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  kind         DocKind
+  title        String?
+  fileKey      String
+  mime         String
+  size         Int
+  uploadedById String
+  byCustomer   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([orderId])
 }

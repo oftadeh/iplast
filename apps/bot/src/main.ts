@@ -185,6 +185,19 @@ bot.callbackQuery(/^os:([a-z0-9]{10,40}):(sales_ok|final_ok|reject|prep|ship|del
   }
 });
 
+// The customer's buttons under a final proforma: accept it, or ask the sales agent for a change
+bot.callbackQuery(/^pf:([a-z0-9]{10,40}):(ok|no)$/, async ctx => {
+  try {
+    const ok = ctx.match[2] === 'ok';
+    const r = await internal<{ number: number; statusFa: string }>('/internal/orders/customer', { telegramId: String(ctx.from.id), orderId: ctx.match[1], ok });
+    await ctx.answerCallbackQuery({ text: ok ? 'تأیید شد' : 'به کارشناس فروش خبر داده شد' });
+    const old = ctx.callbackQuery.message?.text ?? '';
+    await ctx.editMessageText(`${old}\n\n▫️ ${ok ? 'شما تأیید کردید؛ منتظر تأیید نهایی مدیر' : 'درخواست تغییر فرستاده شد. چه تغییری لازم است؟ همین‌جا بنویسید یا ویس بدهید.'}`).catch(() => {});
+  } catch (e) {
+    await ctx.answerCallbackQuery({ text: (e as Error).message, show_alert: true });
+  }
+});
+
 // Receipt photo buttons: the agent or a manager accepts or rejects a payment the customer sent
 bot.callbackQuery(/^pay:([a-z0-9]{10,40}):(ok|no)$/, async ctx => {
   try {

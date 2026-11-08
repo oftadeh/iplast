@@ -53,7 +53,8 @@ export class AdminDashboardController {
     return {
       role: s.staff,
       queue: {
-        salesReview: n('SUBMITTED', 'SALES_REVIEW'),
+        salesReview: n('SUBMITTED', 'SALES_REVIEW', 'PROFORMA_EXPIRED'),
+        awaitingCustomer: n('PROFORMA_SENT'),
         finalApproval: n('SALES_APPROVED'),
         needsFix: n('NEEDS_FIX'),
         warehouse: n('CONFIRMED', 'PREPARING'),

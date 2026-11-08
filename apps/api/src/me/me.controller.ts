@@ -32,7 +32,7 @@ export class MeController {
       id: user.id, firstName: user.firstName, lastName: user.lastName, username: user.username, staffRole: user.staffRole,
       accounts: user.memberships.map(m => ({
         customerId: m.customerId, role: m.role, name: m.customer.name, isApproved: m.customer.isApproved,
-        terms: m.customer.terms ? { cashPercent: m.customer.terms.cashPercent, chequeDueDays: m.customer.terms.chequeDueDays } : { cashPercent: 100, chequeDueDays: [] },
+        terms: m.customer.terms ? { cashPercent: m.customer.terms.cashPercent, chequeDueDays: m.customer.terms.chequeDueDays, cashDiscountPct: m.customer.terms.cashDiscountPct.toString(), chequeMarkupPct: m.customer.terms.chequeMarkupPct.toString() } : { cashPercent: 100, chequeDueDays: [] },
         support: m.customer.support,
         members: m.customer.members.map(x => ({ ...x.user, role: x.role })),
       })),

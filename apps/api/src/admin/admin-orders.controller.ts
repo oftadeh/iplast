@@ -4,7 +4,7 @@ import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
-import { OrdersService, STATUS_FA } from '../orders/orders.service';
+import { OrdersService, ProformaEdit, STATUS_FA } from '../orders/orders.service';
 import { audit } from '../common/audit';
 
 const STATUSES = Object.keys(STATUS_FA) as OrderStatus[];
@@ -28,7 +28,7 @@ export class AdminOrdersController {
     });
     const counts = await this.prisma.order.groupBy({ by: ['status'], _count: true });
     return {
-      rows: rows.map(o => ({ ...o, items: undefined, itemCount: o.items.length, inquiryCount: o.items.filter(i => i.unitPrice === null).length, total: this.orders.orderTotal(o.items), statusFa: STATUS_FA[o.status] })),
+      rows: rows.map(o => ({ ...o, items: undefined, itemCount: o.items.length, inquiryCount: o.items.filter(i => i.unitPrice === null).length, total: this.orders.orderTotal(o.items), payable: this.orders.breakdown(o).total, statusFa: STATUS_FA[o.status] })),
       counts: Object.fromEntries(counts.map(c => [c.status, c._count])),
       statuses: STATUSES.map(s => ({ id: s, fa: STATUS_FA[s] })),
     };
@@ -38,10 +38,10 @@ export class AdminOrdersController {
 
   /** Approval steps: sales_ok (sales agent), final_ok (manager), fix (with a note), reject. */
   @Post(':id/decide')
-  async decide(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { action?: string; comment?: string }) {
-    const before = await this.prisma.order.findUnique({ where: { id }, select: { status: true } });
-    const r = await this.orders.decide(s.sub, id, String(b?.action), b?.comment);
-    await audit(this.prisma, s.sub, 'order.decide', 'Order', id, before, { action: b?.action, status: r.status, comment: b?.comment });
+  async decide(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { action?: string; comment?: string; edit?: ProformaEdit }) {
+    const before = await this.prisma.order.findUnique({ where: { id }, select: { status: true, discount: true, shipping: true, items: { select: { id: true, quantity: true, unitPrice: true } } } });
+    const r = await this.orders.decide(s.sub, id, String(b?.action), b?.comment, b?.edit);
+    await audit(this.prisma, s.sub, 'order.decide', 'Order', id, before ? JSON.parse(JSON.stringify(before, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))) : null, { action: b?.action, status: r.status, comment: b?.comment, edit: b?.edit ?? null } as object);
     return this.orders.get(s.sub, id, true);
   }
 

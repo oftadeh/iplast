@@ -118,6 +118,15 @@ export class InternalOrdersController {
     await audit(this.prisma, staff.id, 'order.decide', 'Order', String(b.orderId), before, { action: b.action, status: r.status, via: 'bot' });
     return { number: before?.number, status: r.status, statusFa: STATUS_FA[r.status] };
   }
+
+  /** «تأیید پیش‌فاکتور» / «تغییر می‌خواهم» under the final proforma the customer gets. */
+  @Post('customer')
+  async customer(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; orderId?: string; ok?: boolean }) {
+    checkKey(key);
+    const u = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
+    if (!u) throw new UnauthorizedException();
+    return this.orders.customerDecide(u.id, String(b.orderId), b.ok !== false);
+  }
 }
 
 /** Buttons under a receipt photo a customer sent: the agent or a manager accepts or rejects it. */
