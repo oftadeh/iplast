@@ -1,8 +1,12 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssistantService } from '../assistant/assistant.service';
+
+const BADGES = ['salesReview', 'finalApproval', 'warehouse', 'newCustomers', 'joinRequests', 'reportedPayments', 'unansweredChats'] as const;
+type Badge = typeof BADGES[number];
 
 /** Overview for the admin panel home: work waiting for staff, sales and money at a glance. */
 @Controller('admin/dashboard')
@@ -25,13 +29,69 @@ export class AdminDashboardController {
     return { ...check, agentOn: process.env.SALES_AGENT !== '0', stats: { orders, chats, handoffs }, recent };
   }
 
+  /** The staff member opened a page: its menu count («جدید») starts again from now. */
+  @Post('seen')
+  async seen(@Session() s: SessionClaims, @Body() b: { badge?: string }) {
+    if (!b?.badge || !(BADGES as readonly string[]).includes(b.badge)) throw new BadRequestException();
+    const key = `seen.${s.sub}`;
+    const cur = await this.prisma.setting.findUnique({ where: { key } });
+    const value = { ...((cur?.value as Record<string, string> | null) ?? {}), [b.badge]: new Date().toISOString() };
+    await this.prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+    return { ok: true };
+  }
+
+  /**
+   * Work waiting for this person: `pending` is everything still to handle (it drops when handled),
+   * `fresh` is what arrived or changed since they last opened that page (it drops when seen).
+   * A sales agent only counts their own customers and customers without an agent.
+   */
+  private async counts(s: SessionClaims) {
+    const p = this.prisma;
+    const sales = s.staff === 'SALES';
+    const cust: Prisma.CustomerWhereInput = sales ? { OR: [{ supportId: s.sub }, { supportId: null }] } : {};
+    const seenRow = await p.setting.findUnique({ where: { key: `seen.${s.sub}` } });
+    const seenAt = (k: Badge) => { const v = (seenRow?.value as Record<string, string> | null)?.[k]; return v ? new Date(v) : new Date(0); };
+    const orders = (st: Prisma.OrderWhereInput['status'], k: Badge) => {
+      const w: Prisma.OrderWhereInput = { status: st, ...(sales ? { customer: cust } : {}) };
+      return Promise.all([p.order.count({ where: w }), p.order.count({ where: { ...w, updatedAt: { gt: seenAt(k) } } })]);
+    };
+    const chatRows = await p.$queryRaw<{ last: Date; assigneeId: string | null }[]>`SELECT c."assigneeId", (SELECT max(m."createdAt") FROM "Message" m WHERE m."conversationId" = c.id AND m."direction" = 'IN') AS last FROM "Conversation" c WHERE c."isOpen" AND c."handoffAt" IS NOT NULL AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
+    const chats = chatRows.filter(r => !sales || !r.assigneeId || r.assigneeId === s.sub);
+    const custW: Prisma.CustomerWhereInput = { isApproved: false, ...cust };
+    const joinW: Prisma.JoinRequestWhereInput = { status: 'PENDING', ...(sales ? { customer: cust } : {}) };
+    const payW: Prisma.PaymentWhereInput = { status: 'REPORTED', ...(sales ? { customer: cust } : {}) };
+    const [salesReview, finalApproval, warehouse, newC, newCf, join, joinf, pay, payf, awaitingCustomer, needsFix] = await Promise.all([
+      orders({ in: ['SUBMITTED', 'SALES_REVIEW', 'PROFORMA_EXPIRED'] }, 'salesReview'),
+      orders('SALES_APPROVED', 'finalApproval'),
+      orders({ in: ['CONFIRMED', 'PREPARING'] }, 'warehouse'),
+      p.customer.count({ where: custW }), p.customer.count({ where: { ...custW, createdAt: { gt: seenAt('newCustomers') } } }),
+      p.joinRequest.count({ where: joinW }), p.joinRequest.count({ where: { ...joinW, createdAt: { gt: seenAt('joinRequests') } } }),
+      p.payment.count({ where: payW }), p.payment.count({ where: { ...payW, createdAt: { gt: seenAt('reportedPayments') } } }),
+      p.order.count({ where: { status: 'PROFORMA_SENT', ...(sales ? { customer: cust } : {}) } }),
+      p.order.count({ where: { status: 'NEEDS_FIX', ...(sales ? { customer: cust } : {}) } }),
+    ]);
+    return {
+      queue: {
+        salesReview: salesReview[0], finalApproval: finalApproval[0], warehouse: warehouse[0], awaitingCustomer, needsFix,
+        newCustomers: newC, joinRequests: join, reportedPayments: pay, unansweredChats: chats.length,
+      },
+      fresh: {
+        salesReview: salesReview[1], finalApproval: finalApproval[1], warehouse: warehouse[1],
+        newCustomers: newCf, joinRequests: joinf, reportedPayments: payf, unansweredChats: chats.filter(r => r.last > seenAt('unansweredChats')).length,
+      },
+    };
+  }
+
+  /** Just the menu counts, polled by the panel. */
+  @Get('counts')
+  countsOnly(@Session() s: SessionClaims) { return this.counts(s); }
+
   @Get()
   async get(@Session() s: SessionClaims) {
     const p = this.prisma;
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
     const days30 = new Date(Date.now() - 30 * 864e5);
     const week = new Date(Date.now() + 7 * 864e5);
-    const unanswered = await p.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Conversation" c WHERE c."isOpen" AND c."handoffAt" IS NOT NULL AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
     const days60 = new Date(Date.now() - 60 * 864e5);
     const [sales30, salesPrev, top] = await Promise.all([
       p.invoice.aggregate({ where: { status: 'ISSUED', issuedAt: { gte: days30 } }, _sum: { total: true }, _count: true }),
@@ -39,14 +99,11 @@ export class AdminDashboardController {
       p.invoice.groupBy({ by: ['customerId'], where: { status: 'ISSUED', issuedAt: { gte: days30 } }, _sum: { total: true }, orderBy: { _sum: { total: 'desc' } }, take: 5 }),
     ]);
     const topNames = await p.customer.findMany({ where: { id: { in: top.map(t => t.customerId) } }, select: { id: true, name: true } });
-    const [byStatus, today, month, newCustomers, joinRequests, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
+    const [byStatus, today, month, customers, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
       p.order.groupBy({ by: ['status'], _count: true }),
       p.order.count({ where: { createdAt: { gte: startOfDay } } }),
       p.order.count({ where: { createdAt: { gte: days30 } } }),
-      p.customer.count({ where: { isApproved: false } }),
-      p.joinRequest.count({ where: { status: 'PENDING' } }),
       p.customer.count({ where: { isApproved: true } }),
-      p.payment.count({ where: { status: 'REPORTED' } }),
       p.payment.aggregate({ where: { status: 'PENDING', dueDate: { lte: week } }, _sum: { amount: true }, _count: true }),
       p.invoice.aggregate({ where: { status: 'ISSUED' }, _sum: { total: true } }),
       p.payment.aggregate({ where: { status: 'CLEARED' }, _sum: { amount: true } }),
@@ -91,14 +148,7 @@ export class AdminDashboardController {
       cheques: cheques.filter(c => !mine || c.customer.supportId === s.sub),
       appShare: ord30.length ? Math.round((fromApp / ord30.length) * 100) : null,
       role: s.staff,
-      queue: {
-        salesReview: n('SUBMITTED', 'SALES_REVIEW', 'PROFORMA_EXPIRED'),
-        awaitingCustomer: n('PROFORMA_SENT'),
-        finalApproval: n('SALES_APPROVED'),
-        needsFix: n('NEEDS_FIX'),
-        warehouse: n('CONFIRMED', 'PREPARING'),
-        newCustomers, joinRequests, reportedPayments: reported, unansweredChats: Number(unanswered[0]?.n ?? 0),
-      },
+      ...(await this.counts(s)),
       orders: { today, last30: month, open: n('SUBMITTED', 'SALES_REVIEW', 'SALES_APPROVED', 'NEEDS_FIX', 'PROFORMA_SENT', 'CONFIRMED', 'PREPARING', 'SHIPPED'), delivered: n('DELIVERED'), byStatus: c },
       money: { receivable: inv - pd, invoiced: inv, chequesDue7: chequesDue._sum.amount ?? 0n, chequesDue7Count: chequesDue._count },
       catalog: { variants, inquiry: list?._count.prices ?? 0, activeList: list ? { id: list.id, title: list.title, publishedAt: list.publishedAt } : null },

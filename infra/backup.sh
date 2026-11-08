@@ -67,7 +67,13 @@ ls -1d "$OUT_ROOT"/2* 2>/dev/null | sort | head -n -"$KEEP" | xargs -r rm -rf
 
 SIZE=$(du -sh "$OUT" | cut -f1)
 DBSIZE=$(stat -c %s "$OUT/db.sql.gz" 2>/dev/null || echo 0)
-ID="${ADMIN_TELEGRAM_IDS%%,*}"
+# the senior manager: the one set in the panel after a transfer, else the first ADMIN_TELEGRAM_IDS
+owner_id() {
+  local v
+  v=$(cd /opt/iplast 2>/dev/null && timeout 15 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT value->>0 FROM \"Setting\" WHERE key='owner.telegramIds'" 2>/dev/null | tr -cd '0-9')
+  echo "${v:-${ADMIN_TELEGRAM_IDS%%,*}}"
+}
+ID="$(owner_id)"
 if [ -n "${BOT_TOKEN:-}" ] && [ -n "$ID" ]; then
   if [ "$ok" = 1 ]; then CAP="🗄 iPlast backup $STAMP ($SIZE on the server, $OUT)"; else CAP="⚠️ iPlast backup $STAMP had errors, see $LOG"; fi
   if [ "${BACKUP_TELEGRAM:-1}" != 0 ] && [ "$DBSIZE" -gt 0 ] && [ "$DBSIZE" -lt 45000000 ]; then
