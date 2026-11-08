@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, STATUS_CLASS, api, dateFa, fa, personName, rial, toEnDigits, useApi, useBlobUrl } from '../lib';
+import { ApiError, STATUS_CLASS, api, dateFa, fa, openPrivate, personName, rial, toEnDigits, useApi, useBlobUrl } from '../lib';
 
 interface Row {
   id: string; number: number; status: string; statusFa: string; createdAt: string; total: string; payable?: string; itemCount: number; inquiryCount: number; channel: string;
@@ -24,7 +24,7 @@ type Line = { qty: string; price: string; remove: boolean };
 interface Customer { id: string; name: string; city: string | null; isApproved: boolean; createdAt: string; terms: { cashPercent: number } | null; _count: { members: number; orders: number } }
 interface Reported {
   id: string; amount: string; method: string; methodFa: string; chequeNumber: string | null; bank: string | null; dueDate: string | null;
-  receivedAt: string; note: string | null; hasReceipt: boolean; customer: { id: string; name: string }; invoice: { number: number } | null;
+  receivedAt: string; note: string | null; hasReceipt: boolean; receiptPdf?: boolean; customer: { id: string; name: string }; invoice: { number: number } | null;
 }
 
 const AGENT = 'SUBMITTED,SALES_REVIEW,NEEDS_FIX,PROFORMA_SENT,PROFORMA_EXPIRED';
@@ -259,7 +259,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
 
 function PaymentCard({ p, onDone }: { p: Reported; onDone: () => void }) {
   const { toast } = useAdmin();
-  const img = useBlobUrl(p.hasReceipt ? `/admin/accounts/payments/${p.id}/receipt` : null);
+  const img = useBlobUrl(p.hasReceipt && !p.receiptPdf ? `/admin/accounts/payments/${p.id}/receipt` : null);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -274,7 +274,9 @@ function PaymentCard({ p, onDone }: { p: Reported; onDone: () => void }) {
   return (
     <article className="card ocard">
       <div className="paycard">
-        {p.hasReceipt
+        {p.receiptPdf
+          ? <button type="button" className="receipt" onClick={() => openPrivate(`/admin/accounts/payments/${p.id}/receipt`).catch(e => toast(e.message))}>📄 PDF</button>
+          : p.hasReceipt
           ? <button type="button" className="receipt" onClick={() => setZoom(z => !z)} aria-label="بزرگ‌نمایی رسید">{img ? <img src={img} alt="عکس رسید" /> : <span className="muted small">…</span>}</button>
           : <span className="receipt muted small">بدون عکس</span>}
         <div className="stack" style={{ gap: 4 }}>

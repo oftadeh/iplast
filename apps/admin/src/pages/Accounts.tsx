@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, personName, rial, toEnDigits, useApi, useBlobUrl, type Staff } from '../lib';
+import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, openPrivate, personName, rial, toEnDigits, useApi, useBlobUrl, type Staff } from '../lib';
+import { DocsPanel } from '../components/Docs';
 
 interface Balance { id: string; name: string; city: string | null; invoices: number; invoiced: string; paid: string; pendingCheques: string; balance: string }
 interface ToInvoice { id: string; number: number; createdAt: string; customer: { id: string; name: string }; items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null }[] }
 interface Invoice { id: string; number: number; status: 'ISSUED' | 'CANCELLED'; issuedAt: string; total: string; itemCount: number; order: { number: number } | null }
-interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; statusFa: string; hasReceipt: boolean; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; note: string | null; invoice: { number: number } | null }
+interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; statusFa: string; hasReceipt: boolean; receiptPdf?: boolean; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; note: string | null; invoice: { number: number } | null }
 interface Account {
   customer: {
     id: string; name: string; city: string | null;
@@ -115,7 +116,7 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
   const { me, toast } = useAdmin();
   const can = me.staffRole === 'ADMIN';
   const a = useApi<Account>(`/admin/accounts/customers/${id}`);
-  const [tab, setTab] = useState<'statement' | 'invoices' | 'payments'>('statement');
+  const [tab, setTab] = useState<'statement' | 'invoices' | 'payments' | 'docs'>('statement');
   const [inv, setInv] = useState<string | null>(null);
   if (a.error) return <div className="err">{a.error}</div>;
   if (!a.data) return <div className="card pad muted">در حال بارگذاری…</div>;
@@ -151,7 +152,7 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
       <TermsCard customerId={id} c={d.customer} onDone={a.reload} />
       {can && <AddPayment customerId={id} invoices={d.invoices.filter(i => i.status === 'ISSUED')} onDone={a.reload} />}
       <div className="chips">
-        {([['statement', 'گردش حساب'], ['invoices', `فاکتورها (${fa(d.invoices.length)})`], ['payments', `دریافتی‌ها (${fa(d.payments.length)})`]] as const).map(([k, t]) => (
+        {([['statement', 'گردش حساب'], ['invoices', `فاکتورها (${fa(d.invoices.length)})`], ['payments', `دریافتی‌ها (${fa(d.payments.length)})`], ['docs', 'اسناد مالی']] as const).map(([k, t]) => (
           <button key={k} type="button" className="chip" aria-pressed={tab === k} onClick={() => setTab(k)}>{t}</button>
         ))}
       </div>
@@ -176,6 +177,7 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
           ))}
         </div>
       ))}
+      {tab === 'docs' && <DocsPanel customerId={id} />}
       {tab === 'payments' && (!d.payments.length ? <div className="empty">دریافتی ثبت نشده است.</div> : (
         <div className="stack">
           {d.payments.map(p => (
@@ -183,7 +185,7 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
               <div className="between"><b className="num">{rial(p.amount)}</b><span className={`st ${PAY_ST[p.status]}`}>{p.status === 'PENDING' ? 'در جریان' : p.statusFa}</span></div>
               <span className="muted small num">{p.methodFa}{p.chequeNumber ? ` ${p.chequeNumber}` : ''}{p.bank ? ` · ${p.bank}` : ''}{p.dueDate ? ` · سررسید ${dayFa(p.dueDate)}` : ''} · ثبت {dayFa(p.receivedAt)}{p.invoice ? ` · بابت فاکتور ${fa(p.invoice.number)}` : ''}</span>
               {p.note && <span className="small">{p.note}</span>}
-              {p.hasReceipt && <Receipt id={p.id} />}
+              {p.hasReceipt && <Receipt id={p.id} pdf={p.receiptPdf} />}
               {p.status === 'REPORTED' && (
                 <div className="decide" style={{ padding: 0 }}>
                   <button type="button" className="btn ok-fill sm" onClick={() => review(p.id, true)}>✓ تأیید رسید</button>
@@ -253,7 +255,7 @@ function AddPayment({ customerId, invoices, onDone }: { customerId: string; invo
 }
 
 interface InvoiceDetail {
-  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; total: string; cashPercent: number; note: string | null;
+  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; cashDiscount?: string; chequeMarkup?: string; total: string; cashPercent: number; note: string | null;
   customer: { name: string; city: string | null }; order: { number: number } | null; split: { cash: string; cheque: string };
   items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string; total: string }[];
 }
@@ -273,6 +275,8 @@ export function InvoiceView({ id, onBack }: { id: string; onBack: () => void }) 
         <div className="items small">
           <div><span>جمع اقلام</span><span className="num">{rial(i.subtotal)}</span></div>
           {BigInt(i.discount) > 0n && <div><span>تخفیف</span><span className="num">−{rial(i.discount)}</span></div>}
+          {BigInt(i.cashDiscount ?? '0') > 0n && <div><span>تخفیف نقدی</span><span className="num">−{rial(i.cashDiscount!)}</span></div>}
+          {BigInt(i.chequeMarkup ?? '0') > 0n && <div><span>افزایش چکی</span><span className="num">{rial(i.chequeMarkup!)}</span></div>}
           {BigInt(i.shipping) > 0n && <div><span>حمل</span><span className="num">{rial(i.shipping)}</span></div>}
         </div>
         <div className="tot"><span>مبلغ قابل پرداخت</span><span className="num">{rial(i.total)}</span></div>
@@ -283,8 +287,10 @@ export function InvoiceView({ id, onBack }: { id: string; onBack: () => void }) 
   );
 }
 
-function Receipt({ id }: { id: string }) {
-  const url = useBlobUrl(`/admin/accounts/payments/${id}/receipt`);
+function Receipt({ id, pdf }: { id: string; pdf?: boolean }) {
+  const { toast } = useAdmin();
+  const url = useBlobUrl(pdf ? null : `/admin/accounts/payments/${id}/receipt`);
+  if (pdf) return <button type="button" className="btn sm" style={{ justifySelf: 'start' }} onClick={() => openPrivate(`/admin/accounts/payments/${id}/receipt`).catch(e => toast(e.message))}>📄 باز کردن PDF رسید</button>;
   const [big, setBig] = useState(false);
   if (!url) return <span className="muted small">در حال بارگذاری عکس…</span>;
   return <img src={url} alt="عکس رسید" onClick={() => setBig(b => !b)} style={{ width: big ? '100%' : 96, borderRadius: 10, border: '1px solid var(--line)', cursor: 'zoom-in' }} />;

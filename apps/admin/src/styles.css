@@ -282,3 +282,10 @@ fieldset.plain{border:0;padding:0;margin:0;min-width:0}
 .pfsum{display:grid;gap:4px;font-size:13px;background:var(--bg,#f6f7f9);border-radius:12px;padding:10px 12px}
 .pfsum>div{display:flex;justify-content:space-between;gap:8px}
 @media (max-width:640px){.pfrow{grid-template-columns:minmax(0,1fr) 64px 112px 32px}}
+.docup{display:grid;grid-template-columns:140px 1fr 1fr auto;gap:6px;align-items:center}
+.docup .in[type=file]{padding:6px;height:auto}
+@media (max-width:760px){.docup{grid-template-columns:1fr 1fr}}
+.shipform{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.shipform label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+.shipform .wide{grid-column:1/-1}
+@media (max-width:560px){.shipform{grid-template-columns:1fr}}

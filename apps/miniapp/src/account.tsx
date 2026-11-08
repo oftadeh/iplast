@@ -27,7 +27,7 @@ export function AccountScreen() {
   const a = useApi<Account>(authed ? '/me/account' : null, [authed]);
   const [tab, setTab] = useState<'invoices' | 'statement' | 'payments'>('invoices');
   const [sending, setSending] = useState(false);
-  const sendBtn = <div className="pad"><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => setSending(true)}><Icon n="file" s={18} />&nbsp; ارسال عکس چک یا فیش واریزی</button></div>;
+  const sendBtn = <div className="pad"><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => setSending(true)}><Icon n="file" s={18} />&nbsp; ارسال عکس یا PDF چک و فیش واریزی</button></div>;
   if (sending) return <PayForm invoices={a.data?.invoices.filter(i => i.status === 'ISSUED') ?? []} onClose={sent => { setSending(false); if (sent) { a.reload(); setTab('payments'); } }} />;
   return (
     <>
@@ -138,7 +138,7 @@ function PayForm({ invoices, onClose }: { invoices: Invoice[]; onClose: (sent: b
   const amount = toEnDigits(f.amount).replace(/[^0-9]/g, '');
   const send = async () => {
     setErr('');
-    if (!photo) return setErr('عکس چک یا فیش را انتخاب کنید.');
+    if (!photo) return setErr('عکس یا PDF چک یا فیش را انتخاب کنید.');
     if (!amount || BigInt(amount) < 1000n) return setErr('مبلغ را به ریال بنویسید.');
     setBusy(true);
     try {
@@ -167,8 +167,8 @@ function PayForm({ invoices, onClose }: { invoices: Invoice[]; onClose: (sent: b
       </div>
       <div className="stackf">
         <label className="photo-in">
-          {preview ? <img src={preview} alt="پیش‌نمایش رسید" /> : <span><Icon n="file" s={22} /><b>انتخاب یا گرفتن عکس</b><small>{cheque ? 'روی چک، خوانا' : 'فیش واریزی یا اسکرین‌شات رسید'}</small></span>}
-          <input type="file" accept="image/*" onChange={e => setPhoto(e.target.files?.[0] ?? null)} />
+          {photo?.type === 'application/pdf' ? <span><Icon n="file" s={22} /><b>📄 {photo.name}</b></span> : preview ? <img src={preview} alt="پیش‌نمایش رسید" /> : <span><Icon n="file" s={22} /><b>انتخاب عکس یا PDF</b><small>{cheque ? 'روی چک، خوانا' : 'فیش واریزی یا اسکرین‌شات رسید'}</small></span>}
+          <input type="file" accept="image/*,application/pdf" onChange={e => setPhoto(e.target.files?.[0] ?? null)} />
         </label>
         <label className="field"><span>مبلغ (ریال)</span><input className="num" dir="ltr" inputMode="numeric" value={amount ? fa(BigInt(amount)) : ''} onChange={set('amount')} placeholder="مثلاً ۵۰٬۰۰۰٬۰۰۰" /></label>
         {cheque && <label className="field"><span>شماره چک (صیادی)</span><input className="num" dir="ltr" inputMode="numeric" value={f.chequeNumber} onChange={set('chequeNumber')} maxLength={40} /></label>}

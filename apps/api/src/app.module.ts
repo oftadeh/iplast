@@ -14,6 +14,7 @@ import { AdminCustomersController } from './admin/admin-customers.controller';
 import { AdminStaffController } from './admin/admin-staff.controller';
 import { PricesController } from './prices/prices.controller';
 import { AdminConversationsController } from './admin/admin-conversations.controller';
+import { AdminDocumentsController, DocumentsService, MyDocumentsController } from './documents/documents';
 import { AccountingService, AdminAccountsController, MyAccountController } from './accounting/accounting';
 import { PriceAiService } from './prices/price-ai.service';
 import { AdminProductsController, MediaController } from './admin/admin-products.controller';
@@ -26,7 +27,7 @@ import { AssistantService } from './assistant/assistant.service';
 import { SalesAgentService } from './assistant/sales-agent.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController],
-  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController, AdminDocumentsController, MyDocumentsController],
+  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService, DocumentsService],
 })
 export class AppModule {}
