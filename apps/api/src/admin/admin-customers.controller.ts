@@ -8,6 +8,8 @@ import { int, req, telegramId } from '../common/validate';
 
 const TYPES: CustomerType[] = ['RETAIL', 'DEALER', 'CONTRACTOR'];
 const ROLES: MemberRole[] = ['OWNER', 'BUYER', 'VIEWER'];
+/** Persian digits and decimal sign to plain ones. */
+const fa = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٫/]/, '.') : v);
 const pct = (v: unknown, msg: string) => {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n) || n < 0 || n > 100) throw new BadRequestException(msg);
@@ -72,56 +74,58 @@ export class AdminCustomersController {
     return c;
   }
 
-  /** Cash/cheque terms for this customer. These become the default in the customer's cart. Admin only. */
-  @Put(':id/terms')
-  @Staff('ADMIN')
-  async terms(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { cashPercent?: number; chequeDueDays?: number[]; cashDiscountPct?: number; chequeMarkupPct?: number }) {
-    if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();
-    const data = {
-      cashPercent: int(b?.cashPercent, 'درصد نقد باید بین ۰ تا ۱۰۰ باشد', 0, 100),
-      chequeDueDays: (Array.isArray(b.chequeDueDays) ? b.chequeDueDays : []).slice(0, 12).map(d => int(d, 'سررسید چک نامعتبر است', 0, 720)),
-      cashDiscountPct: pct(b.cashDiscountPct, 'درصد تخفیف نقدی نامعتبر است'),
-      chequeMarkupPct: pct(b.chequeMarkupPct, 'درصد افزایش چکی نامعتبر است'),
-      updatedBy: s.sub,
+  /**
+   * The customer's sale terms: «نقدی» % off the list price, «مدت‌دار» % off with the number of months, which of the
+   * two they may use, and per product category the two percentages when they differ from the default.
+   */
+  @Get(':id/sale')
+  async sale(@Param('id') id: string) {
+    const c = await this.prisma.customer.findUnique({ where: { id }, include: { terms: true, categoryDiscounts: true } });
+    if (!c) throw new NotFoundException();
+    const cats = await this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, include: { _count: { select: { families: true } } } });
+    const t = c.terms;
+    const n = (d: { toString(): string } | null | undefined) => (d === null || d === undefined ? null : Number(d.toString()));
+    return {
+      cashPct: n(t?.cashDiscountPct) ?? 0, termPct: n(t?.termDiscountPct) ?? 0, termMonths: t?.termMonths ?? 3,
+      allowCash: t?.allowCash ?? true, allowTerm: t?.allowTerm ?? true, updatedAt: t?.updatedAt ?? null,
+      categories: cats.map(k => { const d = c.categoryDiscounts.find(x => x.categoryId === k.id); return { id: k.id, slug: k.slug, name: k.name, families: k._count.families, cash: n(d?.cashPct), term: n(d?.termPct) }; }),
     };
-    const before = await this.prisma.paymentTerms.findUnique({ where: { customerId: id } });
-    const t = await this.prisma.paymentTerms.upsert({ where: { customerId: id }, create: { customerId: id, ...data }, update: data });
-    await audit(this.prisma, s.sub, 'terms.update', 'Customer', id, before, t);
-    return t;
+  }
+
+  /** Managers set the sale terms. A category with both percentages empty follows the customer's default. */
+  @Put(':id/sale')
+  @Staff('ADMIN')
+  async setSale(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { cashPct?: unknown; termPct?: unknown; termMonths?: unknown; allowCash?: boolean; allowTerm?: boolean; categories?: { id?: string; cash?: unknown; term?: unknown }[] }) {
+    if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();
+    const opt = (v: unknown, msg: string) => (v === null || v === undefined || String(v).trim() === '' ? null : pct(fa(v), msg));
+    const allowCash = b?.allowCash !== false, allowTerm = b?.allowTerm !== false;
+    if (!allowCash && !allowTerm) throw new BadRequestException('دست‌کم یکی از «نقدی» یا «مدت‌دار» باید فعال باشد');
+    const data = {
+      cashDiscountPct: pct(fa(b.cashPct), 'درصد نقدی باید بین ۰ تا ۱۰۰ باشد'),
+      termDiscountPct: pct(fa(b.termPct), 'درصد مدت‌دار باید بین ۰ تا ۱۰۰ باشد'),
+      termMonths: int(Number(fa(b.termMonths ?? 3)), 'مدت باید بین ۱ تا ۳۶ ماه باشد', 1, 36),
+      allowCash, allowTerm, updatedBy: s.sub,
+    };
+    const items = Array.isArray(b.categories) ? b.categories.slice(0, 200) : [];
+    const cats = new Map((await this.prisma.category.findMany({ select: { id: true, name: true } })).map(c => [c.id, c.name]));
+    const rows = items.map(it => {
+      const name = cats.get(String(it.id));
+      if (!name) throw new BadRequestException('دسته‌ی کالا نامعتبر است');
+      return { categoryId: String(it.id), cashPct: opt(it.cash, `درصد نقدی «${name}» نامعتبر است`), termPct: opt(it.term, `درصد مدت‌دار «${name}» نامعتبر است`) };
+    });
+    const before = await this.sale(id);
+    await this.prisma.$transaction([
+      this.prisma.paymentTerms.upsert({ where: { customerId: id }, create: { customerId: id, ...data }, update: data }),
+      ...rows.map(r => r.cashPct === null && r.termPct === null
+        ? this.prisma.customerCategoryDiscount.deleteMany({ where: { customerId: id, categoryId: r.categoryId } })
+        : this.prisma.customerCategoryDiscount.upsert({ where: { customerId_categoryId: { customerId: id, categoryId: r.categoryId } }, create: { customerId: id, ...r, updatedBy: s.sub }, update: { cashPct: r.cashPct, termPct: r.termPct, updatedBy: s.sub } })),
+    ]);
+    const after = await this.sale(id);
+    await audit(this.prisma, s.sub, 'customer.sale', 'Customer', id, before, after);
+    return after;
   }
 
   /** Adds a Telegram user to the customer (another purchasing agent, for example). */
-  /** Every product category with this customer's discount on it (0 = list price, or the price group's discount). */
-  @Get(':id/discounts')
-  async discounts(@Param('id') id: string) {
-    const c = await this.prisma.customer.findUnique({ where: { id }, include: { priceGroup: true, categoryDiscounts: true } });
-    if (!c) throw new NotFoundException();
-    const cats = await this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, include: { _count: { select: { families: true } } } });
-    return {
-      defaultDiscount: c.priceGroup ? Number(c.priceGroup.discountPct) : 0,
-      categories: cats.map(k => ({ id: k.id, slug: k.slug, name: k.name, families: k._count.families, pct: Number(c.categoryDiscounts.find(d => d.categoryId === k.id)?.pct ?? 0) })),
-    };
-  }
-
-  /** Managers set the customer's discount per category. 0 removes it. */
-  @Put(':id/discounts')
-  @Staff('ADMIN')
-  async setDiscounts(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { items?: { categoryId?: string; pct?: unknown }[] }) {
-    if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();
-    const items = Array.isArray(b?.items) ? b.items.slice(0, 200) : [];
-    const cats = new Set((await this.prisma.category.findMany({ select: { id: true } })).map(c => c.id));
-    const before = await this.prisma.customerCategoryDiscount.findMany({ where: { customerId: id } });
-    for (const it of items) {
-      if (!cats.has(String(it.categoryId))) throw new BadRequestException('دسته‌ی کالا نامعتبر است');
-      const p = pct(typeof it.pct === 'string' ? it.pct.replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace('٫', '.') : it.pct, 'درصد تخفیف باید بین ۰ تا ۱۰۰ باشد');
-      const key = { customerId_categoryId: { customerId: id, categoryId: String(it.categoryId) } };
-      if (p === 0) await this.prisma.customerCategoryDiscount.deleteMany({ where: { customerId: id, categoryId: String(it.categoryId) } });
-      else await this.prisma.customerCategoryDiscount.upsert({ where: key, create: { customerId: id, categoryId: String(it.categoryId), pct: p, updatedBy: s.sub }, update: { pct: p, updatedBy: s.sub } });
-    }
-    await audit(this.prisma, s.sub, 'customer.discounts', 'Customer', id, before.map(d => ({ categoryId: d.categoryId, pct: d.pct.toString() })), items as object);
-    return this.discounts(id);
-  }
-
   @Post(':id/members')
   async addMember(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { telegramId?: string; role?: string; firstName?: string }) {
     if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();

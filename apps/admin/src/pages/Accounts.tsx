@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, openPrivate, personName, rial, toEnDigits, useApi, useBlobUrl, type Staff } from '../lib';
+import { ApiError, api, dayFa, fa, jalaliToIso, jalaliToday, openPrivate, payModeFa, personName, rial, termsLine, toEnDigits, useApi, useBlobUrl } from '../lib';
 import { DocsPanel } from '../components/Docs';
 
 interface Balance { id: string; name: string; city: string | null; invoices: number; invoiced: string; paid: string; pendingCheques: string; balance: string }
@@ -10,7 +10,7 @@ interface Payment { id: string; amount: string; method: string; methodFa: string
 interface Account {
   customer: {
     id: string; name: string; city: string | null;
-    terms: { cashPercent: number; chequeDueDays: number[]; cashDiscountPct: string; chequeMarkupPct: string } | null;
+    terms: { cashDiscountPct: string; termDiscountPct: string; termMonths: number; allowCash: boolean; allowTerm: boolean } | null;
     support: { id: string; firstName: string | null; lastName: string | null; username: string | null } | null;
   };
   summary: { invoiced: string; paid: string; pendingCheques: string; reported: string; balance: string; balanceAfterCheques: string };
@@ -112,8 +112,9 @@ function IssueInvoice({ o, can, onDone }: { o: ToInvoice; can: boolean; onDone: 
   );
 }
 
-function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
-  const { me, toast } = useAdmin();
+/** A customer's money: balance, invoices, payments, documents. Also shown as the «حساب مالی» tab of the customer page. */
+export function CustomerAccount({ id, onBack, embedded }: { id: string; onBack?: () => void; embedded?: boolean }) {
+  const { me, toast, open } = useAdmin();
   const can = me.staffRole === 'ADMIN';
   const a = useApi<Account>(`/admin/accounts/customers/${id}`);
   const [tab, setTab] = useState<'statement' | 'invoices' | 'payments' | 'docs'>('statement');
@@ -138,9 +139,10 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
 
   return (
     <>
-      <div className="head"><button type="button" className="btn sm" onClick={onBack}>→ حساب‌ها</button></div>
+      {!embedded && <div className="head"><button type="button" className="btn sm" onClick={onBack}>→ حساب‌ها</button><button type="button" className="btn sm" onClick={() => open('customers/settings', id)}>پرونده‌ی مشتری و شرایط فروش</button></div>}
       <div className="card pad stack">
-        <h1 style={{ fontSize: 19 }}>{d.customer.name}</h1>
+        {!embedded && <h1 style={{ fontSize: 19 }}>{d.customer.name}</h1>}
+        {!embedded && <span className="muted small num">شرایط فروش: {termsLine(d.customer.terms)} · کارشناس: {d.customer.support ? personName(d.customer.support) : 'تعیین نشده'}</span>}
         <div className="sums">
           <div><span>مانده‌ی بدهی</span><b className="num" style={{ color: BigInt(s.balance) > 0n ? 'var(--bad)' : 'var(--ok)' }}>{rial(s.balance)}</b></div>
           <div><span>جمع فاکتورها</span><b className="num">{rial(s.invoiced)}</b></div>
@@ -149,7 +151,6 @@ function CustomerAccount({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
         {BigInt(s.reported) > 0n && <p className="small" style={{ margin: 0 }}><span className="st new">منتظر بررسی</span> <span className="num">{rial(s.reported)}</span> رسید از طرف مشتری (در تب «دریافتی‌ها»)</p>}
       </div>
-      <TermsCard customerId={id} c={d.customer} onDone={a.reload} />
       {can && <AddPayment customerId={id} invoices={d.invoices.filter(i => i.status === 'ISSUED')} onDone={a.reload} />}
       <div className="chips">
         {([['statement', 'گردش حساب'], ['invoices', `فاکتورها (${fa(d.invoices.length)})`], ['payments', `دریافتی‌ها (${fa(d.payments.length)})`], ['docs', 'اسناد مالی']] as const).map(([k, t]) => (
@@ -255,7 +256,7 @@ function AddPayment({ customerId, invoices, onDone }: { customerId: string; invo
 }
 
 interface InvoiceDetail {
-  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; cashDiscount?: string; chequeMarkup?: string; total: string; cashPercent: number; note: string | null;
+  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; cashDiscount?: string; chequeMarkup?: string; total: string; cashPercent: number; payMode?: string; termMonths?: number; listTotal?: string; chequeDueDays?: number[]; note: string | null;
   customer: { name: string; city: string | null }; order: { number: number } | null; split: { cash: string; cheque: string };
   items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string; total: string }[];
 }
@@ -273,6 +274,7 @@ export function InvoiceView({ id, onBack }: { id: string; onBack: () => void }) 
           {i.items.map(x => <div key={x.id}><span>{x.title}<br /><span className="muted small num">{x.packs ? `${fa(x.packs)} بسته · ` : ''}{fa(x.quantity)} × {fa(x.unitPrice)}</span></span><b className="num">{fa(x.total)}</b></div>)}
         </div>
         <div className="items small">
+          {BigInt(i.listTotal ?? '0') > BigInt(i.subtotal) && <><div><span>جمع به قیمت لیست</span><span className="num">{rial(i.listTotal!)}</span></div><div><span>تخفیف {payModeFa(i.payMode ?? 'CASH')}</span><span className="num">−{rial(String(BigInt(i.listTotal!) - BigInt(i.subtotal)))}</span></div></>}
           <div><span>جمع اقلام</span><span className="num">{rial(i.subtotal)}</span></div>
           {BigInt(i.discount) > 0n && <div><span>تخفیف</span><span className="num">−{rial(i.discount)}</span></div>}
           {BigInt(i.cashDiscount ?? '0') > 0n && <div><span>تخفیف نقدی</span><span className="num">−{rial(i.cashDiscount!)}</span></div>}
@@ -280,7 +282,7 @@ export function InvoiceView({ id, onBack }: { id: string; onBack: () => void }) 
           {BigInt(i.shipping) > 0n && <div><span>حمل</span><span className="num">{rial(i.shipping)}</span></div>}
         </div>
         <div className="tot"><span>مبلغ قابل پرداخت</span><span className="num">{rial(i.total)}</span></div>
-        <p className="small muted num" style={{ margin: 0 }}>نقد {fa(i.cashPercent)}٪: {rial(i.split.cash)} · چک: {rial(i.split.cheque)}</p>
+        <p className="small muted num" style={{ margin: 0 }}>{i.payMode === 'TERM' ? `${payModeFa('TERM', i.termMonths)}: چک ${rial(i.split.cheque)}${i.termMonths ? `، سررسید ${fa(i.termMonths)} ماه بعد از فاکتور` : ''}${BigInt(i.split.cash) ? ` · نقد (کرایه) ${rial(i.split.cash)}` : ''}` : BigInt(i.split.cheque) ? `نقد ${fa(i.cashPercent)}٪: ${rial(i.split.cash)} · چک: ${rial(i.split.cheque)}` : `نقدی: ${rial(i.split.cash)}`}</p>
         {i.note && <p className="note" style={{ margin: 0 }}>{i.note}</p>}
       </div>
     </>
@@ -294,63 +296,4 @@ function Receipt({ id, pdf }: { id: string; pdf?: boolean }) {
   const [big, setBig] = useState(false);
   if (!url) return <span className="muted small">در حال بارگذاری عکس…</span>;
   return <img src={url} alt="عکس رسید" onClick={() => setBig(b => !b)} style={{ width: big ? '100%' : 96, borderRadius: 10, border: '1px solid var(--line)', cursor: 'zoom-in' }} />;
-}
-
-/** Cash/cheque split, cheque due days and the customer's sales agent. Managers change them; agents only see them. */
-export function TermsCard({ customerId, c, onDone }: { customerId: string; c: Pick<Account['customer'], 'terms' | 'support'>; onDone: () => void }) {
-  const { me, toast } = useAdmin();
-  const can = me.staffRole === 'ADMIN';
-  const staff = useApi<Staff[]>(can ? '/admin/staff' : null);
-  const t = c.terms;
-  const init = () => ({
-    cash: String(t?.cashPercent ?? 100), days: (t?.chequeDueDays ?? []).join('، '),
-    disc: String(Number(t?.cashDiscountPct ?? 0)), markup: String(Number(t?.chequeMarkupPct ?? 0)), support: c.support?.id ?? '',
-  });
-  const [f, setF] = useState(init);
-  const [edit, setEdit] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const set = (k: keyof ReturnType<typeof init>) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
-  const cash = Number(clean(f.cash));
-  const save = async () => {
-    setBusy(true);
-    try {
-      const days = toEnDigits(f.days).split(/[^0-9]+/).filter(Boolean).map(Number);
-      await api(`/admin/customers/${customerId}/terms`, { method: 'PUT', body: { cashPercent: cash, chequeDueDays: days, cashDiscountPct: Number(clean(f.disc) || 0), chequeMarkupPct: Number(clean(f.markup) || 0) } });
-      if (f.support !== (c.support?.id ?? '')) await api(`/admin/customers/${customerId}`, { method: 'PATCH', body: { supportId: f.support || null } });
-      toast('شرایط پرداخت ذخیره شد'); setEdit(false); onDone();
-    } catch (e) { toast(err(e)); } finally { setBusy(false); }
-  };
-  const tc = t?.cashPercent ?? 100;
-  if (!edit) return (
-    <div className="card pad stack">
-      <div className="between"><h2 style={{ margin: 0 }}>شرایط پرداخت و کارشناس</h2>{can && <button type="button" className="btn sm" onClick={() => { setF(init()); setEdit(true); }}>ویرایش</button>}</div>
-      <span className="num"><b>نقد {fa(tc)}٪</b> · <b>چک {fa(100 - tc)}٪</b>{t?.chequeDueDays.length ? ` · سررسید چک: ${t.chequeDueDays.map(d => fa(d)).join('، ')} روزه` : ''}{Number(t?.cashDiscountPct ?? 0) ? ` · تخفیف نقدی ${fa(String(t!.cashDiscountPct))}٪` : ''}{Number(t?.chequeMarkupPct ?? 0) ? ` · افزایش چکی ${fa(String(t!.chequeMarkupPct))}٪` : ''}</span>
-      <span className="small">کارشناس فروش: <b>{c.support ? personName(c.support) : 'تعیین نشده'}</b>{!c.support && <span className="muted"> (پیش‌فاکتورها برای همه‌ی کارشناسان می‌رود)</span>}</span>
-    </div>
-  );
-  return (
-    <div className="card pad stack">
-      <h2 style={{ margin: 0 }}>شرایط پرداخت و کارشناس</h2>
-      <div className="row2">
-        <label className="stack small">سهم نقد (٪)<input className="in num" inputMode="numeric" value={f.cash} onChange={set('cash')} /></label>
-        <label className="stack small">سهم چک (٪)<input className="in num" value={Number.isFinite(cash) && cash >= 0 && cash <= 100 ? fa(100 - cash) : '—'} disabled /></label>
-      </div>
-      <div className="row2">
-        <label className="stack small">تخفیف نقدی (٪ از سهم نقد)<input className="in num" inputMode="decimal" value={f.disc} onChange={set('disc')} /></label>
-        <label className="stack small">افزایش چکی (٪ از سهم چک)<input className="in num" inputMode="decimal" value={f.markup} onChange={set('markup')} /></label>
-      </div>
-      <label className="stack small">سررسید چک‌ها (روز، با ویرگول جدا کنید)<input className="in num" inputMode="numeric" placeholder="مثلاً ۶۰، ۹۰" value={f.days} onChange={set('days')} /></label>
-      <label className="stack small">کارشناس فروش این مشتری
-        <select className="in" value={f.support} onChange={set('support')}>
-          <option value="">تعیین نشده (همه‌ی کارشناسان)</option>
-          {(staff.data ?? []).filter(u => u.isActive).map(u => <option key={u.id} value={u.id}>{personName(u)} · {u.staffRole === 'ADMIN' ? 'مدیر' : 'کارشناس فروش'}</option>)}
-        </select>
-      </label>
-      <p className="muted small" style={{ margin: 0 }}>این درصدها پیش‌فرض سبد خرید همین مشتری می‌شود و پیش‌فاکتورهای بعدی با آن حساب می‌شوند.</p>
-      <div className="decide" style={{ padding: 0 }}>
-        <button type="button" className="btn ok-fill" disabled={busy} onClick={save}>ذخیره</button>
-        <button type="button" className="btn" onClick={() => setEdit(false)}>انصراف</button>
-      </div>
-    </div>
-  );
 }

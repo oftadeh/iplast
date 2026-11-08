@@ -122,7 +122,7 @@ function ProductEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const photo = async (file: File) => {
     setBusy(true);
     try {
-      const fd = new FormData(); fd.append('file', file);
+      const fd = new FormData(); const img = await fitPhoto(file); fd.append('file', img, img === file ? file.name : 'photo.' + (img.type === 'image/webp' ? 'webp' : 'jpg'));
       const r = await fetch(`/api/admin/products/${id}/photo`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${getToken()}` } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new ApiError(r.status, j?.message ?? 'بارگذاری نشد');
@@ -250,4 +250,26 @@ function AddVariant({ p, onSaved }: { p: Product; onSaved: (p: Product) => void 
       <button type="button" className="btn primary" disabled={busy || !ready} onClick={save}>افزودن سایز</button>
     </div>
   );
+}
+
+/**
+ * Phone photos are often over the 5 MB limit or in a format the server does not take (HEIC). Small JPG/PNG/WebP
+ * files go as they are (keeping a transparent background); anything else is resized to 1600px and re-encoded as
+ * WebP (keeps transparency), or JPEG on a white background where the browser cannot write WebP.
+ */
+async function fitPhoto(f: File): Promise<Blob> {
+  if (['image/jpeg', 'image/png', 'image/webp'].includes(f.type) && f.size <= 3 * 1024 * 1024) return f;
+  try {
+    const bmp = await createImageBitmap(f);
+    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d')!;
+    const blob = (type: string, q: number) => new Promise<Blob | null>(ok => c.toBlob(ok, type, q));
+    g.drawImage(bmp, 0, 0, c.width, c.height);
+    const webp = await blob('image/webp', 0.9);
+    if (webp && webp.type === 'image/webp') return webp;
+    g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    return (await blob('image/jpeg', 0.88)) ?? f;
+  } catch { return f; }
 }

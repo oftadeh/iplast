@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './icons';
-import { CartLine, Family, Variant, fa, lineUnits, photoUrl, short, withPct } from './lib';
+import { CartLine, Family, Sale, Variant, fa, lineUnits, payModeFa, photoUrl, salePrices, short } from './lib';
 
 const valueOf = (f: Family, v: Variant, i: number) => v.options.find(o => o.axisId === f.axes[i].id)?.value ?? '';
 export const variantLabel = (f: Family, v: Variant) =>
@@ -8,7 +8,7 @@ export const variantLabel = (f: Family, v: Variant) =>
 const packWord = (f: Family) => f.packName ?? 'بسته';
 
 /** Size/option picker with price, quantity (unit or pack) and the add button. Used by the product page and the quick-add sheet. */
-export function Picker({ f, onAdd, pct = 0 }: { f: Family; onAdd: (line: CartLine) => void; pct?: number }) {
+export function Picker({ f, onAdd, sale }: { f: Family; onAdd: (line: CartLine) => void; sale?: Sale }) {
   const first = f.variants.find(v => v.price !== null) ?? f.variants[0];
   const [sel, setSel] = useState<string[]>(() => (first ? f.axes.map((_, i) => valueOf(f, first, i)) : []));
   const [byTitle, setByTitle] = useState(first?.id);
@@ -27,7 +27,9 @@ export function Picker({ f, onAdd, pct = 0 }: { f: Family; onAdd: (line: CartLin
   const mode = canPack ? modeRaw : 'unit';
   const units = lineUnits({ n, mode, perPack: variant.perPack });
   const list = variant.price === null ? null : BigInt(variant.price);
-  const price = list === null ? null : withPct(list, pct);
+  // the customer's own prices: نقدی and مدت‌دار (or the list price when they have no terms yet)
+  const prices = list === null ? [] : salePrices(sale, f.category.slug, list);
+  const price = prices[0]?.price ?? null;
 
   const pick = (i: number, val: string) => {
     const next = [...sel.slice(0, i), val];
@@ -73,9 +75,15 @@ export function Picker({ f, onAdd, pct = 0 }: { f: Family; onAdd: (line: CartLin
       {price === null ? (
         <div className="pricebox"><div><div className="inq">قیمت استعلامی</div><div className="u">این سایز در لیست قیمت فعلی قیمت ندارد؛ کارشناس فروش اعلام می‌کند.</div></div></div>
       ) : (
-        <div className="pricebox">
-          <div><div className="p num">{fa(price)}{pct > 0 && list !== null && <s className="was num">{fa(list)}</s>}</div><div className="u">ریال برای هر {f.unitName}{pct > 0 ? <> · <b className="mypct">{fa(pct)}٪ تخفیف شما</b></> : f.priceList ? ` · ${f.priceList.title}` : ''}</div></div>
-          {units > 1 && <div style={{ textAlign: 'left' }}><div className="u">جمع</div><b className="num">{short(price * BigInt(units))}</b></div>}
+        <div className="pricebox modes2">
+          {list !== null && prices.some(x => x.pct > 0) && <div className="listp num">قیمت لیست <s>{fa(list)}</s> ریال برای هر {f.unitName}</div>}
+          {prices.map(x => (
+            <div key={x.mode} className="pmode">
+              <div><span className="mname">{sale ? payModeFa(x.mode, x.mode === 'TERM' ? sale.termMonths : null) : `ریال برای هر ${f.unitName}`}{x.pct > 0 && <b className="mypct num"> {fa(x.pct)}٪ تخفیف</b>}</span><div className="p num">{fa(x.price)}</div></div>
+              {units > 1 && <div style={{ textAlign: 'left' }}><div className="u">جمع</div><b className="num">{short(x.price * BigInt(units))}</b></div>}
+            </div>
+          ))}
+          {!sale && f.priceList && <div className="u">{f.priceList.title}</div>}
         </div>
       )}
 

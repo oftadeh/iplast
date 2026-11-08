@@ -239,14 +239,14 @@ export class AdminProductsController {
     return before;
   }
 
-  /** Product photo (JPG/PNG/WebP up to 5 MB); becomes the main photo. */
+  /** Product photo (JPG/PNG/WebP up to 10 MB; the panel resizes bigger ones first); becomes the main photo. */
   @Post(':id/photo')
   @Staff('ADMIN')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async photo(@Session() s: SessionClaims, @Param('id') id: string, @UploadedFile() file?: { buffer: Buffer; mimetype: string }) {
     if (!(await this.prisma.productFamily.findUnique({ where: { id } }))) throw new NotFoundException();
     const ext = file && IMAGE_TYPES[file.mimetype];
-    if (!file?.buffer?.length || !ext) throw new BadRequestException('فقط عکس JPG، PNG یا WebP');
+    if (!file?.buffer?.length || !ext) throw new BadRequestException(`این فایل عکس قابل قبول نیست (${file?.mimetype || 'نامشخص'})؛ فقط JPG، PNG یا WebP`);
     mkdirSync(UPLOAD_DIR, { recursive: true });
     const name = `${rid(10)}.${ext}`;
     writeFileSync(join(UPLOAD_DIR, name), file.buffer);

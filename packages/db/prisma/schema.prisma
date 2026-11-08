@@ -259,7 +259,8 @@ model CustomerCategoryDiscount {
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  pct        Decimal  @db.Decimal(5, 2)
+  cashPct    Decimal? @map("pct") @db.Decimal(5, 2) // null = the customer's cash %
+  termPct    Decimal? @db.Decimal(5, 2) // null = the customer's term %
   updatedBy  String?
   updatedAt  DateTime @updatedAt
 
@@ -297,15 +298,26 @@ model Invite {
 model PaymentTerms {
   customerId      String   @id
   customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  cashPercent     Int      @default(100) // 0..100; cheque = 100 - cash
-  chequeDueDays   Int[]    @default([]) // e.g. [60, 90]
+  // Two ways to sell: «نقدی» = list price − cashDiscountPct; «مدت‌دار» = list price − termDiscountPct, paid by cheque after termMonths.
   cashDiscountPct Decimal  @default(0) @db.Decimal(5, 2)
+  termDiscountPct Decimal  @default(0) @db.Decimal(5, 2)
+  termMonths      Int      @default(3)
+  allowCash       Boolean  @default(true)
+  allowTerm       Boolean  @default(true)
+  // Old split model (part cash / part cheque with a markup); kept only for old orders, no longer used.
+  cashPercent     Int      @default(100)
+  chequeDueDays   Int[]    @default([])
   chequeMarkupPct Decimal  @default(0) @db.Decimal(5, 2)
   updatedBy       String?
   updatedAt       DateTime @updatedAt
 }
 
 // ───────────── Orders ─────────────
+
+enum PayMode {
+  CASH // نقدی
+  TERM // مدت‌دار (روال)
+}
 
 enum OrderStatus {
   SUBMITTED
@@ -343,6 +355,8 @@ model Order {
   documents      Document[]
   discount       BigInt             @default(0) // set by the sales agent on the proforma (Rial)
   shipping       BigInt             @default(0) // freight added to the proforma (Rial, paid in cash)
+  payMode        PayMode            @default(CASH) // نقدی or مدت‌دار; unit prices are priced for it
+  termMonths     Int                @default(0) // for TERM: the cheque is due after this many months
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 }
@@ -356,7 +370,9 @@ model OrderItem {
   title       String // snapshot
   quantity    Int // in units (عدد)
   packs       Int? // as entered by the customer, if by pack
-  unitPrice   BigInt? // snapshot, NULL for inquiry items
+  unitPrice   BigInt? // snapshot, NULL for inquiry items; already includes the sale discount
+  listPrice   BigInt? // list price at order time, before the cash / term discount
+  salePct     Decimal?    @db.Decimal(5, 2) // the cash / term discount applied to listPrice
   priceStatus PriceStatus
 }
 
@@ -488,6 +504,9 @@ model Invoice {
   subtotal      BigInt // Rial
   discount      BigInt        @default(0)
   shipping      BigInt        @default(0)
+  payMode       PayMode       @default(CASH)
+  termMonths    Int           @default(0)
+  listTotal     BigInt        @default(0) // the lines at list price, before the cash / term discount
   cashDiscount  BigInt        @default(0) // customer's cash discount (already taken off total)
   chequeMarkup  BigInt        @default(0) // customer's cheque markup (already added to total)
   total         BigInt

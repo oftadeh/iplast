@@ -8,7 +8,7 @@ import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentMethod, PaymentStatus } from '@iplast/db';
-import { applyTerms, formatRial, splitCashCheque } from '@iplast/shared';
+import { formatRial, orderBreakdown, splitCashCheque } from '@iplast/shared';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -73,8 +73,9 @@ export class AccountingService {
     }
   }
 
-  /** Cash and cheque parts of an issued invoice (cash discount, cheque markup and freight already in total). */
-  private invSplit(inv: { total: bigint; subtotal: bigint; discount: bigint; cashPercent: number; chequeMarkup: bigint }) {
+  /** Cash and cheque parts of an issued invoice. A term sale is one cheque for the goods; freight is cash. */
+  private invSplit(inv: { total: bigint; subtotal: bigint; discount: bigint; shipping: bigint; payMode: string; cashPercent: number; chequeMarkup: bigint }) {
+    if (inv.payMode === 'TERM') { const cheque = inv.total - inv.shipping; return { cash: inv.shipping, cheque }; }
     const chequeBase = splitCashCheque(inv.subtotal - inv.discount, inv.cashPercent).cheque;
     const cheque = chequeBase + inv.chequeMarkup;
     return { cash: inv.total - cheque, cheque };
@@ -198,21 +199,20 @@ export class AccountingService {
       const given = b.prices?.[i.id];
       const unitPrice = given !== undefined && given !== '' ? rialOf(given, `قیمت «${i.title}»`) : i.unitPrice;
       if (unitPrice === null) throw new BadRequestException(`قیمت «${i.title}» را وارد کنید (استعلامی بوده است)`);
-      return { variantId: i.variantId, title: i.title, quantity: i.quantity, packs: i.packs, unitPrice, total: unitPrice * BigInt(i.quantity) };
+      return { variantId: i.variantId, title: i.title, quantity: i.quantity, packs: i.packs, unitPrice, listPrice: given !== undefined && given !== '' ? null : i.listPrice, total: unitPrice * BigInt(i.quantity) };
     });
     if (!items.length) throw new BadRequestException('فاکتور بدون قلم صادر نمی‌شود');
     const subtotal = items.reduce((s, i) => s + i.total, 0n);
     const discount = b.discount !== undefined && b.discount !== '' ? rialOf(b.discount, 'تخفیف', true) : o.discount;
     const shipping = b.shipping !== undefined && b.shipping !== '' ? rialOf(b.shipping, 'هزینه‌ی حمل', true) : o.shipping;
     if (discount > subtotal) throw new BadRequestException('تخفیف از جمع فاکتور بیشتر است');
-    const terms = (o.termsSnapshot ?? {}) as { cashPercent?: number; chequeDueDays?: number[] };
-    const bd = applyTerms(subtotal, terms, discount, shipping);
+    const bd = orderBreakdown(items, o.payMode, o.termMonths, discount, shipping);
     const inv = await this.prisma.invoice.create({
       data: {
         customerId: o.customerId, orderId: o.id, issuedById: byUserId, subtotal, discount, shipping, total: bd.total,
-        cashDiscount: bd.cashDiscount, chequeMarkup: bd.chequeMarkup,
-        cashPercent: bd.cashPercent, chequeDueDays: terms.chequeDueDays ?? [], note: b.note?.trim().slice(0, 1000) || null,
-        items: { create: items },
+        payMode: o.payMode, termMonths: bd.termMonths, listTotal: bd.listTotal,
+        cashPercent: o.payMode === 'TERM' ? 0 : 100, chequeDueDays: bd.cheques.map(c => c.days ?? 0), note: b.note?.trim().slice(0, 1000) || null,
+        items: { create: items.map(({ listPrice: _l, ...i }) => i) },
       },
     });
     await audit(this.prisma, byUserId, 'invoice.issue', 'Invoice', inv.id, null, { orderId: o.id, total: inv.total.toString() });

@@ -1,10 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OrderStatus } from '@iplast/db';
-import { Breakdown, applyTerms, formatRial } from '@iplast/shared';
+import { Breakdown, PayMode, SaleTerms, formatRial, netPrice, orderBreakdown, payModeFa, toFaDigits } from '@iplast/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
 import { int, req, rialOf } from '../common/validate';
-import { quote } from './pricing';
+import { modeFor, quote, saleTerms } from './pricing';
 
 export interface OrderInput {
   customerId?: string;
@@ -12,6 +12,8 @@ export interface OrderInput {
   items?: { variantId?: string; quantity?: number; packs?: number }[];
   note?: string;
   idempotencyKey?: string;
+  /** CASH (نقدی) or TERM (مدت‌دار); defaults to the customer's first allowed mode. */
+  payMode?: string;
 }
 
 export const STATUS_FA: Record<OrderStatus, string> = {
@@ -20,13 +22,13 @@ export const STATUS_FA: Record<OrderStatus, string> = {
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
 
-const DEFAULT_TERMS = { cashPercent: 100, chequeDueDays: [] as number[], cashDiscountPct: '0', chequeMarkupPct: '0' };
-
 /** Statuses in which the sales agent can still price, change, approve, send back or reject a proforma. */
 export const AGENT_OPEN: OrderStatus[] = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'];
 
-/** What the sales agent may change before approving: per-line price and quantity, drop a line, discount, freight. */
+/** What the sales agent may change before approving: cash or term sale, per-line price and quantity, drop a line, discount, freight. */
 export interface ProformaEdit {
+  payMode?: unknown;
+  termMonths?: unknown;
   items?: { id?: string; quantity?: unknown; unitPrice?: unknown; remove?: boolean }[];
   discount?: unknown;
   shipping?: unknown;
@@ -36,17 +38,17 @@ export interface ProformaEdit {
 export const bdJson = (b: Breakdown) => JSON.parse(JSON.stringify(b, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
 
 export function breakdownText(b: Breakdown, dueFrom = new Date()) {
-  const L: string[] = [`جمع اقلام: ${formatRial(b.subtotal)}`];
-  if (b.discount) L.push(`تخفیف: ${formatRial(b.discount)}`);
-  if (b.cashBase || !b.chequeBase) L.push(`نقد ${b.cashPercent}٪: ${formatRial(b.cash)}${b.cashDiscount ? ` (با ${b.cashDiscountPct}٪ تخفیف نقدی)` : ''}${b.shipping ? ` شامل کرایه ${formatRial(b.shipping)}` : ''}`);
-  if (b.chequeBase) {
-    L.push(`چک ${100 - b.cashPercent}٪: ${formatRial(b.cheque)}${b.chequeMarkup ? ` (با ${b.chequeMarkupPct}٪ افزایش چکی)` : ''}`);
-    for (const [i, c] of b.cheques.entries()) {
-      const due = c.days === null ? '' : ` · ${c.days} روزه (${new Date(dueFrom.getTime() + c.days * 86400000).toLocaleDateString('fa-IR')})`;
-      if (b.cheques.length > 1 || due) L.push(`   چک ${i + 1}: ${formatRial(c.amount)}${due}`);
-    }
-  }
+  const L: string[] = [`نوع فروش: ${payModeFa(b.mode, b.termMonths)}`];
+  if (b.saleDiscount) L.push(`جمع به قیمت لیست: ${formatRial(b.listTotal)}`, `تخفیف ${b.mode === 'CASH' ? 'نقدی' : 'مدت‌دار'}: ${formatRial(b.saleDiscount)}`);
+  L.push(`جمع اقلام: ${formatRial(b.subtotal)}`);
+  if (b.discount) L.push(`تخفیف کارشناس: ${formatRial(b.discount)}`);
+  if (b.shipping) L.push(`کرایه: ${formatRial(b.shipping)}`);
   L.push(`مبلغ کل: ${formatRial(b.total)}`);
+  for (const c of b.cheques) {
+    const due = c.days === null ? '' : ` با سررسید ${toFaDigits(b.termMonths)} ماه بعد (${new Date(dueFrom.getTime() + c.days * 86400000).toLocaleDateString('fa-IR')})`;
+    L.push(`پرداخت: چک ${formatRial(c.amount)}${due}${b.cash ? ` و نقد ${formatRial(b.cash)} (کرایه)` : ''}`);
+  }
+  if (!b.cheques.length) L.push(`پرداخت: نقد ${formatRial(b.cash)}`);
   return L.join('\n');
 }
 
@@ -78,8 +80,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return Number.isFinite(n) && n >= 1 && n <= 24 * 30 ? n : 48;
   }
 
-  breakdown(o: { items: { quantity: number; unitPrice: bigint | null }[]; termsSnapshot: unknown; discount: bigint; shipping: bigint }) {
-    return applyTerms(this.orderTotal(o.items), o.termsSnapshot as never, o.discount, o.shipping);
+  breakdown(o: { items: { quantity: number; unitPrice: bigint | null; listPrice?: bigint | null }[]; payMode: PayMode; termMonths: number; discount: bigint; shipping: bigint }) {
+    return orderBreakdown(o.items, o.payMode, o.termMonths, o.discount, o.shipping);
   }
 
   /** Everyone on the customer's side who should hear about a proforma: who placed it and the account owners. */
@@ -116,16 +118,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       customerId = c.id;
     }
     const lines = items.map(i => ({ variantId: req(i.variantId, 'کالا نامعتبر است'), quantity: int(i.quantity, 'تعداد نامعتبر است', 1, 1_000_000), packs: i.packs === undefined ? null : int(i.packs, 'تعداد کارتن نامعتبر است', 1, 100_000) }));
-    const q = await quote(this.prisma, lines.map(l => l.variantId), customerId);
+    const terms = await saleTerms(this.prisma, customerId);
+    const payMode = modeFor(terms, input.payMode);
+    const q = await quote(this.prisma, lines.map(l => l.variantId), customerId, payMode, terms);
     for (const l of lines) if (!q.has(l.variantId)) throw new BadRequestException('یکی از کالاها موجود نیست');
-    const terms = await this.prisma.paymentTerms.findUnique({ where: { customerId } });
     const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
     const order = await this.prisma.order.create({
       data: {
         customerId, placedById: userId, channel, note: input.note?.slice(0, 1000), idempotencyKey: input.idempotencyKey,
         priceListId: list?.id,
-        termsSnapshot: terms ? { cashPercent: terms.cashPercent, chequeDueDays: terms.chequeDueDays, cashDiscountPct: terms.cashDiscountPct.toString(), chequeMarkupPct: terms.chequeMarkupPct.toString() } : DEFAULT_TERMS,
-        items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
+        termsSnapshot: terms as object, payMode, termMonths: payMode === 'TERM' ? terms.termMonths : 0,
+        items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, listPrice: x.listPrice, salePct: x.own || x.listPrice === null ? null : x.pct, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
         events: { create: { status: 'SUBMITTED', byUserId: userId } },
       },
       include: { items: true, customer: { include: { support: true } }, placedBy: true },
@@ -222,13 +225,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         data: {
           orderId, version: (last?.version ?? 0) + 1, total: b.total, issuedBy: byUserId, expiresAt, changed: askCustomer,
           acceptedAt: askCustomer ? null : new Date(), breakdown: bdJson(b),
-          items: fresh.items.map(i => ({ title: i.title, quantity: i.quantity, packs: i.packs, unitPrice: i.unitPrice?.toString() ?? null })),
+          items: fresh.items.map(i => ({ title: i.title, quantity: i.quantity, packs: i.packs, unitPrice: i.unitPrice?.toString() ?? null, listPrice: i.listPrice?.toString() ?? null })),
         },
       });
       if (askCustomer) {
         await this.prisma.order.update({ where: { id: orderId }, data: { status: 'PROFORMA_SENT', events: { create: { status: 'PROFORMA_SENT', byUserId, comment: note } } } });
         const { text } = await this.orderText(orderId, `🧾 پیش‌فاکتور نهایی (نسخه ${pf.version})`);
-        const kb = { inline_keyboard: [[{ text: '✅ تأیید پیش‌فاکتور', callback_data: `pf:${orderId}:ok` }, { text: '✏️ تغییر می‌خواهم', callback_data: `pf:${orderId}:no` }]] };
+        const kb = { inline_keyboard: [
+          ...(process.env.MINIAPP_URL ? [[{ text: '📄 مشاهده پیش‌فاکتور', web_app: { url: `${process.env.MINIAPP_URL}?pf=${orderId}` } }]] : []),
+          [{ text: '✅ تأیید پیش‌فاکتور', callback_data: `pf:${orderId}:ok` }, { text: '✏️ تغییر می‌خواهم', callback_data: `pf:${orderId}:no` }],
+        ] };
         const until = expiresAt.toLocaleString('fa-IR', { dateStyle: 'short', timeStyle: 'short' });
         for (const t of await this.customerChats(orderId)) await this.tg.send(t, `${text}${note ? `\nتوضیح کارشناس: ${note}` : ''}\n\nکارشناس فروش قیمت‌ها را نهایی کرده است. لطفاً تا ${until} تأیید کنید؛ بعد از آن پیش‌فاکتور منقضی می‌شود.`, kb);
         return { status: 'PROFORMA_SENT' as OrderStatus };
@@ -275,9 +281,29 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Writes the agent's changes to the order lines. Returns true when anything that changes the money changed. */
-  private async applyEdit(byUserId: string, o: { id: string; discount: bigint; shipping: bigint; items: { id: string; title: string; quantity: number; unitPrice: bigint | null }[] }, e?: ProformaEdit) {
+  private async applyEdit(byUserId: string, o: { id: string; customerId: string; discount: bigint; shipping: bigint; payMode: PayMode; termMonths: number; termsSnapshot: unknown; items: { id: string; variantId: string; title: string; quantity: number; unitPrice: bigint | null; listPrice: bigint | null; salePct: unknown }[] }, e?: ProformaEdit) {
     let changed = o.items.some(i => i.unitPrice === null);
     if (!e) return changed;
+    if (e.payMode !== undefined && e.payMode !== '' && e.payMode !== null) {
+      if (e.payMode !== 'CASH' && e.payMode !== 'TERM') throw new BadRequestException('نوع فروش نامعتبر است');
+      const t = (o.termsSnapshot && typeof o.termsSnapshot === 'object' && 'termMonths' in o.termsSnapshot ? o.termsSnapshot : await saleTerms(this.prisma, o.customerId)) as SaleTerms & { termMonths: number };
+      const months = e.payMode === 'CASH' ? 0 : e.termMonths !== undefined && e.termMonths !== '' ? int(Number(String(e.termMonths).replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))), 'مدت (ماه) نامعتبر است', 1, 36) : o.payMode === 'TERM' && o.termMonths ? o.termMonths : t.termMonths || 3;
+      if (e.payMode !== o.payMode || months !== o.termMonths) {
+        changed = true;
+        await this.prisma.order.update({ where: { id: o.id }, data: { payMode: e.payMode, termMonths: months } });
+        if (e.payMode !== o.payMode) {
+          // reprice from the list price with the other percentage; personal prices and prices the agent typed stay
+          const q = await quote(this.prisma, o.items.map(i => i.variantId), o.customerId, e.payMode, t);
+          for (const it of o.items) {
+            const x = q.get(it.variantId);
+            if (!x || x.own || it.listPrice === null || it.salePct === null) continue;
+            const unitPrice = netPrice(it.listPrice, x.pct);
+            await this.prisma.orderItem.update({ where: { id: it.id }, data: { unitPrice, salePct: x.pct, priceStatus: 'PRICED' } });
+            it.unitPrice = unitPrice;
+          }
+        }
+      }
+    }
     const byId = new Map(o.items.map(i => [i.id, i]));
     const ops: Promise<unknown>[] = [];
     const keep = new Set(o.items.map(i => i.id));
@@ -285,14 +311,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const it = byId.get(String(x.id));
       if (!it) throw new BadRequestException('قلم نامعتبر است');
       if (x.remove) { keep.delete(it.id); changed = true; ops.push(this.prisma.orderItem.delete({ where: { id: it.id } })); continue; }
-      const data: { quantity?: number; packs?: null; unitPrice?: bigint; priceStatus?: 'PRICED' } = {};
+      const data: { quantity?: number; packs?: null; unitPrice?: bigint; priceStatus?: 'PRICED'; salePct?: null } = {};
       if (x.quantity !== undefined && x.quantity !== '') {
         const q = int(Number(String(x.quantity).replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))), `تعداد «${it.title}» نامعتبر است`, 1, 1_000_000);
         if (q !== it.quantity) { data.quantity = q; data.packs = null; }
       }
       if (x.unitPrice !== undefined && x.unitPrice !== '' && x.unitPrice !== null) {
         const p = rialOf(x.unitPrice, `قیمت «${it.title}»`);
-        if (p !== it.unitPrice) { data.unitPrice = p; data.priceStatus = 'PRICED'; }
+        if (p !== it.unitPrice) { data.unitPrice = p; data.priceStatus = 'PRICED'; data.salePct = null; }
       }
       if (Object.keys(data).length) { changed = true; ops.push(this.prisma.orderItem.update({ where: { id: it.id }, data })); }
     }
@@ -373,7 +399,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async get(userId: string, id: string, staff = false) {
     const o = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: true, events: { orderBy: { createdAt: 'asc' } }, proformas: true, shipments: { orderBy: { shippedAt: 'asc' } }, documents: { orderBy: { createdAt: 'desc' }, select: { id: true, kind: true, title: true, mime: true, size: true, byCustomer: true, createdAt: true, paymentId: true, shipmentId: true } }, customer: { include: { terms: true } }, placedBy: { select: { id: true, firstName: true, lastName: true, username: true } } },
+      include: { items: true, events: { orderBy: { createdAt: 'asc' } }, proformas: true, shipments: { orderBy: { shippedAt: 'asc' } }, documents: { orderBy: { createdAt: 'desc' }, select: { id: true, kind: true, title: true, mime: true, size: true, byCustomer: true, createdAt: true, paymentId: true, shipmentId: true } }, customer: { include: { terms: true, support: { select: { firstName: true, lastName: true, phone: true } } } }, placedBy: { select: { id: true, firstName: true, lastName: true, username: true } } },
     });
     if (!o) throw new NotFoundException();
     if (!staff && o.placedById !== userId) {

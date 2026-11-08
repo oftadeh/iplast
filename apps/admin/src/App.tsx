@@ -27,19 +27,21 @@ const A: Role[] = ['ADMIN'], AS: Role[] = ['ADMIN', 'SALES'], ALL: Role[] = ['AD
 const AREAS: Area[] = [
   { id: 'home', title: 'پیشخوان', icon: 'home', roles: ALL, pages: [{ id: 'home/dashboard', title: 'پیشخوان', roles: ALL }] },
   { id: 'orders', title: 'سفارش‌ها', icon: 'check', roles: AS, pages: [
-    { id: 'orders/agent', title: 'تأیید کارشناس', roles: AS, badge: 'salesReview' },
-    { id: 'orders/final', title: 'تأیید نهایی مدیر', roles: AS, badge: 'finalApproval' },
-    { id: 'orders/history', title: 'سابقه', roles: AS },
+    { id: 'orders/agent', title: 'منتظر کارشناس', roles: AS, badge: 'salesReview' },
+    { id: 'orders/final', title: 'منتظر تأیید نهایی', roles: A, badge: 'finalApproval' },
+    { id: 'orders/history', title: 'همه‌ی سفارش‌ها', roles: AS },
   ] },
   { id: 'chats', title: 'گفتگوها', icon: 'chat', roles: AS, pages: [
     { id: 'chats/human', title: 'نیاز به کارشناس', roles: AS, badge: 'unansweredChats' },
     { id: 'chats/ai', title: 'در دست ایجنت', roles: AS },
     { id: 'chats/all', title: 'همه', roles: AS },
   ] },
-  { id: 'customers', title: 'مشتریان و مالی', icon: 'wallet', roles: AS, pages: [
-    { id: 'customers/settings', title: 'تنظیمات مشتریان', roles: AS },
-    { id: 'customers/new', title: 'مشتریان جدید', roles: AS, badge: 'newCustomers' },
-    { id: 'customers/accounts', title: 'حساب مشتریان', roles: AS },
+  { id: 'customers', title: 'مشتریان', icon: 'users', roles: AS, pages: [
+    { id: 'customers/settings', title: 'همه‌ی مشتریان', roles: AS },
+    { id: 'customers/new', title: 'منتظر تأیید', roles: AS, badge: 'newCustomers' },
+  ] },
+  { id: 'money', title: 'مالی', icon: 'wallet', roles: AS, pages: [
+    { id: 'customers/accounts', title: 'مانده‌ی حساب‌ها', roles: AS },
     { id: 'customers/receipts', title: 'رسیدهای پرداخت', roles: AS, badge: 'reportedPayments' },
   ] },
   { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', roles: ['ADMIN', 'WAREHOUSE'], pages: [{ id: 'warehouse/queue', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'], badge: 'warehouse' }] },
