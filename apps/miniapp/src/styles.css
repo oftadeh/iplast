@@ -401,3 +401,16 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .chat-composer{position:sticky;bottom:calc(10px + var(--bot-safe));z-index:5;margin-top:4px}
 .chat-composer textarea{min-height:38px}
 .chatview{padding-bottom:0;min-height:100%;gap:14px}.chatview .chat{flex:1}
+.draftin{display:grid;gap:4px;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+.draftin .hd{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.notice.pfbox,.notice.ship{display:grid;gap:6px;margin:10px 16px 0}
+.notice.pfbox .btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.notice.pfbox .cta{justify-content:center}
+.notice.ship a{color:inherit;font-weight:700}
+.mypct{display:inline-block;font-size:11px;font-weight:800;color:#0f7a4f;background:#e3f5ec;border-radius:8px;padding:2px 7px;margin-top:2px}
+.pricebox s.was{font-size:13px;font-weight:600;opacity:.5;margin-inline-start:10px;display:inline-block}
+.myterms{margin:12px 16px 0;padding:14px;border-radius:22px;background:var(--surface,#fff);border:1px solid var(--line,#eee);display:grid;gap:10px}
+.myterms .h{display:grid;gap:2px}.myterms .h small,.myterms>small{font-size:11px;opacity:.65}
+.myterms .chipsrow{display:flex;gap:6px;flex-wrap:wrap}
+.dchip{display:inline-flex;gap:6px;align-items:center;border:0;border-radius:12px;padding:6px 10px;background:#e3f5ec;color:#0f5c3c;font:inherit;font-size:12px}
+.dchip b{font-weight:800}

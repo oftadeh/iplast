@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './icons';
-import { CartLine, Family, Variant, fa, lineUnits, photoUrl, short } from './lib';
+import { CartLine, Family, Variant, fa, lineUnits, photoUrl, short, withPct } from './lib';
 
 const valueOf = (f: Family, v: Variant, i: number) => v.options.find(o => o.axisId === f.axes[i].id)?.value ?? '';
 export const variantLabel = (f: Family, v: Variant) =>
@@ -8,7 +8,7 @@ export const variantLabel = (f: Family, v: Variant) =>
 const packWord = (f: Family) => f.packName ?? 'بسته';
 
 /** Size/option picker with price, quantity (unit or pack) and the add button. Used by the product page and the quick-add sheet. */
-export function Picker({ f, onAdd }: { f: Family; onAdd: (line: CartLine) => void }) {
+export function Picker({ f, onAdd, pct = 0 }: { f: Family; onAdd: (line: CartLine) => void; pct?: number }) {
   const first = f.variants.find(v => v.price !== null) ?? f.variants[0];
   const [sel, setSel] = useState<string[]>(() => (first ? f.axes.map((_, i) => valueOf(f, first, i)) : []));
   const [byTitle, setByTitle] = useState(first?.id);
@@ -26,7 +26,8 @@ export function Picker({ f, onAdd }: { f: Family; onAdd: (line: CartLine) => voi
   const canPack = !!(f.packName && variant.perPack);
   const mode = canPack ? modeRaw : 'unit';
   const units = lineUnits({ n, mode, perPack: variant.perPack });
-  const price = variant.price === null ? null : BigInt(variant.price);
+  const list = variant.price === null ? null : BigInt(variant.price);
+  const price = list === null ? null : withPct(list, pct);
 
   const pick = (i: number, val: string) => {
     const next = [...sel.slice(0, i), val];
@@ -73,7 +74,7 @@ export function Picker({ f, onAdd }: { f: Family; onAdd: (line: CartLine) => voi
         <div className="pricebox"><div><div className="inq">قیمت استعلامی</div><div className="u">این سایز در لیست قیمت فعلی قیمت ندارد؛ کارشناس فروش اعلام می‌کند.</div></div></div>
       ) : (
         <div className="pricebox">
-          <div><div className="p num">{fa(price)}</div><div className="u">ریال برای هر {f.unitName}{f.priceList ? ` · ${f.priceList.title}` : ''}</div></div>
+          <div><div className="p num">{fa(price)}{pct > 0 && list !== null && <s className="was num">{fa(list)}</s>}</div><div className="u">ریال برای هر {f.unitName}{pct > 0 ? <> · <b className="mypct">{fa(pct)}٪ تخفیف شما</b></> : f.priceList ? ` · ${f.priceList.title}` : ''}</div></div>
           {units > 1 && <div style={{ textAlign: 'left' }}><div className="u">جمع</div><b className="num">{short(price * BigInt(units))}</b></div>}
         </div>
       )}
@@ -96,7 +97,7 @@ export function Picker({ f, onAdd }: { f: Family; onAdd: (line: CartLine) => voi
 
       <button type="button" className={`cta ${price === null ? 'inq' : ''}`} onClick={() => onAdd({
         variantId: variant.id, slug: f.slug, name: f.name, label: variantLabel(f, variant), photo: photoUrl(f.media.find(m => (m as { isPrimary?: boolean }).isPrimary)?.key ?? f.media[0]?.key),
-        perPack: variant.perPack, packName: f.packName, unitName: f.unitName, price: variant.price, n, mode,
+        perPack: variant.perPack, packName: f.packName, unitName: f.unitName, price: price === null ? null : String(price), n, mode,
       })}>
         <span>{price === null ? 'افزودن برای استعلام' : 'افزودن به سبد'}</span>
         <small className="num">{price === null ? `${fa(units)} ${f.unitName}` : `${short(price * BigInt(units))} ریال`}</small>

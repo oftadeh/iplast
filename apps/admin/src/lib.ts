@@ -91,3 +91,25 @@ export function useBlobUrl(path: string | null) {
   }, [path]);
   return url;
 }
+
+/** POST a multipart form (file uploads) with the login header. */
+export async function apiForm<T>(path: string, fd: FormData): Promise<T> {
+  const r = await fetch('/api' + path, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd });
+  if (r.status === 401 && token) { setToken(null); onUnauthorized(); }
+  if (!r.ok) {
+    let msg = r.status === 413 ? 'حجم فایل زیاد است' : 'ثبت نشد';
+    try { const j = await r.json(); if (typeof j?.message === 'string') msg = j.message; } catch { /* */ }
+    throw new ApiError(r.status, msg);
+  }
+  return r.json() as Promise<T>;
+}
+
+/** Opens a private file (receipt, waybill, PDF) in a new tab. */
+export async function openPrivate(path: string) {
+  const w = window.open('', '_blank');
+  const r = await fetch('/api' + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!r.ok) { w?.close(); throw new ApiError(r.status, 'فایل باز نشد'); }
+  const url = URL.createObjectURL(await r.blob());
+  if (w) w.location.href = url; else window.location.href = url;
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

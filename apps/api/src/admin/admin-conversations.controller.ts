@@ -5,18 +5,22 @@ import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
 import { req } from '../common/validate';
+import { SalesAgentService } from '../assistant/sales-agent.service';
 
 /** Customer messages sent to the bot (text, voice, photo, PDF), readable and answerable from the admin panel too. */
 @Controller('admin/conversations')
 @UseGuards(SessionGuard)
 @Staff()
 export class AdminConversationsController {
-  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService) {}
+  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly agent: SalesAgentService) {}
 
   @Get()
-  async list(@Session() s: SessionClaims, @Query('mine') mine?: string, @Query('open') open?: string) {
+  async list(@Session() s: SessionClaims, @Query('mine') mine?: string, @Query('open') open?: string, @Query('mode') mode?: string) {
     const convs = await this.prisma.conversation.findMany({
-      where: { ...(mine === '1' ? { assigneeId: s.sub } : {}), ...(open === '0' ? { isOpen: false } : open === '1' ? { isOpen: true } : {}) },
+      where: {
+        ...(mine === '1' ? { assigneeId: s.sub } : {}), ...(open === '0' ? { isOpen: false } : open === '1' ? { isOpen: true } : {}),
+        ...(mode === 'human' ? { handoffAt: { not: null }, isOpen: true } : mode === 'ai' ? { handoffAt: null } : {}),
+      },
       orderBy: { updatedAt: 'desc' }, take: 100,
       include: { customer: { select: { id: true, name: true } }, messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
     });
@@ -47,7 +51,16 @@ export class AdminConversationsController {
     const ok = await this.tg.send(c.userTelegramId, text);
     if (!ok) throw new BadRequestException('ارسال به تلگرام ناموفق بود');
     await this.prisma.message.create({ data: { conversationId: id, direction: 'OUT', kind: 'TEXT', text, byUserId: s.sub } });
-    await this.prisma.conversation.update({ where: { id }, data: { assigneeId: c.assigneeId ?? s.sub, isOpen: true } });
+    // a person answered: the AI agent steps back until someone hands the chat back to it
+    await this.prisma.conversation.update({ where: { id }, data: { assigneeId: c.assigneeId ?? s.sub, isOpen: true, handoffAt: c.handoffAt ?? new Date(), handoffReason: c.handoffReason ?? 'کارشناس وارد گفتگو شد' } });
+    return { ok: true };
+  }
+
+  /** Hand the chat back to the AI sales agent. */
+  @Post(':id/resume')
+  async resume(@Param('id') id: string) {
+    if (!(await this.prisma.conversation.findUnique({ where: { id } }))) throw new NotFoundException();
+    await this.agent.resume(id);
     return { ok: true };
   }
 

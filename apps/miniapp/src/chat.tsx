@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, api, fa, getToken, personName } from './lib';
+import { ApiError, api, apiForm, fa, getToken, personName } from './lib';
 import { useApp } from './App';
 import { Icon } from './icons';
 import { haptic } from './telegram';
 import type { DraftView } from './screens';
 
 interface ChatMsg { id: string; direction: 'IN' | 'OUT'; kind: 'TEXT' | 'VOICE' | 'PHOTO' | 'DOCUMENT'; text: string | null; hasFile: boolean; createdAt: string }
-interface ChatData { staff: boolean; ai: boolean; agent: { firstName: string | null; lastName: string | null } | null; messages: ChatMsg[] }
+interface ChatData { staff: boolean; ai: boolean; human: boolean; agent: { firstName: string | null; lastName: string | null } | null; messages: ChatMsg[] }
 const KIND_FA = { VOICE: '🎙 پیام صوتی', PHOTO: '🖼 عکس', DOCUMENT: '📄 فایل', TEXT: '' };
 const time = (d: string) => new Date(d).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
 
-/** Chat with the sales agent inside the mini app; the order assistant answers order-like messages with a draft cart. */
+/** Chat inside the mini app: the AI sales agent answers, builds the order and places the proforma; a person takes over when needed. */
 export function ChatScreen() {
   const { authed, cart, setCart, go, toast } = useApp();
   const [data, setData] = useState<ChatData | null>(null);
@@ -28,15 +28,34 @@ export function ChatScreen() {
   }, [authed]);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [data?.messages.length, busy]);
 
-  const send = async () => {
-    const t = text.trim(); if (!t || busy) return;
-    setBusy(true); setText('');
+  const [rec, setRec] = useState<MediaRecorder | null>(null);
+  const turn = async (call: () => Promise<ChatData & { draft: DraftView | null; orderNumber: number | null }>, restore?: string) => {
+    setBusy(true);
     try {
-      const r = await api<ChatData & { draft: DraftView | null }>('/me/chat', { method: 'POST', body: { text: t } });
+      const r = await call();
       setData(r); haptic('success');
-      if (r.draft) { const last = r.messages[r.messages.length - 1]; if (last) setDrafts(d => ({ ...d, [last.id]: r.draft! })); }
-    } catch (e) { setText(t); toast(e instanceof ApiError ? e.message : 'ارسال نشد'); haptic('error'); }
+      const lastOut = [...r.messages].reverse().find(m => m.direction === 'OUT');
+      if (r.draft && lastOut) setDrafts(d => ({ ...d, [lastOut.id]: r.draft! }));
+      if (r.orderNumber) toast(`پیش‌فاکتور ${fa(r.orderNumber)} ثبت شد`);
+    } catch (e) { if (restore) setText(restore); toast(e instanceof ApiError ? e.message : 'ارسال نشد'); haptic('error'); }
     finally { setBusy(false); }
+  };
+  const send = () => { const t = text.trim(); if (!t || busy) return; setText(''); turn(() => api('/me/chat', { method: 'POST', body: { text: t } }), t); };
+  const record = async () => {
+    if (rec) { rec.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const r = new MediaRecorder(stream); const chunks: Blob[] = [];
+      r.ondataavailable = e => chunks.push(e.data);
+      r.onstop = () => {
+        stream.getTracks().forEach(t => t.stop()); setRec(null);
+        const blob = new Blob(chunks, { type: r.mimeType || 'audio/webm' });
+        const ext = (r.mimeType || '').includes('mp4') ? 'm4a' : (r.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+        const fd = new FormData(); fd.append('file', blob, `voice.${ext}`);
+        turn(() => apiForm('/me/chat/voice', fd));
+      };
+      r.start(); setRec(r); haptic();
+    } catch { toast('دسترسی به میکروفون ممکن نشد'); }
   };
   const addAll = (d: DraftView) => {
     let next = [...cart];
@@ -61,13 +80,14 @@ export function ChatScreen() {
     <>
       <div className="chat-top">
         <div className="ava"><Icon n="chat" s={20} /></div>
-        <div><b>{agentName ?? 'کارشناس فروش'}</b><small>{data?.ai ? 'کارشناس فروش + دستیار هوشمند سفارش' : 'کارشناس فروش اصفهان پلاست'}</small></div>
+        <div><b>{data && data.ai && !data.human ? 'ایجنت فروش هوشمند' : agentName ?? 'کارشناس فروش'}</b>
+          <small>{data && data.ai && !data.human ? 'سفارش را کامل و ثبت می‌کند؛ تأیید با کارشناس فروش است' : 'کارشناس فروش اصفهان پلاست'}</small></div>
       </div>
       <div className="chat">
         {!data && <div className="skel" style={{ height: 80 }} />}
         {data && data.messages.length === 0 && (
           <div className="bot"><div className="hd"><Icon n="chat" s={14} /> اصفهان پلاست</div>
-            <div>سلام! سؤال یا سفارشتان را بنویسید. کارشناس فروش همین‌جا جواب می‌دهد{data.ai ? ' و اگر سفارش بنویسید، دستیار هوشمند فوراً پیش‌نویس سبد را آماده می‌کند' : ''}.</div>
+            <div>{data.ai ? 'سلام! سفارش یا سؤالتان را بنویسید یا بگویید. سفارش را کامل می‌کنم و بعد از تأیید شما پیش‌فاکتور ثبت می‌شود تا کارشناس فروش تأیید کند. هر وقت خواستید با کارشناس حرف بزنید، بگویید.' : 'سلام! سؤال یا سفارشتان را بنویسید؛ کارشناس فروش همین‌جا جواب می‌دهد.'}</div>
           </div>
         )}
         {data?.messages.map(m => {
@@ -76,15 +96,15 @@ export function ChatScreen() {
           if (m.direction === 'IN') return (
             <div key={m.id} style={{ display: 'contents' }}>
               <div className="me">{body}<span className="tm num">{time(m.createdAt)}</span></div>
-              {drafts[m.id] && <DraftCard d={drafts[m.id]} onAdd={addAll} />}
             </div>
           );
           return (
             <div key={m.id} className="bot">
-              <div className="hd"><Icon n="chat" s={14} /> {isAi ? 'دستیار هوشمند' : agentName ?? 'کارشناس فروش'}<span className="tm num">{time(m.createdAt)}</span></div>
+              <div className="hd"><Icon n="chat" s={14} /> {isAi ? 'ایجنت فروش' : agentName ?? 'کارشناس فروش'}<span className="tm num">{time(m.createdAt)}</span></div>
               <div style={{ whiteSpace: 'pre-wrap' }}>{body}</div>
               {m.hasFile && m.kind === 'PHOTO' && <FileImg id={m.id} />}
               {m.hasFile && m.kind === 'VOICE' && <FileAudio id={m.id} />}
+              {drafts[m.id] && <DraftCard d={drafts[m.id]} onAdd={addAll} inline />}
             </div>
           );
         })}
@@ -94,17 +114,17 @@ export function ChatScreen() {
       <div className="composer chat-composer">
         <textarea rows={1} aria-label="پیام" placeholder={data?.ai ? 'پیام یا سفارشتان را بنویسید' : 'پیام به کارشناس فروش'} value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={!authed} />
-        {data?.ai && <button type="button" className="icb" aria-label="سفارش صوتی با دستیار" onClick={() => go({ name: 'assistant' })}><Icon n="mic" s={18} /></button>}
+        {typeof MediaRecorder !== 'undefined' && <button type="button" className="icb" aria-label={rec ? 'پایان ضبط و ارسال' : 'پیام صوتی'} disabled={!authed || busy} onClick={record} style={rec ? { background: 'var(--bad)', color: '#fff' } : undefined}><Icon n="mic" s={18} /></button>}
         <button type="button" className="icb send" aria-label="ارسال" disabled={!authed || busy || !text.trim()} onClick={send}><Icon n="send" s={18} /></button>
       </div>
     </>
   );
 }
 
-function DraftCard({ d, onAdd }: { d: DraftView; onAdd: (d: DraftView) => void }) {
+function DraftCard({ d, onAdd, inline }: { d: DraftView; onAdd: (d: DraftView) => void; inline?: boolean }) {
   return (
-    <div className="bot">
-      <div className="hd"><Icon n="chat" s={14} /> پیش‌نویس دستیار</div>
+    <div className={inline ? 'draftin' : 'bot'}>
+      <div className="hd"><Icon n="cart" s={14} /> پیش‌نویس سفارش</div>
       {d.lines.map(l => (
         <div className="it" key={l.variantId + l.mode}>
           <div className="r1"><b>{l.name} <bdi>{l.label}</bdi></b><span className={`st ${l.price ? 'ok' : 'ask'}`}>{l.price ? 'قیمت‌دار' : 'استعلامی'}</span></div>
@@ -112,7 +132,8 @@ function DraftCard({ d, onAdd }: { d: DraftView; onAdd: (d: DraftView) => void }
         </div>
       ))}
       <div className="tot"><span>جمع تقریبی</span><b className="num">{fa(d.total)} ریال</b></div>
-      <button type="button" className="cta" style={{ marginTop: 8 }} onClick={() => onAdd(d)}><span>افزودن به سبد</span><small className="num">{fa(d.lines.length)} قلم</small></button>
+      <small style={{ color: 'var(--muted)' }}>برای ثبت پیش‌فاکتور بنویسید «ثبت کن»، یا در سبد ویرایش و ثبت کنید.</small>
+      <button type="button" className="cta" style={{ marginTop: 8 }} onClick={() => onAdd(d)}><span>ویرایش در سبد</span><small className="num">{fa(d.lines.length)} قلم</small></button>
     </div>
   );
 }

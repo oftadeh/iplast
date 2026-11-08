@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyInitData, signInitData, formatRial, splitCashCheque } from './index';
+import { verifyInitData, signInitData, formatRial, splitCashCheque, applyTerms } from './index';
 
 const TOKEN = '123456:TEST-TOKEN';
 const now = Date.UTC(2026, 10, 7, 9, 0, 0);
@@ -28,4 +28,21 @@ test('cash/cheque split keeps the total', () => {
   const s = splitCashCheque(604200000n, 30);
   assert.equal(s.cash + s.cheque, 604200000n);
   assert.equal(s.cash, 181260000n);
+});
+
+test('applies cash discount, cheque markup and splits cheques', () => {
+  const b = applyTerms(100_000_000n, { cashPercent: 30, chequeDueDays: [60, 90], cashDiscountPct: '2', chequeMarkupPct: '3.5' }, 0n, 1_000_000n);
+  assert.equal(b.cashBase, 30_000_000n);
+  assert.equal(b.cashDiscount, 600_000n);
+  assert.equal(b.chequeMarkup, 2_450_000n);
+  assert.equal(b.cash, 30_400_000n);
+  assert.equal(b.cheque, 72_450_000n);
+  assert.equal(b.cheques.length, 2);
+  assert.equal(b.cheques[0].amount + b.cheques[1].amount, b.cheque);
+  assert.equal(b.total, b.cash + b.cheque);
+});
+test('all cash with no terms', () => {
+  const b = applyTerms(5_000n, null, 1_000n);
+  assert.equal(b.total, 4_000n);
+  assert.equal(b.cheques.length, 0);
 });

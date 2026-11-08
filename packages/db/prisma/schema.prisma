@@ -13,14 +13,15 @@ datasource db {
 // ───────────── Catalog ─────────────
 
 model Category {
-  id        String          @id @default(cuid())
-  slug      String          @unique
+  id        String                     @id @default(cuid())
+  slug      String                     @unique
   name      String
-  sortOrder Int             @default(0)
+  sortOrder Int                        @default(0)
   parentId  String?
-  parent    Category?       @relation("CategoryTree", fields: [parentId], references: [id])
-  children  Category[]      @relation("CategoryTree")
+  parent    Category?                  @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[]                 @relation("CategoryTree")
   families  ProductFamily[]
+  discounts CustomerCategoryDiscount[]
 }
 
 model Brand {
@@ -228,25 +229,41 @@ enum CustomerType {
 }
 
 model Customer {
-  id            String           @id @default(cuid())
-  name          String // company / shop name
-  type          CustomerType     @default(RETAIL)
-  city          String?
-  address       String?
-  nationalId    String?
-  isApproved    Boolean          @default(false)
-  priceGroupId  String?
-  priceGroup    PriceGroup?      @relation(fields: [priceGroupId], references: [id])
-  supportId     String? // fixed sales-support agent
-  support       User?            @relation("AssignedSupport", fields: [supportId], references: [id])
-  members       CustomerMember[]
-  terms         PaymentTerms?
-  prices        CustomerPrice[]
-  orders        Order[]
-  conversations Conversation[]
-  invoices      Invoice[]
-  payments      Payment[]
-  createdAt     DateTime         @default(now())
+  id                String                     @id @default(cuid())
+  name              String // company / shop name
+  type              CustomerType               @default(RETAIL)
+  city              String?
+  address           String?
+  nationalId        String?
+  isApproved        Boolean                    @default(false)
+  priceGroupId      String?
+  priceGroup        PriceGroup?                @relation(fields: [priceGroupId], references: [id])
+  supportId         String? // fixed sales-support agent
+  support           User?                      @relation("AssignedSupport", fields: [supportId], references: [id])
+  members           CustomerMember[]
+  terms             PaymentTerms?
+  prices            CustomerPrice[]
+  orders            Order[]
+  conversations     Conversation[]
+  invoices          Invoice[]
+  payments          Payment[]
+  documents         Document[]
+  categoryDiscounts CustomerCategoryDiscount[]
+  createdAt         DateTime                   @default(now())
+}
+
+/// The customer's discount on one product category (set by a manager); applies to list prices of that category
+/// and replaces the price group's discount there. A personal price (CustomerPrice) still wins.
+model CustomerCategoryDiscount {
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  pct        Decimal  @db.Decimal(5, 2)
+  updatedBy  String?
+  updatedAt  DateTime @updatedAt
+
+  @@id([customerId, categoryId])
 }
 
 enum MemberRole {
@@ -322,6 +339,10 @@ model Order {
   events         OrderStatusEvent[]
   proformas      Proforma[]
   invoices       Invoice[]
+  shipments      Shipment[]
+  documents      Document[]
+  discount       BigInt             @default(0) // set by the sales agent on the proforma (Rial)
+  shipping       BigInt             @default(0) // freight added to the proforma (Rial, paid in cash)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 }
@@ -360,6 +381,9 @@ model Proforma {
   issuedAt   DateTime  @default(now())
   expiresAt  DateTime // default issuedAt + 48h
   acceptedAt DateTime?
+  breakdown  Json? // applyTerms() result at issue time: cash / cheque parts, discounts, cheques
+  items      Json? // [{title, quantity, packs, unitPrice}] as priced by the sales agent
+  changed    Boolean   @default(false) // the agent changed prices or items, so the customer must accept it
 
   @@unique([orderId, version])
 }
@@ -385,6 +409,9 @@ model Conversation {
   userTelegramId BigInt
   assigneeId     String? // sales-support user id
   isOpen         Boolean   @default(true)
+  // the AI sales agent answers until it hands the chat to a person (customer asks, a photo/file, or a case it can't handle)
+  handoffAt      DateTime?
+  handoffReason  String?
   messages       Message[]
   updatedAt      DateTime  @updatedAt
 
@@ -461,6 +488,8 @@ model Invoice {
   subtotal      BigInt // Rial
   discount      BigInt        @default(0)
   shipping      BigInt        @default(0)
+  cashDiscount  BigInt        @default(0) // customer's cash discount (already taken off total)
+  chequeMarkup  BigInt        @default(0) // customer's cheque markup (already added to total)
   total         BigInt
   cashPercent   Int           @default(100)
   chequeDueDays Int[]         @default([])
@@ -468,6 +497,7 @@ model Invoice {
   cancelledAt   DateTime?
   items         InvoiceItem[]
   payments      Payment[]
+  documents     Document[]
 
   @@index([customerId, issuedAt])
 }
@@ -509,6 +539,8 @@ model Payment {
   reportedById String? // customer user who sent it from the mini app
   createdById  String
   createdAt    DateTime      @default(now())
+  remindedAt   DateTime? // last due-date reminder sent for this cheque
+  documents    Document[]
 
   @@index([customerId, receivedAt])
 }
@@ -543,4 +575,59 @@ model Broadcast {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ───────────── Shipping and documents ─────────────
+
+/// One load sent for an order (an order may go in several loads).
+model Shipment {
+  id          String     @id @default(cuid())
+  orderId     String
+  order       Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  waybillNo   String? // شماره بارنامه
+  carrier     String? // باربری
+  driverName  String?
+  driverPhone String?
+  plate       String?
+  freight     BigInt? // کرایه (Rial)
+  freightBy   String? // customer | company
+  note        String?
+  shippedAt   DateTime   @default(now())
+  createdById String
+  documents   Document[]
+}
+
+enum DocKind {
+  RECEIPT // فیش واریز
+  CHEQUE // عکس چک
+  INVOICE // فاکتور / پیش‌فاکتور امضاشده
+  WAYBILL // بارنامه
+  CONTRACT // قرارداد
+  OTHER
+}
+
+/// A financial document (photo or PDF) kept on a customer's file, optionally tied to an order, payment, invoice or load.
+model Document {
+  id           String    @id @default(cuid())
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId      String?
+  order        Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  paymentId    String?
+  payment      Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  invoiceId    String?
+  invoice      Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  shipmentId   String?
+  shipment     Shipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  kind         DocKind
+  title        String?
+  fileKey      String
+  mime         String
+  size         Int
+  uploadedById String
+  byCustomer   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([orderId])
 }

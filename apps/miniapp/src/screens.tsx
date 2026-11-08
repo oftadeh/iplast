@@ -3,7 +3,7 @@ import { useApp } from './App';
 import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
-  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, personName, photoUrl, short, useApi,
+  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, discountOf, fa, withPct, lineTotal, lineUnits, personName, photoUrl, previewTerms, short, useApi,
 } from './lib';
 import { BOT_USERNAME, haptic } from './telegram';
 
@@ -11,7 +11,8 @@ const cardPhoto = (f: FamilyCard) => photoUrl(f.media[0]?.key);
 const badgeCls = (b: string) => (b === 'جدید' ? 'new' : b === 'پرفروش' ? 'hot' : 'pick');
 
 function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
-  const { go, quickAdd } = useApp();
+  const { go, quickAdd, me } = useApp();
+  const pct = discountOf(me, f.category.slug);
   return (
     <div className="pcard">
       <button type="button" className="pimg" aria-label={f.name} onClick={() => (withAdd ? quickAdd(f.slug) : go({ name: 'product', slug: f.slug }))}>
@@ -21,7 +22,8 @@ function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
       </button>
       {withAdd && <button type="button" className="add-mini" style={{ position: 'relative', marginTop: -50, marginInlineStart: 'auto', marginInlineEnd: 8 }} aria-label={`افزودن ${f.name}`} onClick={() => quickAdd(f.slug)}><Icon n="plus" s={18} /></button>}
       <button type="button" className="link" style={{ color: 'inherit', textAlign: 'right', fontWeight: 'inherit' }} onClick={() => go({ name: 'product', slug: f.slug })}><b>{f.name}</b></button>
-      <span className="pr num">{f.minPrice ? <>از <strong>{fa(f.minPrice)}</strong> ریال</> : <span className="tag warn">استعلامی</span>}</span>
+      <span className="pr num">{f.minPrice ? <>از <strong>{fa(withPct(BigInt(f.minPrice), pct))}</strong> ریال</> : <span className="tag warn">استعلامی</span>}</span>
+      {pct > 0 && f.minPrice && <span className="mypct num">{fa(pct)}٪ تخفیف شما</span>}
     </div>
   );
 }
@@ -66,6 +68,7 @@ export function HomeScreen() {
       <form className="searchwrap" onSubmit={e => { e.preventDefault(); if (q.trim()) go({ name: 'catalog', q: q.trim() }); }}>
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
+      <MyTerms />
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
         <button type="button" onClick={() => go({ name: 'account' })}><span className="i"><Icon n="file" s={15} /></span>حساب و فاکتورها</button>
@@ -130,9 +133,29 @@ export function CatalogScreen({ cat, q }: { cat?: string; q?: string }) {
   );
 }
 
+/** The customer's own settings from the sales manager: discount per product category and cash/cheque terms. */
+function MyTerms() {
+  const { me, go } = useApp();
+  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+  if (!a) return null;
+  const ds = Object.entries(a.discounts ?? {});
+  const t = a.terms;
+  if (!ds.length && !a.defaultDiscount && t.cashPercent === 100 && !Number(t.cashDiscountPct ?? 0)) return null;
+  return (
+    <section className="myterms">
+      <div className="h"><b>شرایط اختصاصی {a.name}</b><small>قیمت‌های کاتالوگ با همین درصدها نمایش داده می‌شود</small></div>
+      <div className="chipsrow">
+        {ds.map(([slug, d]) => <button key={slug} type="button" className="dchip" onClick={() => go({ name: 'catalog', cat: slug })}><span>{d.name}</span><b className="num">{fa(d.pct)}٪</b></button>)}
+        {!!a.defaultDiscount && <span className="dchip"><span>سایر دسته‌ها</span><b className="num">{fa(a.defaultDiscount)}٪</b></span>}
+      </div>
+      <small className="num">تسویه: نقد {fa(t.cashPercent)}٪{Number(t.cashDiscountPct ?? 0) ? ` (${fa(t.cashDiscountPct!)}٪ تخفیف نقدی)` : ''}{t.cashPercent < 100 ? ` · چک ${fa(100 - t.cashPercent)}٪${t.chequeDueDays.length ? ` ${t.chequeDueDays.map(d => fa(d)).join('/')} روزه` : ''}${Number(t.chequeMarkupPct ?? 0) ? ` (+${fa(t.chequeMarkupPct!)}٪)` : ''}` : ''}</small>
+    </section>
+  );
+}
+
 // ───────── product ─────────
 export function ProductScreen({ slug }: { slug: string }) {
-  const { add, go } = useApp();
+  const { add, go, me } = useApp();
   const f = useApi<Family>(`/catalog/families/${encodeURIComponent(slug)}`);
   const rel = useApi<FamilyCard[]>(f.data ? `/catalog/families?category=${encodeURIComponent(f.data.category.slug)}` : null);
   if (f.error) return <Failed msg="این محصول پیدا نشد." retry={f.reload} />;
@@ -146,7 +169,7 @@ export function ProductScreen({ slug }: { slug: string }) {
       <div className="pad" style={{ display: 'grid', gap: 18 }}>
         <div className="pd-title"><span className="crumb">{p.category.name}{p.brand ? ` · ${p.brand.name}` : ''}{p.model ? ` · ${p.model}` : ''}</span><h1>{p.name}</h1></div>
         {p.description && <p style={{ margin: 0, color: 'var(--muted)' }}>{p.description}</p>}
-        <Picker f={p} onAdd={l => { add(l); }} />
+        <Picker f={p} pct={discountOf(me, p.category.slug)} onAdd={l => { add(l); }} />
         {!!p.specs?.length && <div className="stats">{p.specs.map(([a, b]) => <div key={a}><span>{a}</span><b>{b}</b></div>)}</div>}
         <button type="button" className="cta ghost" onClick={() => go({ name: 'cart' })}><Icon n="cart" s={18} />&nbsp; مشاهده سبد</button>
       </div>
@@ -183,8 +206,9 @@ export function CartScreen() {
   const lines = cart.map(l => ({ ...l, price: prices && l.variantId in prices ? prices[l.variantId] : l.price }));
   const total = lines.reduce((s, l) => s + (lineTotal(l) ?? 0n), 0n);
   const inq = lines.filter(l => l.price === null).length;
-  const cashPct = account?.terms.cashPercent ?? 100;
-  const cash = (total * BigInt(cashPct)) / 100n;
+  const pv = previewTerms(total, account?.terms);
+  const cashPct = pv.pct;
+  const cash = pv.cash;
   const upd = (i: number, patch: Partial<typeof cart[number]>) => setCart(cart.map((c, k) => (k === i ? { ...c, ...patch } : c)));
 
   const submit = async () => {
@@ -249,8 +273,9 @@ export function CartScreen() {
           <div className="sbar"><i style={{ width: `${cashPct}%` }} /></div>
           <div className="srow">
             <div><span className="dot c" /><span>نقد <b className="num">{fa(cashPct)}٪</b></span><small className="num">{total ? `${fa(cash)} ریال` : '—'}</small></div>
-            <div><span className="dot q" /><span>چک <b className="num">{fa(100 - cashPct)}٪</b></span><small className="num">{total ? `${fa(total - cash)} ریال` : '—'}</small></div>
+            <div><span className="dot q" /><span>چک <b className="num">{fa(100 - cashPct)}٪</b></span><small className="num">{total ? `${fa(pv.cheque)} ریال` : '—'}</small></div>
           </div>
+          {(pv.cashDiscount > 0n || pv.chequeMarkup > 0n) && <p className="num">{pv.cashDiscount ? `تخفیف نقدی ${fa(account?.terms.cashDiscountPct ?? '0')}٪: ${fa(pv.cashDiscount)} ریال کمتر. ` : ''}{pv.chequeMarkup ? `افزایش چکی ${fa(account?.terms.chequeMarkupPct ?? '0')}٪: ${fa(pv.chequeMarkup)} ریال بیشتر.` : ''}</p>}
           <p>{account?.terms.chequeDueDays.length ? `سررسید چک‌ها: ${account.terms.chequeDueDays.map(d => fa(d) + ' روزه').join('، ')}. ` : ''}این درصدها را واحد فروش برای حساب شما تعیین کرده است. مبالغ نهایی در پیش‌فاکتور می‌آید.</p>
         </div>
       </> : <>
@@ -264,8 +289,8 @@ export function CartScreen() {
       <div className="summary">
         <div><span>اقلام قیمت‌دار</span><span className="num">{fa(lines.length - inq)} قلم</span></div>
         <div><span>اقلام استعلامی</span><span className="num">{fa(inq)} قلم</span></div>
-        <div className="big"><span>جمع تقریبی</span><b className="num">{fa(total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
-        <p>قیمت نهایی، تخفیف و موجودی را کارشناس فروش در پیش‌فاکتور تأیید می‌کند.</p>
+        <div className="big"><span>مبلغ تقریبی با شرایط تسویه</span><b className="num">{fa(accounts.length ? pv.total : total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
+        <p>قیمت اقلام استعلامی، تخفیف و کرایه را کارشناس فروش در پیش‌فاکتور نهایی می‌کند.</p>
       </div>
       {err && <div className="notice warn">{err}</div>}
       <div className="actionbar">
@@ -279,9 +304,9 @@ export function CartScreen() {
 }
 
 // ───────── orders ─────────
-const STEPS: [string, string][] = [['پیش‌فاکتور ثبت شد', 'از مینی‌اپ یا ربات'], ['تأیید کارشناس فروش', 'کارشناس شما قیمت و موجودی را بررسی می‌کند'], ['تأیید نهایی مدیر', 'کارشناس تأیید کرد؛ منتظر تأیید نهایی مدیریت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
-const STEP_OF: Record<string, number> = { SUBMITTED: 1, SALES_REVIEW: 1, NEEDS_FIX: 1, SALES_APPROVED: 2, PROFORMA_SENT: 2, PROFORMA_EXPIRED: 2, CONFIRMED: 3, PREPARING: 3, SHIPPED: 4, DELIVERED: 6 };
-const stClass = (s: string) => (s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' ? 'ask' : s === 'DELIVERED' ? 'ok' : 'info');
+const STEPS: [string, string][] = [['پیش‌فاکتور ثبت شد', 'از مینی‌اپ یا ربات'], ['تأیید کارشناس فروش', 'کارشناس شما قیمت‌ها را نهایی می‌کند'], ['تأیید نهایی مدیر', 'منتظر تأیید نهایی مدیریت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
+const STEP_OF: Record<string, number> = { SUBMITTED: 1, SALES_REVIEW: 1, NEEDS_FIX: 1, PROFORMA_SENT: 1, PROFORMA_EXPIRED: 1, SALES_APPROVED: 2, CONFIRMED: 3, PREPARING: 3, SHIPPED: 4, DELIVERED: 6 };
+const stClass = (s: string) => (s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' || s === 'PROFORMA_SENT' ? 'ask' : s === 'DELIVERED' ? 'ok' : 'info');
 const dateFa = (d: string) => new Date(d).toLocaleDateString('fa-IR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export function OrdersScreen() {
@@ -297,7 +322,7 @@ export function OrdersScreen() {
         <div className="empty">هنوز سفارشی ثبت نکرده‌اید.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div>
       ) : list.data.map(o => (
         <button key={o.id} type="button" className="oc" onClick={() => go({ name: 'order', id: o.id })}>
-          <div className="r"><b className="num">{['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'SALES_APPROVED'].includes(o.status) ? 'پیش‌فاکتور' : 'سفارش'} #{fa(o.number)}</b><span className={`st ${stClass(o.status)}`}>{o.statusFa}</span></div>
+          <div className="r"><b className="num">{['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'SALES_APPROVED', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'].includes(o.status) ? 'پیش‌فاکتور' : 'سفارش'} #{fa(o.number)}</b><span className={`st ${stClass(o.status)}`}>{o.statusFa}</span></div>
           <div className="r"><small className="num">{o.customer.name} · {fa(o.items.length)} قلم · {dateFa(o.createdAt)}</small><b className="num" style={{ fontSize: 13 }}>{BigInt(o.total) ? `${short(BigInt(o.total))} ریال` : 'استعلامی'}</b></div>
           {o.placedBy && <small>ثبت‌کننده: {personName(o.placedBy)}</small>}
         </button>
@@ -337,12 +362,23 @@ export function OrderScreen({ id }: { id: string }) {
             <b className="num">{i.unitPrice !== null ? `${fa(BigInt(i.unitPrice) * BigInt(i.quantity))}` : <span className="tag warn">استعلامی</span>}</b></div>
         ))}
       </div>
-      <div className="summary">
-        <div><span>نقد {fa(cashPct)}٪</span><span className="num">{d.split ? fa(d.split.cash) : '—'} ریال</span></div>
-        <div><span>چک {fa(100 - cashPct)}٪</span><span className="num">{d.split ? fa(d.split.cheque) : '—'} ریال</span></div>
-        <div className="big"><span>جمع تقریبی</span><b className="num">{fa(d.total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
-        {d.placedBy && <p>ثبت‌کننده: {personName(d.placedBy)} · {dateFa(d.createdAt)}</p>}
-      </div>
+      <MoneySummary d={d} cashPct={cashPct} />
+      {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
+      {!!d.shipments?.length && (
+        <>
+          <div className="sec"><h2 style={{ fontSize: 16 }}>ارسال بار</h2></div>
+          {d.shipments.map(sh => (
+            <div key={sh.id} className="notice ship">
+              <b>🚚 {dateFa(sh.shippedAt)}{sh.carrier ? ` · ${sh.carrier}` : ''}</b>
+              {sh.waybillNo && <span className="num">شماره بارنامه: {fa(sh.waybillNo)}</span>}
+              {(sh.driverName || sh.driverPhone) && <span className="num">راننده: {sh.driverName ?? ''} {sh.driverPhone ? <a href={`tel:${sh.driverPhone}`}>{fa(sh.driverPhone)}</a> : null}</span>}
+              {sh.plate && <span className="num">پلاک: {fa(sh.plate)}</span>}
+              {sh.freight && <span className="num">کرایه: {fa(sh.freight)} ریال{sh.freightBy === 'customer' ? ' (پس‌کرایه، با شما)' : sh.freightBy === 'company' ? ' (با کارخانه)' : ''}</span>}
+              {sh.note && <span>{sh.note}</span>}
+            </div>
+          ))}
+        </>
+      )}
       {!!d.events?.length && (
         <ol className="tl">
           {d.events.map((e, i) => (
@@ -354,6 +390,51 @@ export function OrderScreen({ id }: { id: string }) {
         </ol>
       )}
     </>
+  );
+}
+
+function MoneySummary({ d, cashPct }: { d: Order; cashPct: number }) {
+  const b = d.breakdown;
+  const priced = !d.items.some(i => i.unitPrice === null);
+  return (
+    <div className="summary">
+      {b && BigInt(b.discount) > 0n && <div><span>تخفیف</span><span className="num">{fa(b.discount)} ریال</span></div>}
+      <div><span>نقد {fa(cashPct)}٪{b && BigInt(b.cashDiscount) > 0n ? ` (تخفیف نقدی ${fa(b.cashDiscountPct)}٪)` : ''}{b && BigInt(b.shipping) > 0n ? ' + کرایه' : ''}</span><span className="num">{fa(b?.cash ?? d.split?.cash ?? '0')} ریال</span></div>
+      <div><span>چک {fa(100 - cashPct)}٪{b && BigInt(b.chequeMarkup) > 0n ? ` (افزایش چکی ${fa(b.chequeMarkupPct)}٪)` : ''}</span><span className="num">{fa(b?.cheque ?? d.split?.cheque ?? '0')} ریال</span></div>
+      {b && b.cheques.length > 1 && b.cheques.map((c, i) => <div key={i} style={{ fontSize: 12 }}><span>چک {fa(i + 1)}{c.days !== null ? ` · ${fa(c.days)} روزه` : ''}</span><span className="num">{fa(c.amount)} ریال</span></div>)}
+      <div className="big"><span>{priced ? 'مبلغ قابل پرداخت' : 'جمع تقریبی'}</span><b className="num">{fa(d.payable ?? d.total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
+      {d.placedBy && <p>ثبت‌کننده: {personName(d.placedBy)} · {dateFa(d.createdAt)}</p>}
+    </div>
+  );
+}
+
+/** The final proforma the sales agent priced: the customer accepts it or asks for a change before it expires. */
+function ProformaDecision({ o, onDone }: { o: Order; onDone: () => void }) {
+  const { toast } = useApp();
+  const pf = o.proformas?.[0];
+  const [asking, setAsking] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = async (ok: boolean) => {
+    setBusy(true);
+    try {
+      await api(`/orders/${o.id}/accept`, { method: 'POST', body: { ok, comment: text.trim() || undefined } });
+      haptic('success'); toast(ok ? 'پیش‌فاکتور تأیید شد' : 'درخواست تغییر برای کارشناس رفت'); onDone();
+    } catch (e) { haptic('error'); toast(e instanceof ApiError ? e.message : 'ثبت نشد'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="notice pfbox">
+      <b>پیش‌فاکتور نهایی{pf ? ` (نسخه ${fa(pf.version)})` : ''} آماده است</b>
+      <span>کارشناس فروش قیمت‌ها را نهایی کرده است. اقلام و مبلغ زیر را ببینید و تأیید کنید.{pf ? ` مهلت تأیید: ${dateFa(pf.expiresAt)}` : ''}</span>
+      {asking ? (
+        <>
+          <textarea className="note-in" style={{ margin: 0 }} value={text} onChange={e => setText(e.target.value)} placeholder="چه تغییری لازم است؟" maxLength={500} />
+          <div className="btns"><button type="button" className="cta" disabled={busy || !text.trim()} onClick={() => send(false)}>ارسال برای کارشناس</button><button type="button" className="cta ghost" onClick={() => setAsking(false)}>انصراف</button></div>
+        </>
+      ) : (
+        <div className="btns"><button type="button" className="cta" disabled={busy} onClick={() => send(true)}>✓ تأیید پیش‌فاکتور</button><button type="button" className="cta ghost" disabled={busy} onClick={() => setAsking(true)}>تغییر می‌خواهم</button></div>
+      )}
+    </div>
   );
 }
 
@@ -371,7 +452,7 @@ function AgentCard({ customerId }: { customerId: string }) {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', NEEDS_FIX: 'نیاز به اصلاح', SALES_APPROVED: 'تأیید کارشناس فروش', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
+  SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', NEEDS_FIX: 'نیاز به اصلاح', SALES_APPROVED: 'تأیید کارشناس فروش', PROFORMA_SENT: 'پیش‌فاکتور نهایی برای شما فرستاده شد',
   PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی؛ ارسال به انبار', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد',
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };

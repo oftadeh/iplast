@@ -26,8 +26,9 @@ export interface Family extends Omit<FamilyCard, 'sizeCount' | 'minPrice'> {
 }
 export interface Account {
   customerId: string; role: 'OWNER' | 'BUYER' | 'VIEWER'; name: string; isApproved: boolean;
-  terms: { cashPercent: number; chequeDueDays: number[] };
+  terms: { cashPercent: number; chequeDueDays: number[]; cashDiscountPct?: string; chequeMarkupPct?: string };
   support: { firstName: string | null; lastName: string | null; username: string | null } | null;
+  discounts?: Record<string, { name: string; pct: number }>; defaultDiscount?: number;
   members: { id: string; firstName: string | null; lastName: string | null; username: string | null; role: string }[];
 }
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
@@ -37,6 +38,24 @@ export interface Order {
   items: OrderItem[]; customer: { id: string; name: string }; placedBy: { firstName: string | null; lastName: string | null } | null;
   split?: { cash: string; cheque: string }; events?: { id: string; status: string; comment: string | null; createdAt: string }[];
   termsSnapshot?: { cashPercent?: number; chequeDueDays?: number[] } | null;
+  payable?: string; breakdown?: Breakdown;
+  proformas?: { id: string; version: number; total: string; issuedAt: string; expiresAt: string; acceptedAt: string | null; changed: boolean }[];
+  shipments?: Shipment[];
+  documents?: { id: string; kind: string; title: string | null; mime: string; createdAt: string; byCustomer: boolean }[];
+}
+export interface Shipment { id: string; waybillNo: string | null; carrier: string | null; driverName: string | null; driverPhone: string | null; plate: string | null; freight: string | null; freightBy: string | null; note: string | null; shippedAt: string }
+export interface Breakdown {
+  subtotal: string; discount: string; shipping: string; cashBase: string; chequeBase: string; cashDiscount: string; chequeMarkup: string;
+  cash: string; cheque: string; total: string; cashPercent: number; cashDiscountPct: number; chequeMarkupPct: number; cheques: { days: number | null; amount: string }[];
+}
+
+/** Same rule as the server: cash share minus the cash discount, cheque share plus the cheque markup. */
+export function previewTerms(total: bigint, t?: { cashPercent: number; cashDiscountPct?: string; chequeMarkupPct?: string }) {
+  const pct = Math.min(100, Math.max(0, t?.cashPercent ?? 100));
+  const cashBase = (total * BigInt(pct)) / 100n, chequeBase = total - cashBase;
+  const of = (a: bigint, p: string | undefined) => (a * BigInt(Math.round((Number(p ?? 0) || 0) * 100))) / 10000n;
+  const cashDiscount = of(cashBase, t?.cashDiscountPct), chequeMarkup = of(chequeBase, t?.chequeMarkupPct);
+  return { pct, cash: cashBase - cashDiscount, cheque: chequeBase + chequeMarkup, cashDiscount, chequeMarkup, total: cashBase - cashDiscount + chequeBase + chequeMarkup };
 }
 
 let token: string | null = null;
@@ -155,3 +174,12 @@ export async function shrinkPhoto(f: File): Promise<Blob> {
     return await new Promise<Blob>((ok, no) => c.toBlob(b => (b ? ok(b) : no(new Error('x'))), 'image/jpeg', 0.85));
   } catch { return f; }
 }
+
+/** The customer's own discount (percent off the list price) on a product category, set by the sales manager. */
+export function discountOf(me: Me | null | undefined, categorySlug: string | undefined) {
+  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+  if (!a || !categorySlug) return 0;
+  return a.discounts?.[categorySlug]?.pct ?? a.defaultDiscount ?? 0;
+}
+/** List price minus a percent, rounded down to whole Rials (same rule as the server). */
+export const withPct = (price: bigint, pct: number) => (pct ? (price * BigInt(Math.round((100 - pct) * 100))) / 10000n : price);

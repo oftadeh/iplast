@@ -76,6 +76,26 @@ export class TelegramService {
     }
   }
 
+  /** A photo or a PDF with a caption: images go as photos, anything else as a document. */
+  async sendFile(chatId: bigint | number | string, file: Buffer, filename: string, mime: string, caption: string, replyMarkup?: object): Promise<boolean> {
+    if (mime.startsWith('image/')) return this.sendPhoto(chatId, file, filename, caption, replyMarkup);
+    const token = process.env.BOT_TOKEN;
+    if (!token) return false;
+    try {
+      const fd = new FormData();
+      fd.append('chat_id', String(chatId));
+      fd.append('caption', caption.slice(0, 1000));
+      if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
+      fd.append('document', new Blob([file], { type: mime }), filename);
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: fd });
+      if (!r.ok) this.log.warn(`sendDocument ${r.status}`);
+      return r.ok;
+    } catch (e) {
+      this.log.warn(`sendDocument failed: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
   /**
    * SMS to the managers (ADMIN_SMS_NUMBERS) through Kavenegar, when KAVENEGAR_API_KEY is set.
    * Optional: without it, managers still get the Telegram message.

@@ -8,24 +8,16 @@ import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentMethod, PaymentStatus } from '@iplast/db';
-import { formatRial, splitCashCheque } from '@iplast/shared';
+import { applyTerms, formatRial, splitCashCheque } from '@iplast/shared';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
 import { audit } from '../common/audit';
+import { rialOf } from '../common/validate';
 
-const FA = '۰۱۲۳۴۵۶۷۸۹';
-const toEn = (s: string) => s.replace(/[۰-۹]/g, d => String(FA.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
-function rialOf(v: unknown, what: string, allowZero = false): bigint {
-  const s = toEn(String(v ?? '')).replace(/[,،٬\s]/g, '');
-  if (!/^\d{1,15}$/.test(s)) throw new BadRequestException(`${what} باید عدد (ریال) باشد`);
-  const n = BigInt(s);
-  if (!allowZero && n <= 0n) throw new BadRequestException(`${what} باید بیشتر از صفر باشد`);
-  return n;
-}
 const RECEIPTS = join(process.env.UPLOAD_DIR ?? '/data/uploads', 'receipts'); // private: served only to the customer and staff
-const IMAGE: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const IMAGE: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const METHODS: PaymentMethod[] = ['CASH', 'TRANSFER', 'CHEQUE'];
 const STATUSES: PaymentStatus[] = ['REPORTED', 'PENDING', 'CLEARED', 'BOUNCED', 'CANCELLED'];
 export const METHOD_FA: Record<PaymentMethod, string> = { CASH: 'نقد', TRANSFER: 'واریز / کارت‌به‌کارت', CHEQUE: 'چک' };
@@ -33,7 +25,60 @@ export const PAY_STATUS_FA: Record<PaymentStatus, string> = { REPORTED: 'ارس�
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly orders: OrdersService) {}
+  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly orders: OrdersService) {
+    // the manager's final approval issues the invoice from the priced proforma
+    orders.onConfirmed = async (byUserId, orderId) => { await this.issueFromOrder(byUserId, { orderId }); };
+    orders.ticks.push(() => this.chequeReminders());
+  }
+
+  private async customerAndAgents(customerId: string) {
+    const [members, agents] = await Promise.all([
+      this.prisma.customerMember.findMany({ where: { customerId, role: { in: ['OWNER', 'VIEWER'] } }, include: { user: true } }),
+      this.orders.salesAgentsOf(customerId),
+    ]);
+    return { customer: [...new Set(members.map(m => String(m.user.telegramId)))], agents: agents.map(a => String(a.telegramId)) };
+  }
+
+  /**
+   * Cheques still in hand: the customer and their sales agent hear 3 days before the due date and again on the day;
+   * the managers get one list a day of cheques due in the next 3 days and overdue ones.
+   */
+  async chequeReminders(now = new Date()) {
+    const soon = new Date(now.getTime() + 3 * 86400_000);
+    const due = await this.prisma.payment.findMany({ where: { method: 'CHEQUE', status: 'PENDING', dueDate: { lte: soon } }, include: { customer: true }, orderBy: { dueDate: 'asc' } });
+    const day = (d: Date) => d.toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
+    const today = day(now);
+    const hour = Number(now.toLocaleString('en-US', { timeZone: 'Asia/Tehran', hour: 'numeric', hour12: false }));
+    if (hour < 8 || hour >= 21) return; // no messages at night
+    for (const p of due) {
+      const isToday = day(p.dueDate!) === today || p.dueDate! < now;
+      const sentToday = p.remindedAt && day(p.remindedAt) === today;
+      const sentEarly = !!p.remindedAt;
+      if (sentToday || (!isToday && sentEarly) || (isToday && p.remindedAt && p.remindedAt >= p.dueDate!)) continue;
+      const head = p.dueDate! < now && day(p.dueDate!) !== today ? '⚠️ سررسید چک گذشته است' : isToday ? '📅 امروز سررسید چک است' : '🔔 یادآوری سررسید چک';
+      const text = `${head}\nمشتری: ${p.customer.name}\nمبلغ: ${formatRial(p.amount)}${p.chequeNumber ? `\nشماره چک: ${p.chequeNumber}` : ''}${p.bank ? ` · ${p.bank}` : ''}\nسررسید: ${day(p.dueDate!)}`;
+      const { customer, agents } = await this.customerAndAgents(p.customerId);
+      for (const t of customer) await this.tg.send(t, `${text}\n\nلطفاً موجودی حساب را برای وصول چک تأمین کنید.`);
+      for (const t of agents) await this.tg.send(t, text);
+      await this.prisma.payment.update({ where: { id: p.id }, data: { remindedAt: now } });
+    }
+    const key = 'cheque.digestDay';
+    const last = await this.prisma.setting.findUnique({ where: { key } });
+    if (due.length && last?.value !== today) {
+      const total = due.reduce((s, p) => s + p.amount, 0n);
+      const lines = due.slice(0, 30).map(p => `${p.dueDate! < now ? '⚠️' : '•'} ${day(p.dueDate!)} · ${p.customer.name} · ${formatRial(p.amount)}${p.chequeNumber ? ` · ${p.chequeNumber}` : ''}`);
+      for (const a of await this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } }))
+        await this.tg.send(a.telegramId, `🗓 چک‌های سررسید سه روز آینده و معوق (${due.length} فقره، ${formatRial(total)})\n${lines.join('\n')}${due.length > 30 ? `\n… و ${due.length - 30} فقره‌ی دیگر` : ''}\n\nبعد از وصول یا برگشت، وضعیت را در پنل ← حساب مشتریان ثبت کنید.`);
+      await this.prisma.setting.upsert({ where: { key }, update: { value: today }, create: { key, value: today } });
+    }
+  }
+
+  /** Cash and cheque parts of an issued invoice (cash discount, cheque markup and freight already in total). */
+  private invSplit(inv: { total: bigint; subtotal: bigint; discount: bigint; cashPercent: number; chequeMarkup: bigint }) {
+    const chequeBase = splitCashCheque(inv.subtotal - inv.discount, inv.cashPercent).cheque;
+    const cheque = chequeBase + inv.chequeMarkup;
+    return { cash: inv.total - cheque, cheque };
+  }
 
   /**
    * A customer reports a payment from the mini app with a photo of the cheque or bank receipt.
@@ -41,7 +86,7 @@ export class AccountingService {
    */
   async report(userId: string, customerId: string, b: { amount?: unknown; method?: string; chequeNumber?: string; bank?: string; dueDate?: string; note?: string; invoiceId?: string }, file?: { buffer: Buffer; mimetype: string }) {
     const ext = file && IMAGE[file.mimetype];
-    if (!file?.buffer?.length || !ext) throw new BadRequestException('عکس چک یا فیش واریزی را انتخاب کنید (JPG یا PNG)');
+    if (!file?.buffer?.length || !ext) throw new BadRequestException('عکس یا PDF چک یا فیش واریزی را انتخاب کنید');
     const method = b.method as PaymentMethod;
     if (!METHODS.includes(method)) throw new BadRequestException('نوع پرداخت را انتخاب کنید');
     const amount = rialOf(b.amount, 'مبلغ');
@@ -66,7 +111,7 @@ export class AccountingService {
     const to = new Map<string, bigint>();
     for (const a of await this.orders.salesAgentsOf(customerId)) to.set(a.id, a.telegramId);
     for (const a of await this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } })) to.set(a.id, a.telegramId);
-    for (const t of to.values()) await this.tg.sendPhoto(t, file.buffer, `receipt.${ext}`, caption, kb);
+    for (const t of to.values()) await this.tg.sendFile(t, file.buffer, `receipt.${ext}`, file.mimetype, caption, kb);
     return { id: p.id, status: p.status };
   }
 
@@ -91,7 +136,7 @@ export class AccountingService {
   }
 
   receiptPath(p: { receiptKey: string | null }) {
-    if (!p.receiptKey || !/^[a-f0-9]+\.(jpg|png|webp)$/.test(p.receiptKey)) throw new NotFoundException();
+    if (!p.receiptKey || !/^[a-f0-9]+\.(jpg|png|webp|pdf)$/.test(p.receiptKey)) throw new NotFoundException();
     const path = join(RECEIPTS, p.receiptKey);
     if (!existsSync(path)) throw new NotFoundException();
     return path;
@@ -127,7 +172,7 @@ export class AccountingService {
       customer,
       summary: { invoiced, paid, pendingCheques, reported, balance: invoiced - paid, balanceAfterCheques: invoiced - paid - pendingCheques },
       invoices: invoices.map(({ _count, ...i }) => ({ ...i, itemCount: _count.items })),
-      payments: payments.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })),
+      payments: payments.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, receiptPdf: !!receiptKey?.endsWith('.pdf'), methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })),
       statement,
     };
   }
@@ -139,7 +184,7 @@ export class AccountingService {
     });
     if (!inv) throw new NotFoundException();
     const paid = inv.payments.filter(p => p.status === 'CLEARED').reduce((s, p) => s + p.amount, 0n);
-    return { ...inv, split: splitCashCheque(inv.total, inv.cashPercent), paidAgainst: paid, payments: inv.payments.map(p => ({ ...p, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })) };
+    return { ...inv, split: this.invSplit(inv), paidAgainst: paid, payments: inv.payments.map(p => ({ ...p, methodFa: METHOD_FA[p.method], statusFa: PAY_STATUS_FA[p.status] })) };
   }
 
   /** Issues the invoice of a confirmed order. Inquiry items need a price now; discount and shipping are optional. */
@@ -157,14 +202,16 @@ export class AccountingService {
     });
     if (!items.length) throw new BadRequestException('فاکتور بدون قلم صادر نمی‌شود');
     const subtotal = items.reduce((s, i) => s + i.total, 0n);
-    const discount = b.discount ? rialOf(b.discount, 'تخفیف', true) : 0n;
-    const shipping = b.shipping ? rialOf(b.shipping, 'هزینه‌ی حمل', true) : 0n;
+    const discount = b.discount !== undefined && b.discount !== '' ? rialOf(b.discount, 'تخفیف', true) : o.discount;
+    const shipping = b.shipping !== undefined && b.shipping !== '' ? rialOf(b.shipping, 'هزینه‌ی حمل', true) : o.shipping;
     if (discount > subtotal) throw new BadRequestException('تخفیف از جمع فاکتور بیشتر است');
     const terms = (o.termsSnapshot ?? {}) as { cashPercent?: number; chequeDueDays?: number[] };
+    const bd = applyTerms(subtotal, terms, discount, shipping);
     const inv = await this.prisma.invoice.create({
       data: {
-        customerId: o.customerId, orderId: o.id, issuedById: byUserId, subtotal, discount, shipping, total: subtotal - discount + shipping,
-        cashPercent: terms.cashPercent ?? 100, chequeDueDays: terms.chequeDueDays ?? [], note: b.note?.trim().slice(0, 1000) || null,
+        customerId: o.customerId, orderId: o.id, issuedById: byUserId, subtotal, discount, shipping, total: bd.total,
+        cashDiscount: bd.cashDiscount, chequeMarkup: bd.chequeMarkup,
+        cashPercent: bd.cashPercent, chequeDueDays: terms.chequeDueDays ?? [], note: b.note?.trim().slice(0, 1000) || null,
         items: { create: items },
       },
     });
@@ -210,6 +257,17 @@ export class AccountingService {
     if (!STATUSES.includes(status as PaymentStatus)) throw new BadRequestException('وضعیت نامعتبر است');
     const r = await this.prisma.payment.update({ where: { id }, data: { status: status as PaymentStatus } });
     await audit(this.prisma, byUserId, 'payment.status', 'Payment', id, { status: p.status }, { status });
+    if (p.method === 'CHEQUE' && p.status !== status && (status === 'BOUNCED' || status === 'CLEARED')) {
+      const c = await this.prisma.customer.findUnique({ where: { id: p.customerId } });
+      const what = `چک ${formatRial(p.amount)}${p.chequeNumber ? ` (شماره ${p.chequeNumber})` : ''}${p.dueDate ? ` سررسید ${p.dueDate.toLocaleDateString('fa-IR')}` : ''}`;
+      const { customer, agents } = await this.customerAndAgents(p.customerId);
+      if (status === 'CLEARED') for (const t of customer) await this.tg.send(t, `✅ ${what} وصول شد و از مانده‌ی حساب کم شد.`);
+      else {
+        for (const t of customer) await this.tg.send(t, `❌ ${what} برگشت خورد. لطفاً برای تسویه با کارشناس فروش هماهنگ کنید.`);
+        for (const t of agents) await this.tg.send(t, `❌ چک برگشتی: ${c?.name ?? ''}\n${what}`);
+        for (const a of await this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } })) if (a.id !== byUserId) await this.tg.send(a.telegramId, `❌ چک برگشتی: ${c?.name ?? ''}\n${what}`);
+      }
+    }
     return r;
   }
 
@@ -256,7 +314,7 @@ export class AdminAccountsController {
   @Get('reported')
   reported() {
     return this.prisma.payment.findMany({ where: { status: 'REPORTED' }, orderBy: { createdAt: 'asc' }, include: { customer: { select: { id: true, name: true } }, invoice: { select: { number: true } } } })
-      .then(ps => ps.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, methodFa: METHOD_FA[p.method] })));
+      .then(ps => ps.map(({ receiptKey, ...p }) => ({ ...p, hasReceipt: !!receiptKey, receiptPdf: !!receiptKey?.endsWith('.pdf'), methodFa: METHOD_FA[p.method] })));
   }
   @Post('payments/:id/review') review(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { ok?: boolean; comment?: string }) { return this.acc.review(s.sub, id, !!b?.ok, b?.comment); }
   @Get('payments/:id/receipt')

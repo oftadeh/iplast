@@ -91,6 +91,37 @@ export class AdminCustomersController {
   }
 
   /** Adds a Telegram user to the customer (another purchasing agent, for example). */
+  /** Every product category with this customer's discount on it (0 = list price, or the price group's discount). */
+  @Get(':id/discounts')
+  async discounts(@Param('id') id: string) {
+    const c = await this.prisma.customer.findUnique({ where: { id }, include: { priceGroup: true, categoryDiscounts: true } });
+    if (!c) throw new NotFoundException();
+    const cats = await this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, include: { _count: { select: { families: true } } } });
+    return {
+      defaultDiscount: c.priceGroup ? Number(c.priceGroup.discountPct) : 0,
+      categories: cats.map(k => ({ id: k.id, slug: k.slug, name: k.name, families: k._count.families, pct: Number(c.categoryDiscounts.find(d => d.categoryId === k.id)?.pct ?? 0) })),
+    };
+  }
+
+  /** Managers set the customer's discount per category. 0 removes it. */
+  @Put(':id/discounts')
+  @Staff('ADMIN')
+  async setDiscounts(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { items?: { categoryId?: string; pct?: unknown }[] }) {
+    if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();
+    const items = Array.isArray(b?.items) ? b.items.slice(0, 200) : [];
+    const cats = new Set((await this.prisma.category.findMany({ select: { id: true } })).map(c => c.id));
+    const before = await this.prisma.customerCategoryDiscount.findMany({ where: { customerId: id } });
+    for (const it of items) {
+      if (!cats.has(String(it.categoryId))) throw new BadRequestException('دسته‌ی کالا نامعتبر است');
+      const p = pct(typeof it.pct === 'string' ? it.pct.replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace('٫', '.') : it.pct, 'درصد تخفیف باید بین ۰ تا ۱۰۰ باشد');
+      const key = { customerId_categoryId: { customerId: id, categoryId: String(it.categoryId) } };
+      if (p === 0) await this.prisma.customerCategoryDiscount.deleteMany({ where: { customerId: id, categoryId: String(it.categoryId) } });
+      else await this.prisma.customerCategoryDiscount.upsert({ where: key, create: { customerId: id, categoryId: String(it.categoryId), pct: p, updatedBy: s.sub }, update: { pct: p, updatedBy: s.sub } });
+    }
+    await audit(this.prisma, s.sub, 'customer.discounts', 'Customer', id, before.map(d => ({ categoryId: d.categoryId, pct: d.pct.toString() })), items as object);
+    return this.discounts(id);
+  }
+
   @Post(':id/members')
   async addMember(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { telegramId?: string; role?: string; firstName?: string }) {
     if (!(await this.prisma.customer.findUnique({ where: { id } }))) throw new NotFoundException();
