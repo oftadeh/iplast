@@ -230,4 +230,42 @@ const bounced = await call('PATCH', `/api/admin/accounts/payments/${p2.id}`, { s
 assert.equal(bounced.status, 'BOUNCED'); step('a bounced cheque is recorded (customer, agent and managers are told)');
 
 await call('POST', '/api/auth/code/request', { telegramId: '7001' }); await call('POST', '/api/auth/code/verify', { telegramId: '7001', code: '000000' }, null, 401); step('admin code login refuses non-staff');
+
+// growth: repeat order, phone order by the agent, shared proforma link, invite links, app bonus, credit limit
+const re = await call('GET', `/api/orders/${o1.id}/reorder`, null, owner);
+assert.ok(re.lines.length >= 1 && re.lines.every(l => l.variantId && l.slug)); step('repeat order returns the lines at today\'s prices');
+await call('GET', `/api/orders/${o1.id}/reorder`, null, stranger, [403, 404]); step('nobody else can repeat it');
+const hits = await call('GET', `/api/admin/orders/variants?q=${encodeURIComponent('نر')}&customerId=${cust.customerId}&mode=CASH`, null, sales);
+assert.ok(hits.length > 0); step('agent searches sizes priced for the customer');
+const phone = await call('POST', '/api/admin/orders', { customerId: cust.customerId, payMode: 'CASH', items: [{ variantId: priced.id, quantity: 10 }] }, sales);
+assert.equal(phone.channel, 'admin'); assert.equal(phone.status, 'SUBMITTED'); step('agent places a phone order for the customer');
+await call('POST', '/api/admin/orders', { customerId: cust.customerId, items: [{ variantId: priced.id, quantity: 1 }] }, owner, 403); step('customers cannot use the phone-order route');
+const shr = await call("POST", `/api/orders/${o1.id}/share`, null, owner);
+const tok = new URL(shr.url, 'http://x').searchParams.get('doc');
+const pub = await call('GET', `/api/public/proforma/${tok}`);
+assert.equal(pub.id, o1.id); assert.equal(pub.events, undefined); step('a shared proforma link opens read-only without signing in');
+await call('GET', '/api/public/proforma/bad-token', null, null, 404); step('a forged link is refused');
+const g = await call('GET', '/api/admin/growth', null, sales);
+assert.equal(g.staff.length, 1); const link = g.staff[0].link; assert.ok(/start=ref_[a-f0-9]+$/.test(link)); step('an agent gets their own invite link');
+const code = link.split('ref_')[1];
+const KEY = process.env.INTERNAL_KEY ?? 'k-e2e';
+const jr = await fetch(`${API}/api/internal/referral`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY }, body: JSON.stringify({ telegramId: '7201', code, firstName: 'Invited' }) }).then(r => r.json());
+assert.equal(jr.ok, true);
+await call('PUT', '/api/admin/growth', { appBonusPct: '۱٫۵' }, admin);
+const invited = await login(7201, 'Invited');
+assert.equal((await call('GET', '/api/me', null, invited)).appBonusPct, 1.5);
+const io = await call('POST', '/api/orders', { newCustomer: { name: 'مشتری دعوتی' }, items: [{ variantId: priced.id, quantity: 100 }] }, invited);
+const ioc = await call('GET', `/api/admin/customers/${io.customer.id}`, null, admin);
+assert.equal(ioc.support?.id, g.staff[0].id); step('a customer who came through the link is assigned to that agent');
+assert.equal(BigInt(io.discount), (BigInt(io.items[0].unitPrice) * 100n * 150n) / 10000n); step('an order from the app gets the app bonus discount');
+await call('PUT', '/api/admin/growth', { appBonusPct: 0 }, admin);
+await call('PUT', '/api/admin/growth', { appBonusPct: 5 }, sales, 403); step('only the manager sets the app bonus');
+await call('PATCH', `/api/admin/customers/${cust.customerId}`, { creditLimit: '۱۰۰۰' }, admin);
+const withCredit = await call('GET', `/api/admin/orders/${phone.id}`, null, admin);
+assert.equal(withCredit.credit.limit, '1000'); assert.equal(withCredit.credit.over, true); step('credit limit set; the order shows it goes over');
+await call('PATCH', `/api/admin/customers/${cust.customerId}`, { creditLimit: '5000' }, sales, 403); step('only the manager sets the credit limit');
+const dash = await call('GET', '/api/admin/dashboard', null, admin);
+assert.ok(Array.isArray(dash.perf) && Array.isArray(dash.quiet) && dash.overLimit.some(c => c.id === cust.customerId)); step('dashboard has agent performance, quiet customers and over-limit debtors');
+const t = await call('GET', '/api/admin/broadcasts/targets', null, admin);
+assert.ok(Array.isArray(t.cities) && t.categories.length > 0); step('targeted messages list cities and categories');
 console.log(`\nall ${n} checks passed`);

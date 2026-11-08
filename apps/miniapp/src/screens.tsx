@@ -69,6 +69,8 @@ export function HomeScreen() {
       <form className="searchwrap" onSubmit={e => { e.preventDefault(); if (q.trim()) go({ name: 'catalog', q: q.trim() }); }}>
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
+      {!!me?.appBonusPct && <div className="appbonus">🎁 سفارش از همین پنل <b className="num">{fa(me.appBonusPct)}٪</b> تخفیف بیشتر دارد.</div>}
+      <LastOrder />
       <MyTerms />
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
@@ -215,7 +217,10 @@ export function CartScreen() {
   const priceIn = (l: typeof cart[number], m: PayMode) => (prices && l.variantId in prices ? prices[l.variantId][m === 'CASH' ? 'cash' : 'term'] : l.price);
   const totalIn = (m: PayMode) => cart.reduce((s, l) => s + (lineTotal({ ...l, price: priceIn(l, m) }) ?? 0n), 0n);
   const lines = cart.map(l => ({ ...l, price: priceIn(l, mode) }));
-  const total = totalIn(mode);
+  const goods = totalIn(mode);
+  const bonusPct = me?.appBonusPct ?? 0;
+  const bonus = bonusPct > 0 ? (goods * BigInt(Math.round(bonusPct * 100))) / 10000n : 0n;
+  const total = goods - bonus;
   const listTotal = prices ? cart.reduce((s, l) => s + (lineTotal({ ...l, price: prices[l.variantId]?.list ?? null }) ?? 0n), 0n) : 0n;
   const inq = lines.filter(l => l.price === null).length;
   const upd = (i: number, patch: Partial<typeof cart[number]>) => setCart(cart.map((c, k) => (k === i ? { ...c, ...patch } : c)));
@@ -302,8 +307,9 @@ export function CartScreen() {
       <div className="summary">
         <div><span>اقلام قیمت‌دار</span><span className="num">{fa(lines.length - inq)} قلم</span></div>
         <div><span>اقلام استعلامی</span><span className="num">{fa(inq)} قلم</span></div>
-        {listTotal > total && <div><span>جمع به قیمت لیست</span><span className="num"><s>{fa(listTotal)}</s></span></div>}
-        {listTotal > total && <div><span>تخفیف {payModeFa(mode)}</span><span className="num">{fa(listTotal - total)} ریال</span></div>}
+        {listTotal > goods && <div><span>جمع به قیمت لیست</span><span className="num"><s>{fa(listTotal)}</s></span></div>}
+        {listTotal > goods && <div><span>تخفیف {payModeFa(mode)}</span><span className="num">{fa(listTotal - goods)} ریال</span></div>}
+        {bonus > 0n && <div className="bonus"><span>🎁 تخفیف سفارش از اپ ({fa(bonusPct)}٪)</span><span className="num">{fa(bonus)} ریال</span></div>}
         <div className="big"><span>مبلغ تقریبی {accounts.length ? payModeFa(mode, mode === 'TERM' ? sale?.termMonths : null) : ''}</span><b className="num">{fa(total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
         <p>قیمت اقلام استعلامی، تخفیف و کرایه را کارشناس فروش در پیش‌فاکتور نهایی می‌کند.</p>
       </div>
@@ -346,8 +352,47 @@ export function OrdersScreen() {
   );
 }
 
+type ReorderView = { number: number; lines: (CartLineLike & { variantId: string })[]; missing: number };
+/** Puts the lines of an earlier order (at today's prices) in the cart and opens it. */
+function useReorder() {
+  const { cart, setCart, go, toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const run = async (orderId: string) => {
+    setBusy(true);
+    try {
+      const r = await api<ReorderView>(`/orders/${encodeURIComponent(orderId)}/reorder`);
+      const cur = [...cart];
+      for (const l of r.lines) {
+        const ex = cur.findIndex(c => c.variantId === l.variantId && c.mode === l.mode);
+        if (ex >= 0) cur[ex] = { ...cur[ex], ...l }; else cur.push(l as typeof cart[number]);
+      }
+      setCart(cur); haptic('success');
+      toast(r.missing ? `اقلام سفارش #${fa(r.number)} به سبد رفت (${fa(r.missing)} قلم دیگر فروخته نمی‌شود)` : `اقلام سفارش #${fa(r.number)} با قیمت امروز به سبد رفت`);
+      go({ name: 'cart' });
+    } catch (e) { haptic('error'); toast(e instanceof ApiError ? e.message : 'بارگذاری نشد'); } finally { setBusy(false); }
+  };
+  return { run, busy };
+}
+
+/** Home: the last order, to order the same items again with one tap. */
+function LastOrder() {
+  const { authed } = useApp();
+  const o = useApi<Order[]>(authed ? '/orders' : null, [authed]);
+  const re = useReorder();
+  const last = o.data?.[0];
+  if (!last) return null;
+  return (
+    <div className="lastorder">
+      <span className="i"><Icon n="box" s={18} /></span>
+      <span><small className="num">آخرین سفارش: #{fa(last.number)}، {fa(last.items.length)} قلم</small><b>همان اقلام را دوباره سفارش دهید</b></span>
+      <button type="button" className="cta" disabled={re.busy} onClick={() => re.run(last.id)}>🔁 تکرار</button>
+    </div>
+  );
+}
+
 export function OrderScreen({ id }: { id: string }) {
   const { go } = useApp();
+  const re = useReorder();
   const o = useApi<Order>(`/orders/${encodeURIComponent(id)}`);
   if (o.error) return <Failed msg={o.error} retry={o.reload} />;
   if (!o.data) return <Loading h={300} />;
@@ -378,7 +423,10 @@ export function OrderScreen({ id }: { id: string }) {
         ))}
       </div>
       <MoneySummary d={d} />
-      <div className="pf-open"><button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 مشاهده پیش‌فاکتور رسمی</button></div>
+      <div className="pf-open two">
+        <button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 پیش‌فاکتور رسمی</button>
+        <button type="button" className="cta ghost" disabled={re.busy} onClick={() => re.run(d.id)}>🔁 سفارش دوباره</button>
+      </div>
       {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>

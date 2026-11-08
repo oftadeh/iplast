@@ -1,6 +1,7 @@
 import { useApi, fa, dateFa, STATUS_CLASS } from '../lib';
 import { useAdmin } from '../App';
 import { Icon } from '../icons';
+import { InviteCard, type Growth } from './Growth';
 
 interface Dash {
   queue: { unansweredChats: number; salesReview: number; awaitingCustomer: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number };
@@ -11,6 +12,12 @@ interface Dash {
   catalog: { variants: number; inquiry: number; activeList: { title: string; publishedAt: string | null } | null };
   customers: number;
   daily: { d: string; n: number }[];
+  perf: { id: string; name: string; sales: string; orders: number; fromApp: number; active: number; customers: number; invited: number }[];
+  quiet: { id: string; name: string; city: string | null; last: string | null; orders: number; agent: string | null }[];
+  quietCount: number;
+  overLimit: { id: string; name: string; limit: string; balance: string }[];
+  cheques: { id: string; amount: string; dueDate: string; chequeNumber: string | null; customer: { id: string; name: string } }[];
+  appShare: number | null;
   recent: { id: string; number: number; status: string; createdAt: string; payMode: 'CASH' | 'TERM'; value: string | null; customer: { name: string }; _count: { items: number } }[];
 }
 export const STATUS_FA: Record<string, string> = {
@@ -33,6 +40,7 @@ export function DashboardPage() {
   const { me, open } = useAdmin();
   const { data, error } = useApi<Dash>('/admin/dashboard');
   const ai = useApi<{ enabled: boolean; ok: boolean; model: string | null; error?: string; ms?: number }>('/admin/dashboard/ai');
+  const growth = useApi<Growth>(me.staffRole === 'WAREHOUSE' ? null : '/admin/growth');
   if (error) return <div className="err">{error}</div>;
   if (!data) return <div className="dash"><div className="d-skel" /><div className="d-skel" style={{ height: 120 }} /><div className="d-skel" style={{ height: 260 }} /></div>;
   const role = me.staffRole!;
@@ -78,9 +86,9 @@ export function DashboardPage() {
           <p>{waiting ? <><b className="num">{fa(waiting)}</b> کار منتظر شماست.</> : 'کار منتظری ندارید. همه‌چیز مرتب است.'}</p>
         </div>
         <div className="d-quick">
-          {money && <button type="button" onClick={() => open('orders/history')}><Icon n="box" s={16} />همه‌ی سفارش‌ها</button>}
-          {money && <button type="button" onClick={() => open('customers/settings')}><Icon n="users" s={16} />مشتریان</button>}
-          {money && <button type="button" onClick={() => open('catalog/prices')}><Icon n="tag" s={16} />به‌روزرسانی قیمت</button>}
+          {money && <button type="button" className="main" onClick={() => open('orders/new')}><Icon n="receipt" s={16} />ثبت سفارش تلفنی</button>}
+          {money && <button type="button" onClick={() => open('growth/invite')}><Icon n="spark" s={16} />{role === 'ADMIN' ? 'جذب مشتری و خبر قیمت' : 'لینک دعوت من'}</button>}
+          {role === 'ADMIN' && <button type="button" onClick={() => open('catalog/prices')}><Icon n="tag" s={16} />به‌روزرسانی قیمت</button>}
           {!money && <button type="button" onClick={() => open('warehouse/queue')}><Icon n="truck" s={16} />صف انبار</button>}
         </div>
       </section>
@@ -141,8 +149,90 @@ export function DashboardPage() {
             <small className="num">{data.money.chequesDue7Count ? `${short(data.money.chequesDue7)} ریال` : 'چکی سررسید نمی‌شود'}</small>
           </button>
         )}
+        {money && (
+          <div className="d-kpi">
+            <span>سفارش از خود اپ</span>
+            <b className="num">{data.appShare === null ? '—' : `${fa(data.appShare)}٪`}</b>
+            <small>{data.appShare === null ? 'در ۳۰ روز اخیر سفارشی نبوده' : 'از سفارش‌های ۳۰ روز؛ بقیه تلفنی ثبت شده'}</small>
+          </div>
+        )}
         {!money && <div className="d-kpi"><span>مشتریان فعال</span><b className="num">{fa(data.customers)}</b><small>تأییدشده</small></div>}
       </section>
+
+      {money && (
+        <div className="d-grid">
+          <section className="card">
+            <div className="cardhead"><h2>{role === 'ADMIN' ? 'عملکرد کارشناس‌ها' : 'عملکرد من'}</h2><span className="muted small">۳۰ روز اخیر</span></div>
+            {data.perf.length === 0 ? <div className="d-empty">هنوز کارشناس فروشی تعریف نشده است.</div> : role === 'ADMIN' ? (
+              <div className="tablewrap"><table className="d-perf">
+                <thead><tr><th>کارشناس</th><th>فروش (ریال)</th><th>سفارش</th><th>از اپ</th><th>مشتری فعال</th><th>دعوت</th></tr></thead>
+                <tbody>{data.perf.map((a, i) => (
+                  <tr key={a.id}>
+                    <td><span className={`rk ${i === 0 && BigInt(a.sales) > 0n ? 'gold' : ''}`}>{fa(i + 1)}</span><b>{a.name}</b></td>
+                    <td className="num" title={`${fa(a.sales)} ریال`}>{short(a.sales)}</td>
+                    <td className="num">{fa(a.orders)}</td>
+                    <td className="num">{a.orders ? `${fa(Math.round((a.fromApp / a.orders) * 100))}٪` : '—'}</td>
+                    <td className="num">{fa(a.active)}<span className="muted"> / {fa(a.customers)}</span></td>
+                    <td className="num">{fa(a.invited)}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            ) : (
+              <div className="d-mine">{data.perf.filter(a => a.id === me.id).map(a => (
+                <div key={a.id} className="grid4">
+                  <div><span>فروش مشتری‌های من</span><b className="num">{short(a.sales)}</b><small>ریال</small></div>
+                  <div><span>سفارش</span><b className="num">{fa(a.orders)}</b><small>{a.orders ? `${fa(Math.round((a.fromApp / a.orders) * 100))}٪ از اپ` : ''}</small></div>
+                  <div><span>مشتری فعال</span><b className="num">{fa(a.active)}</b><small>از {fa(a.customers)} مشتری</small></div>
+                  <div><span>با لینک من آمده‌اند</span><b className="num">{fa(a.invited)}</b><small>نفر</small></div>
+                </div>
+              ))}</div>
+            )}
+          </section>
+          {growth.data ? <InviteCard g={growth.data} compact /> : <section className="card"><div className="d-empty">…</div></section>}
+        </div>
+      )}
+
+      {money && (
+        <div className="d-grid3">
+          <section className="card">
+            <div className="cardhead"><h2>مشتری‌های خاموش</h2><span className="muted small num">{fa(data.quietCount)} مشتری بیش از ۳۰ روز سفارش نداده</span></div>
+            {data.quiet.length === 0 ? <div className="d-empty">همه‌ی مشتری‌ها در ۳۰ روز اخیر سفارش داده‌اند 👏</div> : (
+              <ul className="d-list">{data.quiet.map(c => (
+                <li key={c.id}>
+                  <span><b>{c.name}</b><small className="num">{c.last ? `آخرین سفارش ${new Date(c.last).toLocaleDateString('fa-IR', { day: 'numeric', month: 'long' })}` : 'هنوز سفارشی نداده'}{c.city ? ` · ${c.city}` : ''}{role === 'ADMIN' && c.agent ? ` · ${c.agent}` : ''}</small></span>
+                  <button type="button" className="btn sm" onClick={() => open('customers/settings', c.id)}>پرونده</button>
+                </li>
+              ))}</ul>
+            )}
+            {data.quiet.length > 0 && <p className="d-tip">یک تماس یا پیام کوتاه، یا ارسال «خبر تغییر قیمت»، مشتری خاموش را برمی‌گرداند.</p>}
+          </section>
+          <section className="card">
+            <div className="cardhead"><h2>چک‌های ۷ روز آینده</h2><button type="button" className="btn sm" onClick={() => open('customers/accounts')}>حساب‌ها</button></div>
+            {data.cheques.length === 0 ? <div className="d-empty">چکی در ۷ روز آینده سررسید نمی‌شود.</div> : (
+              <ul className="d-list">{data.cheques.map(c => {
+                const late = new Date(c.dueDate) < new Date(new Date().toDateString());
+                return (
+                  <li key={c.id} className={late ? 'late' : ''}>
+                    <span><b>{c.customer.name}</b><small className="num">{late ? 'سررسید گذشته · ' : ''}{new Date(c.dueDate).toLocaleDateString('fa-IR', { weekday: 'short', day: 'numeric', month: 'long' })}{c.chequeNumber ? ` · ${fa(c.chequeNumber)}` : ''}</small></span>
+                    <b className="num">{short(c.amount)}</b>
+                  </li>
+                );
+              })}</ul>
+            )}
+          </section>
+          <section className="card">
+            <div className="cardhead"><h2>بالاتر از سقف اعتبار</h2></div>
+            {data.overLimit.length === 0 ? <div className="d-empty">{role === 'ADMIN' ? 'بدهی هیچ مشتری‌ای از سقفش نگذشته است. سقف را در پرونده‌ی مشتری ← مشخصات تعیین کنید.' : 'بدهی هیچ‌کدام از مشتری‌های شما از سقف نگذشته است.'}</div> : (
+              <ul className="d-list">{data.overLimit.map(c => (
+                <li key={c.id} className="late">
+                  <span><b>{c.name}</b><small className="num">سقف {short(c.limit)} · بدهی {short(c.balance)}</small></span>
+                  <button type="button" className="btn sm" onClick={() => open('customers/accounts', c.id)}>حساب</button>
+                </li>
+              ))}</ul>
+            )}
+          </section>
+        </div>
+      )}
 
       <div className="d-grid">
         <section className="card">

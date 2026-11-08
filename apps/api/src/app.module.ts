@@ -1,3 +1,4 @@
+import { AdminGrowthController, InternalReferralController, ShareController, WeeklyReport } from './growth/growth';
 import { Module } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
 import { HealthController } from './health/health.controller';
@@ -27,7 +28,7 @@ import { AssistantService } from './assistant/assistant.service';
 import { SalesAgentService } from './assistant/sales-agent.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController, AdminDocumentsController, MyDocumentsController],
-  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService, DocumentsService],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController, AdminDocumentsController, MyDocumentsController, AdminGrowthController, InternalReferralController, ShareController],
+  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService, DocumentsService, WeeklyReport],
 })
 export class AppModule {}

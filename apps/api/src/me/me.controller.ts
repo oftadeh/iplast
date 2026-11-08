@@ -30,8 +30,10 @@ export class MeController {
         },
       },
     });
+    const bonus = Number((await this.prisma.setting.findUnique({ where: { key: 'sale.appBonusPct' } }))?.value ?? 0);
     return {
       id: user.id, firstName: user.firstName, lastName: user.lastName, username: user.username, staffRole: user.staffRole,
+      appBonusPct: Number.isFinite(bonus) && bonus > 0 && bonus <= 20 ? bonus : 0,
       accounts: user.memberships.map(m => ({
         customerId: m.customerId, role: m.role, name: m.customer.name, isApproved: m.customer.isApproved,
         sale: this.sale(m.customer.terms, m.customer.categoryDiscounts),

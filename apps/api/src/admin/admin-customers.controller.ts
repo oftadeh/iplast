@@ -4,7 +4,7 @@ import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { audit } from '../common/audit';
-import { int, req, telegramId } from '../common/validate';
+import { int, req, rialOf, telegramId } from '../common/validate';
 
 const TYPES: CustomerType[] = ['RETAIL', 'DEALER', 'CONTRACTOR'];
 const ROLES: MemberRole[] = ['OWNER', 'BUYER', 'VIEWER'];
@@ -51,10 +51,11 @@ export class AdminCustomersController {
   }
 
   @Patch(':id')
-  async update(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { name?: string; city?: string; address?: string; type?: string; isApproved?: boolean; supportId?: string | null }) {
+  async update(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { name?: string; city?: string; address?: string; type?: string; isApproved?: boolean; supportId?: string | null; creditLimit?: string | number | null }) {
     const before = await this.prisma.customer.findUnique({ where: { id } });
     if (!before) throw new NotFoundException();
     if (b.supportId !== undefined && b.supportId !== before.supportId && s.staff !== 'ADMIN') throw new ForbiddenException('تعیین کارشناس فقط با مدیر است');
+    if (b.creditLimit !== undefined && s.staff !== 'ADMIN') throw new ForbiddenException('تعیین سقف اعتبار فقط با مدیر است');
     if (b.supportId) {
       const sup = await this.prisma.user.findUnique({ where: { id: b.supportId } });
       if (!sup?.staffRole) throw new BadRequestException('پشتیبان نامعتبر است');
@@ -68,6 +69,7 @@ export class AdminCustomersController {
         ...(b.type !== undefined && TYPES.includes(b.type as CustomerType) ? { type: b.type as CustomerType } : {}),
         ...(b.isApproved !== undefined ? { isApproved: !!b.isApproved } : {}),
         ...(b.supportId !== undefined ? { supportId: b.supportId || null } : {}),
+        ...(b.creditLimit !== undefined ? { creditLimit: b.creditLimit === null || String(b.creditLimit).trim() === '' ? null : rialOf(b.creditLimit, 'سقف اعتبار', true) } : {}),
       },
     });
     await audit(this.prisma, s.sub, 'customer.update', 'Customer', id, before, c);

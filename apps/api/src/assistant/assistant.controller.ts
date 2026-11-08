@@ -10,11 +10,11 @@ import { AssistantService } from './assistant.service';
 import { AccountingService } from '../accounting/accounting';
 import { SalesAgentService } from './sales-agent.service';
 
-function checkKey(key: string | undefined) {
+export function checkKey(key: string | undefined) {
   const want = process.env.INTERNAL_KEY ?? '';
   if (!want || !key || key.length !== want.length || !timingSafeEqual(Buffer.from(key), Buffer.from(want))) throw new UnauthorizedException();
 }
-const tgId = (v: unknown) => { if (!/^\d{4,15}$/.test(String(v ?? ''))) throw new BadRequestException(); return BigInt(String(v)); };
+export const tgId = (v: unknown) => { if (!/^\d{4,15}$/.test(String(v ?? ''))) throw new BadRequestException(); return BigInt(String(v)); };
 
 /** The customer's default account (for personal prices), if they belong to exactly one or pass one they belong to. */
 async function accountOf(prisma: PrismaService, userId: string, customerId?: string) {

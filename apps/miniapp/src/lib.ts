@@ -33,7 +33,7 @@ export interface Account {
 }
 export type PayMode = 'CASH' | 'TERM';
 export interface Sale { modes: PayMode[]; cashPct: number; termPct: number; termMonths: number; categories: Record<string, { name: string; cash: number; term: number }> }
-export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
+export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; appBonusPct?: number; accounts: Account[] }
 export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice?: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
 export interface Order {
   id: string; number: number; status: string; statusFa: string; createdAt: string; note: string | null; total: string;

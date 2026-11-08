@@ -392,3 +392,45 @@ fieldset.plain{border:0;padding:0;margin:0;min-width:0}
 @media (max-width:1100px){.d-grid{grid-template-columns:1fr}.d-pipe ol{grid-template-columns:repeat(3,1fr);gap:10px}.d-pipe li i{display:none}}
 @media (max-width:600px){.d-hero{padding:18px 16px}.d-hero h1{font-size:20px}.d-pipe ol{grid-template-columns:repeat(2,1fr);padding:12px}.d-tasks{grid-template-columns:1fr 1fr}.d-task{padding:12px}.d-task>b{font-size:22px}.d-chart{gap:3px;padding-inline:10px}.d-chart span{font-size:9.5px}.d-kpis{grid-template-columns:1fr 1fr}.d-kpi>b{font-size:19px}}
 @media (max-width:600px){.d-table th:nth-child(3),.d-table td:nth-child(3),.d-table th:nth-child(6),.d-table td:nth-child(6){display:none}}
+.creditwarn{flex-basis:100%;background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:12.5px}
+
+/* ── growth & phone order ── */
+.invite-body{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:14px 16px;flex-wrap:wrap}
+.invite-body>.stack{flex:1;min-width:220px;gap:8px}
+.linkbox{display:block;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.qrbox{display:grid;justify-items:center;gap:6px}
+.qr{border-radius:10px;border:1px solid var(--line);background:#fff;padding:6px;display:block}
+.invite.compact .invite-body{padding:12px 14px}
+.neworder{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:16px;align-items:start}
+.neworder>*{min-width:0}
+@media (max-width:1000px){.neworder{grid-template-columns:1fr}}
+.pick{display:grid;gap:4px;max-height:280px;overflow:auto}
+.pick button{display:flex;justify-content:space-between;gap:8px;text-align:right;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 10px}
+.pick button:hover{border-color:var(--brand)}.pick small{color:var(--muted)}
+.searchpick{position:relative}
+.hits{position:absolute;inset:100% 0 auto 0;z-index:5;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 30px rgba(16,24,40,.14);max-height:320px;overflow:auto;display:grid}
+.hits button{display:flex;justify-content:space-between;gap:10px;text-align:right;border:0;border-bottom:1px solid var(--line);background:none;padding:9px 12px}
+.hits button:hover{background:var(--drop-soft)}
+.lines .qty{width:72px;padding:5px 8px}.lines .unit{width:auto;padding:5px 6px;margin-inline-start:4px}
+.lines td{vertical-align:middle}
+.d-quick button.main{background:#fff;color:var(--ink);border-color:#fff}.d-quick button.main:hover{background:#E8EEFC}
+.d-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.d-grid3>*{min-width:0}
+@media (max-width:1200px){.d-grid3{grid-template-columns:1fr 1fr}}
+@media (max-width:760px){.d-grid3{grid-template-columns:1fr}}
+.d-list{list-style:none;margin:0;padding:4px 0}
+.d-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line)}
+.d-list li:last-child{border-bottom:0}
+.d-list li>span{display:grid;min-width:0}.d-list li>span b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.d-list li small{color:var(--muted);font-size:11.5px}
+.d-list li.late{box-shadow:inset -3px 0 0 var(--bad)}.d-list li.late small{color:var(--bad)}
+.d-tip{margin:0;padding:8px 16px 12px;font-size:11.5px;color:var(--muted)}
+.d-perf td,.d-perf th{white-space:nowrap}
+.d-perf .rk{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;background:var(--surface-2);font-size:11px;font-weight:800;color:var(--muted);margin-inline-end:8px}
+.d-perf .rk.gold{background:#F6C344;color:#4A3500}
+.d-mine .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
+.d-mine .grid4>div{background:var(--surface);padding:14px 16px;display:grid;gap:2px}
+.d-mine span{color:var(--muted);font-size:12px}.d-mine b{font-size:22px;font-weight:900}.d-mine small{color:var(--muted);font-size:11.5px}
+@media (max-width:600px){.d-mine .grid4{grid-template-columns:1fr 1fr}}
+a.btn{text-decoration:none;color:inherit;display:inline-flex;align-items:center;justify-content:center}a.btn.primary{color:#fff}
+.seg button[aria-pressed="true"]{background:var(--brand);color:#fff;font-weight:700}.searchpick .in{width:100%}.seg{justify-self:start}
+.d-mine b{font-size:19px;white-space:nowrap}

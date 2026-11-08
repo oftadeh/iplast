@@ -146,12 +146,25 @@ bot.command('start', async ctx => {
     );
     return;
   }
+  // came through a staff member's invite link: t.me/<bot>?start=ref_<code>
+  const payload = typeof ctx.match === 'string' ? ctx.match.trim() : '';
+  let agent: string | null = null;
+  if (/^ref_[a-f0-9]{6,20}$/.test(payload) && ctx.from) {
+    try {
+      const r = await internal<{ ok: boolean; agent?: string | null }>('/internal/referral', { telegramId: String(ctx.from.id), code: payload.slice(4), firstName: ctx.from.first_name, lastName: ctx.from.last_name, username: ctx.from.username });
+      if (r.ok) agent = r.agent ?? 'اصفهان پلاست';
+    } catch (e) { console.error('referral', e); }
+  }
   await ctx.reply(
     'سلام! به ربات فروش اصفهان پلاست خوش آمدید.\n\n' +
+    (agent ? `کارشناس فروش شما: ${agent}\n\n` : '') +
     'می‌توانید سفارش را همین‌جا بنویسید، ویس بفرستید، یا عکس و PDF لیست خریدتان را ارسال کنید تا کارشناس فروش بررسی کند.\n' +
     (MINIAPP_URL ? 'محصولات، قیمت‌ها، سفارش‌ها و حساب شما در پنل کاربری است.' : 'مثلاً بنویسید: «دو کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰». پیش‌نویس سفارش با قیمت روز آماده می‌شود و با یک دکمه ثبت می‌کنید.'),
     { reply_markup: openAppKeyboard() },
   );
+  // the short how-to video the manager set (sent to the bot with the caption «#آموزش»)
+  const intro = await prisma.setting.findUnique({ where: { key: 'bot.introVideo' } }).catch(() => null);
+  if (intro && typeof intro.value === 'string') await ctx.replyWithVideo(intro.value, { caption: '🎬 آموزش کوتاه ثبت سفارش در پنل کاربری' }).catch(e => console.error('intro video', e));
 });
 
 bot.command('id', ctx => ctx.reply(`آیدی عددی شما: ${ctx.from?.id}`));
@@ -245,6 +258,16 @@ bot.callbackQuery(/^pay:([a-z0-9]{10,40}):(ok|no)$/, async ctx => {
 });
 
 // Staff replying (Telegram "reply") to a copied customer message → the answer goes back through the bot.
+// A manager sets the intro video: send a video to the bot with «#آموزش» in the caption
+bot.on('message:video', async (ctx, next) => {
+  const cap = ctx.message.caption ?? '';
+  if (!/#آموزش|#intro/i.test(cap) || !ctx.from) return next();
+  const me = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) }, select: { staffRole: true, isActive: true } });
+  if (me?.staffRole !== 'ADMIN' || !me.isActive) return next();
+  await prisma.setting.upsert({ where: { key: 'bot.introVideo' }, update: { value: ctx.message.video.file_id }, create: { key: 'bot.introVideo', value: ctx.message.video.file_id } });
+  await ctx.reply('✅ این ویدیو از این به بعد بعد از /start برای مشتری‌ها فرستاده می‌شود. برای حذفش از پنل ← جذب مشتری اقدام کنید.');
+});
+
 bot.on('message', async (ctx, next) => {
   const from = ctx.from?.id;
   const replyTo = ctx.message.reply_to_message;

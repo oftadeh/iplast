@@ -4,7 +4,9 @@ import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramService } from '../common/telegram.service';
-import { OrdersService, ProformaEdit, STATUS_FA } from '../orders/orders.service';
+import { OrdersService, OrderInput, ProformaEdit, STATUS_FA } from '../orders/orders.service';
+import { quote, saleTerms, modeFor } from '../orders/pricing';
+import { ForbiddenException } from '@nestjs/common';
 import { audit } from '../common/audit';
 
 const STATUSES = Object.keys(STATUS_FA) as OrderStatus[];
@@ -34,7 +36,44 @@ export class AdminOrdersController {
     };
   }
 
-  @Get(':id') one(@Session() s: SessionClaims, @Param('id') id: string) { return this.orders.get(s.sub, id, true); }
+  /** Sizes for the agent's «ثبت سفارش برای مشتری» form, priced for that customer and sale type. */
+  @Get('variants')
+  @Staff('ADMIN', 'SALES')
+  async variants(@Query('q') q?: string, @Query('customerId') customerId?: string, @Query('mode') mode?: string) {
+    const words = (q ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 5);
+    if (!words.length) return [];
+    const vs = await this.prisma.variant.findMany({
+      where: { isActive: true, family: { isActive: true }, AND: words.map(w => ({ OR: [{ title: { contains: w } }, { family: { name: { contains: w } } }, { family: { synonyms: { some: { term: { contains: w } } } } }, { options: { some: { value: { contains: w } } } }] })) },
+      take: 40, orderBy: [{ family: { sortOrder: 'asc' } }, { sku: 'asc' }],
+      include: { options: true, family: { include: { axes: { orderBy: { sortOrder: 'asc' } } } } },
+    });
+    const terms = customerId ? await saleTerms(this.prisma, customerId) : undefined;
+    const qt = await quote(this.prisma, vs.map(v => v.id), customerId ?? null, terms ? modeFor(terms, mode) : 'CASH', terms);
+    return vs.map(v => {
+      const f = v.family;
+      const label = f.axes.length ? f.axes.map(a => v.options.find(o => o.axisId === a.id)?.value ?? '').filter(Boolean).join(' × ') : v.title;
+      const x = qt.get(v.id);
+      return { variantId: v.id, name: f.name, label, perPack: v.perPack, packName: f.packName, unitName: f.unitName, list: x?.listPrice?.toString() ?? null, price: x?.unitPrice?.toString() ?? null };
+    });
+  }
+
+  /** A phone order the agent enters for the customer; it then follows the normal proforma steps. */
+  @Post()
+  @Staff('ADMIN', 'SALES')
+  async place(@Session() s: SessionClaims, @Body() b: OrderInput) {
+    const c = await this.prisma.customer.findUnique({ where: { id: String(b?.customerId ?? '-') } });
+    if (!c) throw new BadRequestException('مشتری را انتخاب کنید');
+    if (s.staff === 'SALES' && c.supportId && c.supportId !== s.sub) throw new ForbiddenException('این مشتری کارشناس دیگری دارد');
+    const o = await this.orders.create(s.sub, { ...b, idempotencyKey: undefined }, 'admin');
+    await audit(this.prisma, s.sub, 'order.placeForCustomer', 'Order', o.id, null, { customerId: c.id, items: b.items?.length ?? 0 });
+    return o;
+  }
+
+  @Get(':id')
+  async one(@Session() s: SessionClaims, @Param('id') id: string) {
+    const o = await this.orders.get(s.sub, id, true);
+    return { ...o, credit: await this.orders.credit(o.customerId, o.payable === undefined ? 0n : BigInt(o.payable)) };
+  }
 
   /** Approval steps: sales_ok (sales agent), final_ok (manager), fix (with a note), reject. */
   @Post(':id/decide')
