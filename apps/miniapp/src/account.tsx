@@ -32,7 +32,7 @@ export function AccountScreen() {
   return (
     <>
       <div className="top"><h1>حساب من</h1></div>
-      {authed === false && <div className="empty">برای دیدن حساب، فروشگاه را از داخل ربات تلگرام باز کنید.</div>}
+      {authed === false && <div className="empty">برای دیدن حساب، پنل کاربری را از داخل ربات تلگرام باز کنید.</div>}
       {a.error && <div className="empty">{a.error}</div>}
       {a.error && authed && sendBtn}
       {authed && !a.data && !a.error && <div className="pad"><div className="skel" style={{ height: 220 }} /></div>}

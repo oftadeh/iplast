@@ -67,7 +67,7 @@ export class AdminBroadcastController {
     const row = await this.prisma.broadcast.create({ data: { audience, customerId: audience === 'customer' ? b.customerId : null, text, withButton, recipients: to.length, createdById: s.sub } });
     await audit(this.prisma, s.sub, 'broadcast.send', 'Broadcast', row.id, null, { audience, customerId: b.customerId, recipients: to.length });
     const body = `${forCustomers ? '📢 پیام اصفهان پلاست' : '📢 پیام مدیریت'}\n\n${text}`;
-    const kb = withButton ? { inline_keyboard: [[{ text: '🛒 باز کردن فروشگاه', web_app: { url: process.env.MINIAPP_URL! } }]] } : undefined;
+    const kb = withButton ? { inline_keyboard: [[{ text: '📱 ورود به پنل کاربری', web_app: { url: process.env.MINIAPP_URL! } }]] } : undefined;
     // Sent in the background (Telegram allows about 30 messages a second); the panel reads the counts back.
     void (async () => {
       let sent = 0, failed = 0;

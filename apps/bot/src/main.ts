@@ -111,13 +111,45 @@ async function confirmDraft(ctx: Context, draftId: string, companyName?: string)
   return true; // the API itself tells the customer «سفارش #… ثبت شد» and sends the order to sales
 }
 
-const openAppKeyboard = () => MINIAPP_URL ? new InlineKeyboard().webApp('🛒 باز کردن فروشگاه', MINIAPP_URL) : undefined;
+const ADMIN_URL = MINIAPP_URL ? `${MINIAPP_URL.replace(/\/+$/, '')}/admin/` : '';
+const openAppKeyboard = () => MINIAPP_URL ? new InlineKeyboard().webApp('📱 ورود به پنل کاربری', MINIAPP_URL) : undefined;
+
+/**
+ * The «menu» button beside the message box: staff get their own panel, everyone else the customer panel (the bot's
+ * default). Set per chat, and reset when someone stops being staff.
+ */
+const menuSet = new Set<number>();
+async function syncMenus() {
+  if (!MINIAPP_URL) return;
+  const { panel } = await staff();
+  for (const id of panel) {
+    if (menuSet.has(id)) continue;
+    try { await bot.api.setChatMenuButton({ chat_id: id, menu_button: { type: 'web_app', text: 'پنل مدیریت', web_app: { url: ADMIN_URL } } }); menuSet.add(id); }
+    catch { /* never opened the bot yet: set on their /start */ }
+  }
+  for (const id of [...menuSet]) {
+    if (panel.has(id)) continue;
+    await bot.api.setChatMenuButton({ chat_id: id, menu_button: { type: 'default' } }).catch(() => {});
+    menuSet.delete(id);
+  }
+}
 
 bot.command('start', async ctx => {
+  const isStaff = !!ctx.from && (await staff()).panel.has(ctx.from.id);
+  if (isStaff && ADMIN_URL) {
+    menuSet.delete(ctx.from!.id); await syncMenus().catch(() => {});
+    await ctx.reply(
+      'سلام! این ربات برای شما پنل مدیریت اصفهان پلاست را باز می‌کند.\n\n' +
+      'سفارش‌های منتظر تأیید، پیام مشتری‌ها و اعلان‌ها همین‌جا به شما می‌رسد.\n' +
+      `روی کامپیوتر: ${ADMIN_URL}`,
+      { link_preview_options: { is_disabled: true }, reply_markup: new InlineKeyboard().webApp('⚙️ ورود به پنل مدیریت', ADMIN_URL) },
+    );
+    return;
+  }
   await ctx.reply(
     'سلام! به ربات فروش اصفهان پلاست خوش آمدید.\n\n' +
     'می‌توانید سفارش را همین‌جا بنویسید، ویس بفرستید، یا عکس و PDF لیست خریدتان را ارسال کنید تا کارشناس فروش بررسی کند.\n' +
-    (MINIAPP_URL ? 'برای دیدن محصولات و قیمت‌ها، فروشگاه را باز کنید.' : 'مثلاً بنویسید: «دو کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰». پیش‌نویس سفارش با قیمت روز آماده می‌شود و با یک دکمه ثبت می‌کنید.'),
+    (MINIAPP_URL ? 'محصولات، قیمت‌ها، سفارش‌ها و حساب شما در پنل کاربری است.' : 'مثلاً بنویسید: «دو کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰». پیش‌نویس سفارش با قیمت روز آماده می‌شود و با یک دکمه ثبت می‌کنید.'),
     { reply_markup: openAppKeyboard() },
   );
 });
@@ -129,7 +161,7 @@ bot.command('admin', async ctx => {
   if (!ctx.from || !(await staff()).panel.has(ctx.from.id)) return ctx.reply('این بخش فقط برای کارکنان اصفهان پلاست است.');
   if (!MINIAPP_URL) return ctx.reply('پنل مدیریت هنوز روی سرور فعال نشده است.');
   // the admin panel is its own app, separate from the store: open it here in Telegram, or in a browser on a computer
-  const adminUrl = `${MINIAPP_URL.replace(/\/+$/, '')}/admin/`;
+  const adminUrl = ADMIN_URL;
   await ctx.reply(`پنل مدیریت اصفهان پلاست\nروی کامپیوتر: ${adminUrl}\n(ورود با آیدی عددی تلگرام و کدی که همین ربات می‌فرستد)`, {
     link_preview_options: { is_disabled: true },
     reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', adminUrl),
@@ -314,7 +346,11 @@ bot.on('message', async ctx => {
 bot.catch(err => console.error('bot error', err.error));
 
 async function main() {
-  if (MINIAPP_URL) await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'فروشگاه', web_app: { url: MINIAPP_URL } } });
+  if (MINIAPP_URL) {
+    await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'پنل کاربری', web_app: { url: MINIAPP_URL } } });
+    await syncMenus().catch(e => console.error('menu sync', e));
+    setInterval(() => syncMenus().catch(() => {}), 120_000);
+  }
   await bot.start({ onStart: me => console.log(`@${me.username} started`) });
 }
 main();

@@ -32,6 +32,13 @@ export class AdminDashboardController {
     const days30 = new Date(Date.now() - 30 * 864e5);
     const week = new Date(Date.now() + 7 * 864e5);
     const unanswered = await p.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Conversation" c WHERE c."isOpen" AND c."handoffAt" IS NOT NULL AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
+    const days60 = new Date(Date.now() - 60 * 864e5);
+    const [sales30, salesPrev, top] = await Promise.all([
+      p.invoice.aggregate({ where: { status: 'ISSUED', issuedAt: { gte: days30 } }, _sum: { total: true }, _count: true }),
+      p.invoice.aggregate({ where: { status: 'ISSUED', issuedAt: { gte: days60, lt: days30 } }, _sum: { total: true } }),
+      p.invoice.groupBy({ by: ['customerId'], where: { status: 'ISSUED', issuedAt: { gte: days30 } }, _sum: { total: true }, orderBy: { _sum: { total: 'desc' } }, take: 5 }),
+    ]);
+    const topNames = await p.customer.findMany({ where: { id: { in: top.map(t => t.customerId) } }, select: { id: true, name: true } });
     const [byStatus, today, month, newCustomers, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
       p.order.groupBy({ by: ['status'], _count: true }),
       p.order.count({ where: { createdAt: { gte: startOfDay } } }),
@@ -44,7 +51,7 @@ export class AdminDashboardController {
       p.payment.aggregate({ where: { status: 'CLEARED' }, _sum: { amount: true } }),
       p.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' }, select: { id: true, title: true, publishedAt: true, _count: { select: { prices: { where: { status: 'INQUIRY' } } } } } }),
       p.variant.count(),
-      p.order.findMany({ orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, number: true, status: true, createdAt: true, customer: { select: { name: true } }, _count: { select: { items: true } } } }),
+      p.order.findMany({ orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, number: true, status: true, createdAt: true, payMode: true, discount: true, shipping: true, customer: { select: { name: true } }, items: { select: { unitPrice: true, quantity: true } }, _count: { select: { items: true } } } }),
       p.$queryRaw<{ d: Date; n: bigint }[]>`SELECT date_trunc('day', "createdAt") AS d, count(*)::bigint AS n FROM "Order" WHERE "createdAt" >= ${new Date(Date.now() - 14 * 864e5)} GROUP BY 1 ORDER BY 1`,
     ]);
     const c = Object.fromEntries(byStatus.map(x => [x.status, x._count])) as Record<string, number>;
@@ -65,7 +72,12 @@ export class AdminDashboardController {
       catalog: { variants, inquiry: list?._count.prices ?? 0, activeList: list ? { id: list.id, title: list.title, publishedAt: list.publishedAt } : null },
       customers,
       daily: daily.map(r => ({ d: r.d, n: Number(r.n) })),
-      recent,
+      sales: { last30: sales30._sum.total ?? 0n, count30: sales30._count, prev30: salesPrev._sum.total ?? 0n },
+      top: top.map(t => ({ id: t.customerId, name: topNames.find(c => c.id === t.customerId)?.name ?? '—', total: t._sum.total ?? 0n })),
+      recent: recent.map(({ items, discount, shipping, ...o }) => ({
+        ...o,
+        value: items.some(i => i.unitPrice === null) ? null : items.reduce((a, i) => a + (i.unitPrice ?? 0n) * BigInt(i.quantity), 0n) - discount + shipping,
+      })),
     };
   }
 }
