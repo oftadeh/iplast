@@ -104,7 +104,7 @@ async function confirmDraft(ctx: Context, draftId: string, companyName?: string)
   const r = await internal<{ needName?: boolean; orderNumber?: number }>('/internal/assistant/confirm', { telegramId: String(from.id), draftId, companyName });
   if (r.needName) {
     awaitingName.set(from.id, { draftId, at: Date.now() });
-    await ctx.reply('این اولین سفارش شماست. نام فروشگاه یا شرکت‌تان را بنویسید تا سفارش ثبت شود.', { reply_markup: { force_reply: true, input_field_placeholder: 'نام فروشگاه یا شرکت' } });
+    await ctx.reply('📝 این اولین سفارش شماست.\nنام فروشگاه یا شرکت‌تان را بنویسید تا حساب شما ساخته و سفارش ثبت شود.', { reply_markup: { force_reply: true, input_field_placeholder: 'نام فروشگاه یا شرکت' } });
     return false;
   }
   awaitingName.delete(from.id);
@@ -134,14 +134,65 @@ async function syncMenus() {
   }
 }
 
+/** The extra discount for orders placed in the app (set in the admin panel), 0 when off. */
+async function appBonus() {
+  const v = Number((await prisma.setting.findUnique({ where: { key: 'sale.appBonusPct' } }).catch(() => null))?.value ?? 0);
+  return Number.isFinite(v) && v > 0 && v <= 20 ? v : 0;
+}
+const faNum = (n: number | string) => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]).replace('.', '٫');
+
+/** The customer's welcome: who we are, what the bot does, and how to start. */
+function welcomeText(firstName: string | undefined, agent: string | null, bonus: number) {
+  return [
+    `👋 ${firstName ? `${firstName} عزیز، ` : ''}به اصفهان پلاست خوش آمدید.`,
+    'تأمین لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری؛ فروش عمده.',
+    ...(agent ? ['', `👤 کارشناس فروش شما: ${agent}`] : []),
+    '',
+    'در این ربات:',
+    '🏷 قیمت روز هر کالا را با تخفیف و شرایط خودتان (نقدی یا مدت‌دار) می‌بینید',
+    '🛒 سفارش را در پنل کاربری ثبت می‌کنید، یا همین‌جا می‌نویسید و ویس می‌دهید',
+    '📄 پیش‌فاکتور رسمی را با یک دکمه تأیید می‌کنید',
+    '🚚 ارسال بار، فاکتورها و سررسید چک‌ها را دنبال می‌کنید',
+    ...(bonus ? ['', `🎁 سفارش از پنل کاربری ${faNum(bonus)}٪ تخفیف بیشتر دارد.`] : []),
+    '',
+    MINIAPP_URL ? 'برای شروع «ورود به پنل کاربری» را بزنید.' : 'برای شروع سفارش‌تان را بنویسید.',
+    'یا همین حالا بنویسید، مثلاً: «۲ کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰»',
+    '',
+    'راهنما: /help',
+  ].join('\n');
+}
+
+/** What people see on the bot's profile before they start, and the command menu. */
+async function setupProfile() {
+  await bot.api.setMyDescription(
+    'اصفهان پلاست | فروش عمده‌ی لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری\n\n' +
+    '🏷 قیمت روز با تخفیف اختصاصی شما (نقدی و مدت‌دار)\n' +
+    '🛒 ثبت سفارش در پنل کاربری، یا با متن، ویس و عکس لیست خرید\n' +
+    '📄 پیش‌فاکتور رسمی، پیگیری ارسال بار و حساب مالی\n\n' +
+    'برای شروع «Start» را بزنید.',
+  ).catch(e => console.error('description', e));
+  await bot.api.setMyShortDescription('سفارش عمده‌ی لوله و اتصالات اصفهان پلاست: قیمت روز با تخفیف شما، پیش‌فاکتور و پیگیری بار').catch(e => console.error('short description', e));
+  await bot.api.setMyCommands([
+    { command: 'start', description: 'شروع و ورود به پنل' },
+    { command: 'help', description: 'راهنمای ثبت سفارش' },
+    { command: 'id', description: 'آیدی عددی من' },
+  ]).catch(e => console.error('commands', e));
+}
+
 bot.command('start', async ctx => {
   const isStaff = !!ctx.from && (await staff()).panel.has(ctx.from.id);
   if (isStaff && ADMIN_URL) {
     menuSet.delete(ctx.from!.id); await syncMenus().catch(() => {});
+    const role = (await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from!.id) }, select: { staffRole: true } }))?.staffRole;
+    const roleFa = role === 'ADMIN' ? 'مدیر ارشد' : role === 'WAREHOUSE' ? 'انبار' : 'کارشناس فروش';
     await ctx.reply(
-      'سلام! این ربات برای شما پنل مدیریت اصفهان پلاست را باز می‌کند.\n\n' +
-      'سفارش‌های منتظر تأیید، پیام مشتری‌ها و اعلان‌ها همین‌جا به شما می‌رسد.\n' +
-      `روی کامپیوتر: ${ADMIN_URL}`,
+      `👋 سلام ${ctx.from!.first_name ?? ''}، به پنل ${roleFa} اصفهان پلاست خوش آمدید.\n\n` +
+      '🔔 هر کاری که منتظر شماست همین‌جا می‌رسد و با دکمه‌ی زیر همان پیام انجامش می‌دهید:\n' +
+      (role === 'WAREHOUSE'
+        ? '• سفارش‌های تأییدشده برای آماده‌سازی و ارسال\n• ثبت ارسال بار و تحویل به مشتری\n'
+        : '• پیش‌فاکتورهای تازه برای قیمت‌گذاری و تأیید\n• پیام مشتری‌ها (با Reply جواب بدهید)\n• رسیدهای پرداخت و یادآوری سررسید چک‌ها\n' + (role === 'ADMIN' ? '• تأیید نهایی سفارش‌ها و گزارش هفتگی فروش\n' : '')) +
+      '\n⚙️ پنل مدیریت: دکمه‌ی زیر، یا دکمه‌ی «پنل مدیریت» کنار جای تایپ.\n' +
+      `💻 روی کامپیوتر: ${ADMIN_URL}\n(ورود با آیدی عددی تلگرام و کد یک‌بارمصرفی که همین ربات می‌فرستد)`,
       { link_preview_options: { is_disabled: true }, reply_markup: new InlineKeyboard().webApp('⚙️ ورود به پنل مدیریت', ADMIN_URL) },
     );
     return;
@@ -155,27 +206,29 @@ bot.command('start', async ctx => {
       if (r.ok) agent = r.agent ?? 'اصفهان پلاست';
     } catch (e) { console.error('referral', e); }
   }
-  await ctx.reply(
-    'سلام! به ربات فروش اصفهان پلاست خوش آمدید.\n\n' +
-    (agent ? `کارشناس فروش شما: ${agent}\n\n` : '') +
-    'می‌توانید سفارش را همین‌جا بنویسید، ویس بفرستید، یا عکس و PDF لیست خریدتان را ارسال کنید تا کارشناس فروش بررسی کند.\n' +
-    (MINIAPP_URL ? 'محصولات، قیمت‌ها، سفارش‌ها و حساب شما در پنل کاربری است.' : 'مثلاً بنویسید: «دو کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰». پیش‌نویس سفارش با قیمت روز آماده می‌شود و با یک دکمه ثبت می‌کنید.'),
-    { reply_markup: openAppKeyboard() },
-  );
+  await ctx.reply(welcomeText(ctx.from?.first_name, agent, await appBonus()), { reply_markup: openAppKeyboard() });
   // the short how-to video the manager set (sent to the bot with the caption «#آموزش»)
   const intro = await prisma.setting.findUnique({ where: { key: 'bot.introVideo' } }).catch(() => null);
   if (intro && typeof intro.value === 'string') await ctx.replyWithVideo(intro.value, { caption: '🎬 آموزش کوتاه ثبت سفارش در پنل کاربری' }).catch(e => console.error('intro video', e));
 });
 
-bot.command('id', ctx => ctx.reply(`آیدی عددی شما: ${ctx.from?.id}`));
+bot.command('id', ctx => ctx.reply(`🆔 آیدی عددی تلگرام شما: ${ctx.from?.id}\nبرای عضویت در حساب شرکت، این عدد را برای کارشناس فروش یا مدیر حساب‌تان بفرستید.`));
+
+bot.command('help', async ctx => {
+  const isStaff = !!ctx.from && (await staff()).panel.has(ctx.from.id);
+  await ctx.reply(isStaff
+    ? '📘 راهنمای کارکنان\n\n• پیش‌فاکتور تازه: با «تأیید کارشناس» یا «رد» زیر پیام تصمیم بگیرید؛ برای قیمت‌گذاری و تغییر اقلام، پنل مدیریت ← سفارش‌ها.\n• پیام مشتری: روی پیام کپی‌شده‌ی مشتری Reply بزنید تا جواب برایش برود.\n• سفارش تلفنی: پنل مدیریت ← سفارش‌ها ← ثبت سفارش تلفنی.\n• لینک دعوت شما: پنل مدیریت ← جذب مشتری.\n\n/admin باز کردن پنل مدیریت · /id آیدی عددی شما'
+    : '📘 راهنمای ثبت سفارش\n\n1️⃣ «ورود به پنل کاربری» را بزنید؛ محصولات با قیمت و تخفیف خودتان آنجاست.\n2️⃣ کالا و تعداد را به سبد اضافه کنید، نوع خرید (نقدی یا مدت‌دار) را انتخاب و ثبت کنید.\n3️⃣ کارشناس فروش پیش‌فاکتور نهایی را می‌فرستد؛ با یک دکمه تأیید کنید.\n4️⃣ ارسال بار، فاکتور و سررسید چک‌ها همین‌جا اطلاع داده می‌شود.\n\n⚡️ راه سریع‌تر: سفارش را همین‌جا بنویسید یا ویس بدهید، مثل «۲ کارتن نری ۶۳ در ۲»؛ پیش‌نویس با قیمت روز آماده می‌شود.\n📎 عکس یا PDF لیست خرید هم قبول است.\n💬 هر سؤالی دارید همین‌جا بنویسید؛ کارشناس فروش جواب می‌دهد.',
+    { reply_markup: isStaff ? undefined : openAppKeyboard() });
+});
 
 // Staff: the admin panel opens inside Telegram, signed in with their own Telegram account
 bot.command('admin', async ctx => {
-  if (!ctx.from || !(await staff()).panel.has(ctx.from.id)) return ctx.reply('این بخش فقط برای کارکنان اصفهان پلاست است.');
+  if (!ctx.from || !(await staff()).panel.has(ctx.from.id)) return ctx.reply('🔒 این بخش مخصوص کارکنان اصفهان پلاست است.');
   if (!MINIAPP_URL) return ctx.reply('پنل مدیریت هنوز روی سرور فعال نشده است.');
   // the admin panel is its own app, separate from the store: open it here in Telegram, or in a browser on a computer
   const adminUrl = ADMIN_URL;
-  await ctx.reply(`پنل مدیریت اصفهان پلاست\nروی کامپیوتر: ${adminUrl}\n(ورود با آیدی عددی تلگرام و کدی که همین ربات می‌فرستد)`, {
+  await ctx.reply(`⚙️ پنل مدیریت اصفهان پلاست\n\n💻 روی کامپیوتر: ${adminUrl}\n(ورود با آیدی عددی تلگرام و کد یک‌بارمصرفی که همین ربات می‌فرستد)`, {
     link_preview_options: { is_disabled: true },
     reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', adminUrl),
   });
@@ -293,7 +346,7 @@ bot.on('message', async (ctx, next) => {
     ...(agent && !original.conversation.assigneeId ? { assigneeId: agent.id } : {}),
     ...(original.conversation.handoffAt ? {} : { handoffAt: new Date(), handoffReason: 'کارشناس وارد گفتگو شد' }),
   } });
-  await ctx.reply('✓ برای مشتری ارسال شد.');
+  await ctx.reply('✓ برای مشتری فرستاده شد.');
 });
 
 // Customer messages (text, voice, photo, PDF) → stored and copied to a sales-support agent.
@@ -354,15 +407,15 @@ bot.on('message', async ctx => {
     agent = await pickSupport(from.id);
   }
   const name = [from.first_name, from.last_name].filter(Boolean).join(' ') + (from.username ? ` (@${from.username})` : '');
-  if (!agent) { await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.'); return; }
+  if (!agent) { await ctx.reply('✅ پیام شما دریافت شد؛ کارشناس فروش به‌زودی پاسخ می‌دهد.'); return; }
   try {
-    await ctx.api.sendMessage(agent, `پیام از ${name}\nبرای پاسخ، روی پیام زیر Reply بزنید.`);
+    await ctx.api.sendMessage(agent, `💬 پیام تازه از ${name}\nبرای جواب، روی پیام زیر Reply بزنید.`);
     const copy = await ctx.api.copyMessage(agent, ctx.chat.id, m.message_id);
     if (savedId) await prisma.message.update({ where: { id: savedId }, data: { relayChatId: BigInt(agent), relayMessageId: copy.message_id } });
-    await ctx.reply('پیام شما برای کارشناس فروش ارسال شد.');
+    await ctx.reply('✅ پیام شما برای کارشناس فروش فرستاده شد؛ جوابش همین‌جا می‌آید.');
   } catch (e) {
     console.error('relay failed', agent, e);
-    await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
+    await ctx.reply('✅ پیام شما دریافت شد؛ کارشناس فروش به‌زودی پاسخ می‌دهد.');
   }
 });
 
@@ -374,6 +427,7 @@ async function main() {
     await syncMenus().catch(e => console.error('menu sync', e));
     setInterval(() => syncMenus().catch(() => {}), 120_000);
   }
+  await setupProfile();
   await bot.start({ onStart: me => console.log(`@${me.username} started`) });
 }
 main();
