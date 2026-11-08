@@ -14,15 +14,13 @@ export class AuthService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService) {}
 
   /**
-   * ADMIN_TELEGRAM_IDS only bootstraps the first senior manager. Once an active ADMIN exists, roles are
-   * managed in the panel, so the manager role can be handed over without editing the server's .env.
-   * If no active ADMIN is left, the IDs in .env become ADMIN again (recovery).
+   * ADMIN_TELEGRAM_IDS are the owners: always active senior managers, whatever the panel says, so they can never
+   * lock themselves out (for example by adding their own ID as a sales agent). Other managers are added in the panel.
    */
   async onModuleInit() {
     const ids = (process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x));
-    const hasAdmin = (await this.prisma.user.count({ where: { staffRole: 'ADMIN', isActive: true } })) > 0;
     for (const id of ids) {
-      await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: hasAdmin ? null : 'ADMIN' }, update: hasAdmin ? {} : { staffRole: 'ADMIN', isActive: true } });
+      await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'ADMIN' }, update: { staffRole: 'ADMIN', isActive: true } });
     }
     // SUPPORT_TELEGRAM_IDS are sales agents unless they already have a role
     for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x) && !ids.includes(x))) {

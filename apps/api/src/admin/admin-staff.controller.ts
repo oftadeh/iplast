@@ -24,6 +24,8 @@ export class AdminStaffController {
   async add(@Session() s: SessionClaims, @Body() b: { telegramId?: string; firstName?: string; role?: string }) {
     const tg = telegramId(b?.telegramId);
     const role = b.role === 'ADMIN' ? 'ADMIN' : b.role === 'WAREHOUSE' ? 'WAREHOUSE' : 'SALES';
+    const owners = (process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(x => x.trim());
+    if (role !== 'ADMIN' && (String(tg) === s.tg || owners.includes(String(tg)))) throw new BadRequestException('این آیدی مدیر ارشد است و نقشش عوض نمی‌شود');
     const u = await this.prisma.user.upsert({
       where: { telegramId: tg },
       create: { telegramId: tg, firstName: b.firstName?.slice(0, 60), staffRole: role },
@@ -38,6 +40,7 @@ export class AdminStaffController {
     const before = await this.prisma.user.findUnique({ where: { id } });
     if (!before?.staffRole) throw new NotFoundException();
     if (id === s.sub && (b.isActive === false || (b.role && b.role !== 'ADMIN'))) throw new BadRequestException('نمی‌توانید دسترسی خودتان را بردارید');
+    if ((process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).includes(String(before.telegramId)) && (b.isActive === false || (b.role && b.role !== 'ADMIN'))) throw new BadRequestException('این آیدی مدیر ارشد است و نقشش عوض نمی‌شود');
     const u = await this.prisma.user.update({
       where: { id },
       data: {

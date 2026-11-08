@@ -28,7 +28,7 @@ const AREAS: Area[] = [
   { id: 'home', title: 'پیشخوان', icon: 'home', roles: ALL, pages: [{ id: 'home/dashboard', title: 'پیشخوان', roles: ALL }] },
   { id: 'orders', title: 'سفارش‌ها', icon: 'check', roles: AS, pages: [
     { id: 'orders/agent', title: 'منتظر کارشناس', roles: AS, badge: 'salesReview' },
-    { id: 'orders/final', title: 'منتظر تأیید نهایی', roles: AS, badge: 'finalApproval' },
+    { id: 'orders/final', title: 'منتظر تأیید نهایی', roles: A, badge: 'finalApproval' },
     { id: 'orders/history', title: 'همه‌ی سفارش‌ها', roles: AS },
   ] },
   { id: 'chats', title: 'گفتگوها', icon: 'chat', roles: AS, pages: [
