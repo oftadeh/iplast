@@ -508,3 +508,22 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .videosheet{position:fixed;inset:0;z-index:100;background:rgba(10,2,6,.92);display:grid;place-items:center;padding:16px}
 .videosheet video{max-width:100%;max-height:calc(100vh - 80px);border-radius:18px;background:#000}
 .videosheet .close{position:absolute;top:calc(14px + env(safe-area-inset-top));left:16px;width:40px;height:40px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:18px}
+/* my orders on home, order actions, editing an order, companies */
+.myorders{display:grid;gap:10px;margin:0 16px}
+.mo{display:grid;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:12px 14px;cursor:pointer}
+.mo .r{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mo b small{font-weight:500;color:var(--muted);font-size:12px;margin-inline-start:4px}
+.mo>.r>small{color:var(--muted);font-size:12px}
+.oc{cursor:pointer}
+.oactions{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;margin:10px 16px 0}
+.oactions.compact{margin:4px 0 0}
+.oactions.compact .cta{height:38px;padding:0 10px;font-size:13.5px;justify-content:center}
+.oactions .cta{justify-content:center}
+.editbar{margin:0 16px 12px;padding:12px 14px;border-radius:16px;background:color-mix(in srgb,#F0A43C 16%,var(--surface));border:1px solid color-mix(in srgb,#F0A43C 45%,transparent);font-size:13px;line-height:1.8;display:grid;gap:8px}
+.editbar button{justify-self:start;border:0;background:none;color:var(--brand-2);font:inherit;font-weight:700;padding:0;cursor:pointer}
+.linkbtn{border:0;background:none;color:var(--brand-2);font:inherit;font-weight:700;padding:0;margin-top:6px;cursor:pointer;text-align:right}
+.companies{display:grid;gap:10px}
+.company{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:10px 12px}
+.company .av{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand-2) 14%,var(--surface));color:var(--brand-2);font-weight:900;flex:none}
+.company b{display:block;font-size:14.5px}.company small{color:var(--muted);font-size:12px}
+.joinform{display:grid;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:12px}

@@ -30,7 +30,7 @@ export interface Family extends Omit<FamilyCard, 'sizeCount' | 'minPrice'> {
   description: string | null; specs: [string, string][] | null; axes: Axis[]; variants: Variant[]; priceList: { id: string; title: string } | null;
 }
 export interface Account {
-  customerId: string; role: 'OWNER' | 'BUYER' | 'VIEWER'; name: string; isApproved: boolean;
+  customerId: string; code?: number; role: 'OWNER' | 'BUYER' | 'VIEWER'; name: string; isApproved: boolean;
   /** Set by the sales manager: «نقدی» % and «مدت‌دار» % off the list price, the months, and categories that differ. */
   sale: Sale;
   support: { firstName: string | null; lastName: string | null; username: string | null } | null;

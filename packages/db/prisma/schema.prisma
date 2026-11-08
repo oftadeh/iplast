@@ -216,6 +216,7 @@ model User {
   staffRole    StaffRole? // set for admins and sales-support agents
   isActive     Boolean          @default(true)
   memberships  CustomerMember[]
+  joinRequests JoinRequest[]    @relation("JoinRequests")
   supportOf    Customer[]       @relation("AssignedSupport")
   ordersPlaced Order[]          @relation("PlacedBy")
   createdAt    DateTime         @default(now())
@@ -254,7 +255,32 @@ model Customer {
   documents         Document[]
   categoryDiscounts CustomerCategoryDiscount[]
   creditLimit       BigInt? // most the customer may owe (Rial); the manager is warned at final approval above it
+  code              Int                        @unique @default(autoincrement()) // «کد مشتری»: colleagues ask to join the account with it
+  joinRequests      JoinRequest[]
   createdAt         DateTime                   @default(now())
+}
+
+/// A Telegram user asks to join a customer account (another buyer of the same shop) by its code; a manager decides.
+model JoinRequest {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation("JoinRequests", fields: [userId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  role        MemberRole @default(BUYER)
+  note        String?
+  status      JoinStatus @default(PENDING)
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([status, createdAt])
+}
+
+enum JoinStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 /// The customer's discount on one product category (set by a manager); applies to list prices of that category

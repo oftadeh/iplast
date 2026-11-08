@@ -4,7 +4,7 @@ import { Icon } from '../icons';
 import { InviteCard, type Growth } from './Growth';
 
 interface Dash {
-  queue: { unansweredChats: number; salesReview: number; awaitingCustomer: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number };
+  queue: { unansweredChats: number; salesReview: number; awaitingCustomer: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; joinRequests?: number; reportedPayments: number };
   orders: { today: number; last30: number; open: number; delivered: number; byStatus: Record<string, number> };
   money: { receivable: string; invoiced: string; chequesDue7: string; chequesDue7Count: number };
   sales: { last30: string; count30: number; prev30: string };
@@ -54,6 +54,7 @@ export function DashboardPage() {
     { n: q.unansweredChats, t: 'مشتری منتظر جواب', s: 'chats/human', icon: 'chat', tone: 'hot', show: role !== 'WAREHOUSE' },
     { n: q.reportedPayments, t: 'رسید پرداخت برای بررسی', s: 'customers/receipts', icon: 'wallet', tone: 'warn', show: role !== 'WAREHOUSE' },
     { n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'customers/new', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
+    { n: q.joinRequests ?? 0, t: 'درخواست عضویت در مجموعه', s: 'customers/joins', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
     { n: q.warehouse, t: 'سفارش برای آماده‌سازی و ارسال', s: 'warehouse/queue', icon: 'truck', tone: 'warn', show: role !== 'SALES' },
   ].filter(x => x.show && x.n > 0);
   const waiting = tasks.reduce((a, x) => a + x.n, 0);

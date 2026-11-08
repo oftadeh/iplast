@@ -434,3 +434,13 @@ fieldset.plain{border:0;padding:0;margin:0;min-width:0}
 a.btn{text-decoration:none;color:inherit;display:inline-flex;align-items:center;justify-content:center}a.btn.primary{color:#fff}
 .seg button[aria-pressed="true"]{background:var(--brand);color:#fff;font-weight:700}.searchpick .in{width:100%}.seg{justify-self:start}
 .d-mine b{font-size:19px;white-space:nowrap}
+/* customers: filter, bulk assign, codes, join requests */
+.custfilter{display:flex;gap:8px;align-items:center}.custfilter .search{flex:1}.custfilter select{width:200px}
+.bulkbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;position:sticky;top:8px;z-index:5;border:1.5px solid var(--accent,#2457D6)}
+.bulkbar select{width:240px;max-width:100%}
+.selrow{padding:0 0 0 0;gap:0}.selrow>input{margin:0 14px 0 0;width:18px;height:18px;flex:none}
+.prowbtn{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:10px 14px;border:0;background:none;text-align:right;font:inherit;color:inherit;cursor:pointer}
+.selall{cursor:pointer;gap:10px}.selall input{width:18px;height:18px}
+.codechip{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--surface-2);color:var(--muted);vertical-align:middle;margin-inline-start:4px}
+.joinrow{flex-wrap:wrap}.joinrow .pinfo b{white-space:normal}
+@media (max-width:760px){.custfilter{flex-wrap:wrap}.custfilter select{width:100%}}

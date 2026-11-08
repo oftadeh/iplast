@@ -4,10 +4,10 @@ import { ApiError, ROLE_FA, TYPE_FA, api, dayFa, fa, pctFa, pctOff, personName, 
 import { CustomerAccount } from './Accounts';
 
 type Terms = { cashDiscountPct: string; termDiscountPct: string; termMonths: number; allowCash: boolean; allowTerm: boolean };
-interface Row { id: string; name: string; city: string | null; type: string; isApproved: boolean; createdAt: string; terms: Terms | null; support: { firstName: string | null; lastName: string | null } | null; _count: { members: number; orders: number } }
+interface Row { id: string; code: number; name: string; city: string | null; type: string; isApproved: boolean; createdAt: string; terms: Terms | null; support: { id: string; firstName: string | null; lastName: string | null } | null; _count: { members: number; orders: number } }
 interface Member { role: string; addedAt: string; user: { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; phone: string | null; lastSeenAt: string | null } }
 interface Detail {
-  id: string; name: string; city: string | null; address: string | null; type: string; isApproved: boolean; createdAt: string; creditLimit: string | null;
+  id: string; code: number; name: string; city: string | null; address: string | null; type: string; isApproved: boolean; createdAt: string; creditLimit: string | null;
   terms: Terms | null;
   support: { id: string; firstName: string | null; lastName: string | null; username: string | null } | null;
   members: Member[];
@@ -17,6 +17,7 @@ interface Sale {
   categories: { id: string; slug: string; name: string; families: number; cash: number | null; term: number | null }[];
 }
 
+const codeFa = (n: number) => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[+d]);
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'ثبت نشد');
 const ROLE_HELP: Record<string, string> = { OWNER: 'همه‌ی سفارش‌ها و حساب مالی را می‌بیند', BUYER: 'سفارش ثبت می‌کند، فقط سفارش‌های خودش را می‌بیند', VIEWER: 'فقط مشاهده‌ی سفارش‌ها و حساب' };
 
@@ -35,19 +36,33 @@ export function CustomersPage({ focus, onFocus }: { focus?: string; onFocus: (id
 
 function CustomerList({ onOpen }: { onOpen: (id: string) => void }) {
   const { me, toast } = useAdmin();
+  const admin = me.staffRole === 'ADMIN';
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
+  const [agent, setAgent] = useState('');
   useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 300); return () => clearTimeout(t); }, [q]);
-  const list = useApi<Row[]>(`/admin/customers?q=${encodeURIComponent(query)}`);
+  const list = useApi<Row[]>(`/admin/customers?q=${encodeURIComponent(query)}&support=${encodeURIComponent(agent)}`);
+  const staff = useApi<Staff[]>(admin ? '/admin/staff' : null);
+  const agents = (staff.data ?? []).filter(u => u.isActive && u.staffRole !== 'WAREHOUSE');
   const [adding, setAdding] = useState(false);
   const [f, setF] = useState({ name: '', city: '', type: 'RETAIL' });
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [to, setTo] = useState('');
   const create = async () => {
     try { const c = await api<{ id: string }>('/admin/customers', { method: 'POST', body: f }); toast('مشتری ساخته شد'); onOpen(c.id); } catch (e) { toast(err(e)); }
   };
+  const rows = list.data ?? [];
+  const toggle = (id: string) => setSel(x => { const n = new Set(x); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allOn = rows.length > 0 && rows.every(r => sel.has(r.id));
+  const assign = async () => {
+    const name = to === 'none' ? 'بدون کارشناس' : personName(agents.find(a => a.id === to) ?? { firstName: '', lastName: '', username: null });
+    if (!confirm(`${fa(sel.size)} مشتری به «${name}» سپرده شود؟`)) return;
+    try { const r = await api<{ count: number }>('/admin/customers/assign', { method: 'POST', body: { ids: [...sel], supportId: to === 'none' ? null : to } }); toast(`${fa(r.count)} مشتری به ${name} سپرده شد`); setSel(new Set()); setTo(''); list.reload(); } catch (e) { toast(err(e)); }
+  };
   return (
     <>
-      <div className="head"><h1>مشتریان</h1>{me.staffRole === 'ADMIN' && <button type="button" className="btn ok-fill sm" onClick={() => setAdding(a => !a)}>+ مشتری جدید</button>}</div>
-      <p className="muted small" style={{ margin: 0 }}>روی هر مشتری بزنید: شرایط فروش (درصد نقدی و مدت‌دار)، کاربران تلگرامی، حساب مالی و کارشناس فروش او در یک صفحه است.</p>
+      <div className="head"><h1>مشتریان</h1>{admin && <button type="button" className="btn ok-fill sm" onClick={() => setAdding(a => !a)}>+ مشتری جدید</button>}</div>
+      <p className="muted small" style={{ margin: 0 }}>روی هر مشتری بزنید: شرایط فروش، کاربران تلگرامی (چند مسئول خرید برای یک مشتری)، حساب مالی و کارشناس فروش او. {admin ? 'برای سپردن چند مشتری به یک کارشناس، تیکشان بزنید.' : ''}</p>
       {adding && (
         <div className="card pad stack">
           <div className="row2">
@@ -58,15 +73,77 @@ function CustomerList({ onOpen }: { onOpen: (id: string) => void }) {
           <div className="decide" style={{ padding: 0 }}><button type="button" className="btn ok-fill" disabled={!f.name.trim()} onClick={create}>ساخت مشتری</button><button type="button" className="btn" onClick={() => setAdding(false)}>انصراف</button></div>
         </div>
       )}
-      <input className="in search" placeholder="جست‌وجوی نام مشتری" value={q} onChange={e => setQ(e.target.value)} />
-      {list.error ? <div className="err">{list.error}</div> : !list.data ? <div className="card pad muted">در حال بارگذاری…</div> : !list.data.length ? <div className="empty">مشتری‌ای پیدا نشد.</div> : (
+      <div className="custfilter">
+        <input className="in search" placeholder="نام، شهر یا کد مشتری" value={q} onChange={e => setQ(e.target.value)} />
+        {admin && <select className="in" value={agent} onChange={e => { setAgent(e.target.value); setSel(new Set()); }} aria-label="کارشناس">
+          <option value="">همه‌ی کارشناس‌ها</option><option value="none">بدون کارشناس</option>
+          {agents.map(a => <option key={a.id} value={a.id}>{personName(a)}</option>)}
+        </select>}
+      </div>
+      {admin && sel.size > 0 && (
+        <div className="card pad bulkbar">
+          <b className="num">{fa(sel.size)} مشتری انتخاب شده</b>
+          <select className="in" value={to} onChange={e => setTo(e.target.value)} aria-label="سپردن به کارشناس">
+            <option value="">سپردن به کارشناس…</option><option value="none">بدون کارشناس</option>
+            {agents.map(a => <option key={a.id} value={a.id}>{personName(a)} · {a.staffRole === 'ADMIN' ? 'مدیر' : 'کارشناس فروش'}</option>)}
+          </select>
+          <button type="button" className="btn ok-fill sm" disabled={!to} onClick={assign}>اعمال</button>
+          <button type="button" className="btn sm ghost" onClick={() => setSel(new Set())}>لغو انتخاب</button>
+        </div>
+      )}
+      {list.error ? <div className="err">{list.error}</div> : !list.data ? <div className="card pad muted">در حال بارگذاری…</div> : !rows.length ? <div className="empty">مشتری‌ای پیدا نشد.</div> : (
         <div className="card plist">
-          {list.data.map(c => (
-            <button key={c.id} type="button" className="prow" onClick={() => onOpen(c.id)}>
-              <span className="pinfo"><b>{c.name}{!c.isApproved && <span className="st new" style={{ marginInlineStart: 6 }}>تأییدنشده</span>}</b>
-                <span className="muted small num">{TYPE_FA[c.type] ?? ''}{c.city ? ` · ${c.city}` : ''} · {fa(c._count.members)} کاربر · {fa(c._count.orders)} سفارش · کارشناس: {c.support ? personName({ ...c.support, username: null }) : '—'}</span></span>
-              <span className="num small termsline">{termsLine(c.terms)}</span>
-            </button>
+          {admin && <label className="prow selall"><input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? new Set() : new Set(rows.map(r => r.id)))} /> <span className="small muted">انتخاب همه‌ی {fa(rows.length)} مشتری این فهرست</span></label>}
+          {rows.map(c => (
+            <div key={c.id} className="prow selrow">
+              {admin && <input type="checkbox" checked={sel.has(c.id)} onChange={() => toggle(c.id)} aria-label={`انتخاب ${c.name}`} />}
+              <button type="button" className="prowbtn" onClick={() => onOpen(c.id)}>
+                <span className="pinfo"><b>{c.name} <span className="codechip num">#{codeFa(c.code)}</span>{!c.isApproved && <span className="st new" style={{ marginInlineStart: 6 }}>تأییدنشده</span>}</b>
+                  <span className="muted small num">{TYPE_FA[c.type] ?? ''}{c.city ? ` · ${c.city}` : ''} · {fa(c._count.members)} کاربر · {fa(c._count.orders)} سفارش · کارشناس: {c.support ? personName({ ...c.support, username: null }) : '—'}</span></span>
+                <span className="num small termsline">{termsLine(c.terms)}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** «درخواست عضویت»: people who asked to join a customer account with its code. A manager approves with a role. */
+export function JoinsPage() {
+  const { me, toast } = useAdmin();
+  const admin = me.staffRole === 'ADMIN';
+  const [all, setAll] = useState(false);
+  type J = { id: string; status: string; role: string; note: string | null; createdAt: string; user: { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; memberships: { customer: { name: string } }[] }; customer: { id: string; name: string; city: string | null; code: number; _count: { members: number } } };
+  const d = useApi<J[]>(`/admin/joins${all ? '?status=all' : ''}`);
+  const [roles, setRoles] = useState<Record<string, string>>({});
+  const decide = async (j: J, ok: boolean) => {
+    if (!ok && !confirm('این درخواست رد شود؟')) return;
+    try { await api(`/admin/joins/${j.id}`, { method: 'POST', body: { ok, role: roles[j.id] ?? j.role } }); toast(ok ? 'عضو مجموعه شد و به او خبر داده شد' : 'رد شد'); d.reload(); } catch (e) { toast(err(e)); }
+  };
+  const ST: Record<string, string> = { PENDING: 'منتظر بررسی', APPROVED: 'تأیید شد', REJECTED: 'رد شد' };
+  return (
+    <>
+      <div className="head"><h1>درخواست عضویت</h1><label className="small"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> نمایش بررسی‌شده‌ها</label></div>
+      <p className="muted small" style={{ margin: 0 }}>کاربری که «کد مشتری» یک فروشگاه را دارد (مثلاً مسئول خرید دیگرِ همان مجموعه)، از پنل کاربری درخواست عضویت می‌دهد. با تأیید شما، با نقش انتخاب‌شده به آن مشتری وصل می‌شود.{!admin ? ' تأیید با مدیر است.' : ''}</p>
+      {d.error ? <div className="err">{d.error}</div> : !d.data ? <div className="card pad muted">در حال بارگذاری…</div> : !d.data.length ? <div className="empty">درخواستی نیست.</div> : (
+        <div className="card plist">
+          {d.data.map(j => (
+            <div key={j.id} className="prow static joinrow">
+              <span className="pinfo">
+                <b>{personName(j.user)} ← {j.customer.name} <span className="codechip num">#{codeFa(j.customer.code)}</span></b>
+                <span className="muted small num">آیدی <bdi>{j.user.telegramId}</bdi>{j.user.username ? ` · @${j.user.username}` : ''} · {dayFa(j.createdAt)} · این مجموعه {fa(j.customer._count.members)} کاربر دارد{j.user.memberships.length ? ` · الان عضو: ${j.user.memberships.map(m => m.customer.name).join('، ')}` : ''}</span>
+                {j.note && <span className="small">«{j.note}»</span>}
+              </span>
+              {j.status === 'PENDING' && admin ? (
+                <span className="row" style={{ gap: 6 }}>
+                  <select className="in" style={{ width: 130 }} value={roles[j.id] ?? j.role} onChange={e => setRoles({ ...roles, [j.id]: e.target.value })} aria-label="نقش">{['OWNER', 'BUYER', 'VIEWER'].map(r => <option key={r} value={r}>{ROLE_FA[r]}</option>)}</select>
+                  <button type="button" className="btn ok-fill sm" onClick={() => decide(j, true)}>✓ تأیید</button>
+                  <button type="button" className="btn sm ghost" onClick={() => decide(j, false)}>رد</button>
+                </span>
+              ) : <span className={`st ${j.status === 'APPROVED' ? 'ok' : j.status === 'REJECTED' ? 'gray' : 'new'}`}>{ST[j.status]}</span>}
+            </div>
           ))}
         </div>
       )}
@@ -85,7 +162,7 @@ function CustomerPage({ id, tab, onTab, onBack }: { id: string; tab: Tab; onTab:
       <div className="card pad custhead">
         <div className="between">
           <div className="stack" style={{ gap: 2 }}>
-            <h1 style={{ fontSize: 19 }}>{c.name}{!c.isApproved && <span className="st new" style={{ marginInlineStart: 8, fontSize: 12 }}>تأییدنشده</span>}</h1>
+            <h1 style={{ fontSize: 19 }}>{c.name} <span className="codechip num">کد {codeFa(c.code)}</span>{!c.isApproved && <span className="st new" style={{ marginInlineStart: 8, fontSize: 12 }}>تأییدنشده</span>}</h1>
             <span className="muted small num">{TYPE_FA[c.type]}{c.city ? ` · ${c.city}` : ''} · {fa(c.members.length)} کاربر · کارشناس فروش: {c.support ? personName(c.support) : 'تعیین نشده'}</span>
           </div>
           <span className="termsbadge num">{termsLine(c.terms)}</span>
@@ -109,6 +186,10 @@ function Profile({ c, onDone }: { c: Detail; onDone: () => void }) {
   const save = async (extra?: object) => {
     try { await api(`/admin/customers/${c.id}`, { method: 'PATCH', body: extra ?? { ...f, supportId: f.supportId || null, ...(me.staffRole === 'ADMIN' ? { creditLimit: f.creditLimit.trim() ? toEnDigits(f.creditLimit).replace(/[^\d]/g, '') : null } : { creditLimit: undefined }) } }); toast('ذخیره شد'); setEdit(false); onDone(); } catch (e) { toast(err(e)); }
   };
+  const removeCustomer = async () => {
+    if (!confirm(`«${c.name}» حذف شود؟ فقط مشتری بدون سفارش و حساب مالی حذف می‌شود.`)) return;
+    try { await api(`/admin/customers/${c.id}`, { method: 'DELETE' }); toast('مشتری حذف شد'); location.hash = '#customers/settings'; } catch (e) { toast(err(e)); }
+  };
   if (!edit) return (
     <div className="card pad stack">
       <div className="between"><h1 style={{ fontSize: 19, margin: 0 }}>{c.name}</h1><button type="button" className="btn sm" onClick={() => { setF(init()); setEdit(true); }}>ویرایش مشخصات</button></div>
@@ -116,6 +197,7 @@ function Profile({ c, onDone }: { c: Detail; onDone: () => void }) {
       <span className="small">سقف اعتبار: <b className="num">{c.creditLimit ? `${fa(c.creditLimit)} ریال` : 'تعیین نشده'}</b>{c.creditLimit && <span className="muted"> (بالاتر از آن، موقع تأیید نهایی هشدار می‌گیرید)</span>}</span>
       <span className="small">کارشناس فروش: <b>{c.support ? personName(c.support) : 'تعیین نشده'}</b>{!c.support && <span className="muted"> (پیش‌فاکتورهای این مشتری برای همه‌ی کارشناسان می‌رود)</span>}</span>
       {!c.isApproved && <div className="decide" style={{ padding: 0 }}><span className="st new">هنوز تأیید نشده</span><button type="button" className="btn ok-fill sm" onClick={() => save({ isApproved: true })}>✓ تأیید مشتری</button></div>}
+      {me.staffRole === 'ADMIN' && <button type="button" className="btn sm danger" style={{ justifySelf: 'start' }} onClick={removeCustomer}>حذف این مشتری</button>}
     </div>
   );
   return (
@@ -155,6 +237,16 @@ function Members({ c, onDone }: { c: Detail; onDone: () => void }) {
     try { await api(`/admin/customers/${c.id}/members`, { method: 'POST', body: { ...body, telegramId: toEnDigits(body.telegramId).trim() } }); toast('کاربر ذخیره شد'); setF({ telegramId: '', firstName: '', role: 'BUYER' }); onDone(); }
     catch (e) { toast(err(e)); } finally { setBusy(false); }
   };
+  const patch = async (m: Member, body: object) => {
+    setBusy(true);
+    try { await api(`/admin/customers/${c.id}/members/${m.user.id}`, { method: 'PATCH', body }); toast('ذخیره شد'); onDone(); } catch (e) { toast(err(e)); } finally { setBusy(false); }
+  };
+  const rename = (m: Member) => {
+    const n = prompt('نام این کاربر', [m.user.firstName, m.user.lastName].filter(Boolean).join(' '));
+    if (n === null) return;
+    const [first, ...rest] = n.trim().split(/\s+/);
+    patch(m, { firstName: first ?? '', lastName: rest.join(' ') });
+  };
   const remove = async (m: Member) => {
     if (!confirm(`${personName(m.user)} از این مشتری حذف شود؟`)) return;
     try { await api(`/admin/customers/${c.id}/members/${m.user.id}`, { method: 'DELETE' }); toast('حذف شد'); onDone(); } catch (e) { toast(err(e)); }
@@ -162,12 +254,14 @@ function Members({ c, onDone }: { c: Detail; onDone: () => void }) {
   return (
     <div className="card pad stack">
       <h2 style={{ margin: 0 }}>کاربران این مشتری <span className="muted small num">({fa(c.members.length)})</span></h2>
+      <p className="muted small" style={{ margin: 0 }}>هر تعداد مسئول خرید می‌توانند زیر یک کد مشتری باشند. خودشان هم می‌توانند با <b className="num">کد {codeFa(c.code)}</b> از پنل کاربری درخواست عضویت بدهند تا شما تأیید کنید.</p>
       {!c.members.length ? <span className="muted small">هنوز کاربری تعریف نشده است.</span> : (
         <div className="plist">
           {c.members.map(m => (
             <div key={m.user.id} className="prow static">
               <span className="pinfo"><b>{personName(m.user)}</b><span className="muted small num">آیدی <bdi>{m.user.telegramId}</bdi>{m.user.username ? ` · @${m.user.username}` : ''}{m.user.lastSeenAt ? ` · آخرین ورود ${dayFa(m.user.lastSeenAt)}` : ' · هنوز وارد نشده'}</span></span>
-              <select className="in" style={{ width: 140 }} value={m.role} onChange={e => add({ telegramId: m.user.telegramId, firstName: '', role: e.target.value })} aria-label="نقش" disabled={busy}>
+              <button type="button" className="btn sm ghost" onClick={() => rename(m)}>ویرایش نام</button>
+              <select className="in" style={{ width: 140 }} value={m.role} onChange={e => patch(m, { role: e.target.value })} aria-label="نقش" disabled={busy}>
                 {['OWNER', 'BUYER', 'VIEWER'].map(r => <option key={r} value={r}>{ROLE_FA[r]}</option>)}
               </select>
               <button type="button" className="btn sm ghost" onClick={() => remove(m)}>حذف</button>

@@ -39,11 +39,12 @@ export class AdminDashboardController {
       p.invoice.groupBy({ by: ['customerId'], where: { status: 'ISSUED', issuedAt: { gte: days30 } }, _sum: { total: true }, orderBy: { _sum: { total: 'desc' } }, take: 5 }),
     ]);
     const topNames = await p.customer.findMany({ where: { id: { in: top.map(t => t.customerId) } }, select: { id: true, name: true } });
-    const [byStatus, today, month, newCustomers, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
+    const [byStatus, today, month, newCustomers, joinRequests, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
       p.order.groupBy({ by: ['status'], _count: true }),
       p.order.count({ where: { createdAt: { gte: startOfDay } } }),
       p.order.count({ where: { createdAt: { gte: days30 } } }),
       p.customer.count({ where: { isApproved: false } }),
+      p.joinRequest.count({ where: { status: 'PENDING' } }),
       p.customer.count({ where: { isApproved: true } }),
       p.payment.count({ where: { status: 'REPORTED' } }),
       p.payment.aggregate({ where: { status: 'PENDING', dueDate: { lte: week } }, _sum: { amount: true }, _count: true }),
@@ -96,7 +97,7 @@ export class AdminDashboardController {
         finalApproval: n('SALES_APPROVED'),
         needsFix: n('NEEDS_FIX'),
         warehouse: n('CONFIRMED', 'PREPARING'),
-        newCustomers, reportedPayments: reported, unansweredChats: Number(unanswered[0]?.n ?? 0),
+        newCustomers, joinRequests, reportedPayments: reported, unansweredChats: Number(unanswered[0]?.n ?? 0),
       },
       orders: { today, last30: month, open: n('SUBMITTED', 'SALES_REVIEW', 'SALES_APPROVED', 'NEEDS_FIX', 'PROFORMA_SENT', 'CONFIRMED', 'PREPARING', 'SHIPPED'), delivered: n('DELIVERED'), byStatus: c },
       money: { receivable: inv - pd, invoiced: inv, chequesDue7: chequesDue._sum.amount ?? 0n, chequesDue7Count: chequesDue._count },

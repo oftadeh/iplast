@@ -5,7 +5,7 @@ import { ProductsPage } from './pages/Products';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
 import { AccountsPage } from './pages/Accounts';
-import { CustomersPage } from './pages/Customers';
+import { CustomersPage, JoinsPage } from './pages/Customers';
 import { WarehousePage } from './pages/Warehouse';
 import { MessagesPage } from './pages/Messages';
 import { ProxyPage } from './pages/Proxy';
@@ -24,7 +24,7 @@ export const useAdmin = () => useContext(AdminCtx);
 type Role = NonNullable<Me['staffRole']>;
 interface Leaf { id: string; title: string; roles: Role[]; badge?: keyof Queue }
 interface Area { id: string; title: string; icon: string; roles: Role[]; pages: Leaf[] }
-export interface Queue { salesReview: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number; unansweredChats: number }
+export interface Queue { salesReview: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; joinRequests: number; reportedPayments: number; unansweredChats: number }
 const A: Role[] = ['ADMIN'], AS: Role[] = ['ADMIN', 'SALES'], ALL: Role[] = ['ADMIN', 'SALES', 'WAREHOUSE'];
 const AREAS: Area[] = [
   { id: 'home', title: 'پیشخوان', icon: 'home', roles: ALL, pages: [{ id: 'home/dashboard', title: 'پیشخوان', roles: ALL }] },
@@ -42,6 +42,7 @@ const AREAS: Area[] = [
   { id: 'customers', title: 'مشتریان', icon: 'users', roles: AS, pages: [
     { id: 'customers/settings', title: 'همه‌ی مشتریان', roles: AS },
     { id: 'customers/new', title: 'منتظر تأیید', roles: AS, badge: 'newCustomers' },
+    { id: 'customers/joins', title: 'درخواست عضویت', roles: AS, badge: 'joinRequests' },
   ] },
   { id: 'money', title: 'مالی', icon: 'wallet', roles: AS, pages: [
     { id: 'customers/accounts', title: 'مانده‌ی حساب‌ها', roles: AS },
@@ -179,6 +180,7 @@ export function App() {
           {id === 'growth/invite' && <GrowthPage />}
           {id.startsWith('chats/') && <ChatsPage key={id} mode={id.slice(6) as 'human' | 'ai' | 'all'} focus={focus} onFocus={setFocus} />}
           {id === 'customers/new' && <ApprovalsPage view="customers" />}
+          {id === 'customers/joins' && <JoinsPage />}
           {id === 'customers/settings' && <CustomersPage focus={focus} onFocus={setFocus} />}
           {id === 'customers/accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
           {id === 'customers/receipts' && <ApprovalsPage view="pay" />}
