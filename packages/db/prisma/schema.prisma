@@ -13,14 +13,15 @@ datasource db {
 // ───────────── Catalog ─────────────
 
 model Category {
-  id        String          @id @default(cuid())
-  slug      String          @unique
+  id        String                     @id @default(cuid())
+  slug      String                     @unique
   name      String
-  sortOrder Int             @default(0)
+  sortOrder Int                        @default(0)
   parentId  String?
-  parent    Category?       @relation("CategoryTree", fields: [parentId], references: [id])
-  children  Category[]      @relation("CategoryTree")
+  parent    Category?                  @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[]                 @relation("CategoryTree")
   families  ProductFamily[]
+  discounts CustomerCategoryDiscount[]
 }
 
 model Brand {
@@ -228,26 +229,41 @@ enum CustomerType {
 }
 
 model Customer {
-  id            String           @id @default(cuid())
-  name          String // company / shop name
-  type          CustomerType     @default(RETAIL)
-  city          String?
-  address       String?
-  nationalId    String?
-  isApproved    Boolean          @default(false)
-  priceGroupId  String?
-  priceGroup    PriceGroup?      @relation(fields: [priceGroupId], references: [id])
-  supportId     String? // fixed sales-support agent
-  support       User?            @relation("AssignedSupport", fields: [supportId], references: [id])
-  members       CustomerMember[]
-  terms         PaymentTerms?
-  prices        CustomerPrice[]
-  orders        Order[]
-  conversations Conversation[]
-  invoices      Invoice[]
-  payments      Payment[]
-  documents     Document[]
-  createdAt     DateTime         @default(now())
+  id                String                     @id @default(cuid())
+  name              String // company / shop name
+  type              CustomerType               @default(RETAIL)
+  city              String?
+  address           String?
+  nationalId        String?
+  isApproved        Boolean                    @default(false)
+  priceGroupId      String?
+  priceGroup        PriceGroup?                @relation(fields: [priceGroupId], references: [id])
+  supportId         String? // fixed sales-support agent
+  support           User?                      @relation("AssignedSupport", fields: [supportId], references: [id])
+  members           CustomerMember[]
+  terms             PaymentTerms?
+  prices            CustomerPrice[]
+  orders            Order[]
+  conversations     Conversation[]
+  invoices          Invoice[]
+  payments          Payment[]
+  documents         Document[]
+  categoryDiscounts CustomerCategoryDiscount[]
+  createdAt         DateTime                   @default(now())
+}
+
+/// The customer's discount on one product category (set by a manager); applies to list prices of that category
+/// and replaces the price group's discount there. A personal price (CustomerPrice) still wins.
+model CustomerCategoryDiscount {
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  pct        Decimal  @db.Decimal(5, 2)
+  updatedBy  String?
+  updatedAt  DateTime @updatedAt
+
+  @@id([customerId, categoryId])
 }
 
 enum MemberRole {

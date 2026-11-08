@@ -28,6 +28,7 @@ export interface Account {
   customerId: string; role: 'OWNER' | 'BUYER' | 'VIEWER'; name: string; isApproved: boolean;
   terms: { cashPercent: number; chequeDueDays: number[]; cashDiscountPct?: string; chequeMarkupPct?: string };
   support: { firstName: string | null; lastName: string | null; username: string | null } | null;
+  discounts?: Record<string, { name: string; pct: number }>; defaultDiscount?: number;
   members: { id: string; firstName: string | null; lastName: string | null; username: string | null; role: string }[];
 }
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
@@ -173,3 +174,12 @@ export async function shrinkPhoto(f: File): Promise<Blob> {
     return await new Promise<Blob>((ok, no) => c.toBlob(b => (b ? ok(b) : no(new Error('x'))), 'image/jpeg', 0.85));
   } catch { return f; }
 }
+
+/** The customer's own discount (percent off the list price) on a product category, set by the sales manager. */
+export function discountOf(me: Me | null | undefined, categorySlug: string | undefined) {
+  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+  if (!a || !categorySlug) return 0;
+  return a.discounts?.[categorySlug]?.pct ?? a.defaultDiscount ?? 0;
+}
+/** List price minus a percent, rounded down to whole Rials (same rule as the server). */
+export const withPct = (price: bigint, pct: number) => (pct ? (price * BigInt(Math.round((100 - pct) * 100))) / 10000n : price);

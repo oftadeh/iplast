@@ -186,6 +186,24 @@ await call('POST', `/api/admin/accounts/payments/${p1.id}/review`, { ok: false }
 const acc1 = await call('GET', '/api/me/account', null, owner);
 assert.equal(acc1.summary.paid, '50000000'); assert.equal(acc1.summary.pendingCheques, '80000000'); assert.equal(acc1.summary.reported, '0'); step('account: transfer counted, cheque pending until cleared');
 
+// customer settings: discount per product category
+const disc0 = await call('GET', `/api/admin/customers/${cust.customerId}/discounts`, null, sales);
+const cat = disc0.categories.find(c => c.slug === male.category.slug);
+assert.ok(cat && cat.pct === 0); step('every category listed with no discount yet');
+await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 5 }] }, sales, 403); step('only the manager sets category discounts');
+await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 120 }] }, admin, 400);
+const disc1 = await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: '۷٫۵' }] }, admin);
+assert.equal(disc1.categories.find(c => c.id === cat.id).pct, 7.5); step('manager sets 7.5% on a category (Persian digits accepted); over 100 refused');
+const meD = await call('GET', '/api/me', null, buyer);
+assert.equal(meD.accounts[0].discounts[male.category.slug].pct, 7.5); step('customer sees their category discount in their panel');
+const q = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
+assert.equal(q[priced.id], String(BigInt(priced.price) * 9250n / 10000n)); step('their price is the list price minus 7.5%');
+const o4 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 4 }] }, buyer);
+assert.equal(o4.items[0].unitPrice, q[priced.id]); step('orders use the discounted price');
+await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 0 }] }, admin);
+assert.equal((await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer))[priced.id], priced.price); step('0 removes the discount');
+await call('POST', `/api/admin/orders/${o4.id}/decide`, { action: 'reject', comment: 'آزمایشی' }, admin);
+
 // financial documents on the customer's file
 await form(`/api/admin/customers/${cust.customerId}/documents`, admin, { kind: 'CONTRACT', title: 'قرارداد ۱۴۰۵' }, { buf: Buffer.from('x'), type: 'text/plain', name: 'a.txt' }, 400); step('only photos and PDFs are accepted');
 const doc = await form(`/api/admin/customers/${cust.customerId}/documents`, admin, { kind: 'CONTRACT', title: 'قرارداد ۱۴۰۵' }, { buf: PDF, type: 'application/pdf', name: 'c.pdf' });

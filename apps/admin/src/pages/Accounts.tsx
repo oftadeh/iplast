@@ -297,7 +297,7 @@ function Receipt({ id, pdf }: { id: string; pdf?: boolean }) {
 }
 
 /** Cash/cheque split, cheque due days and the customer's sales agent. Managers change them; agents only see them. */
-function TermsCard({ customerId, c, onDone }: { customerId: string; c: Account['customer']; onDone: () => void }) {
+export function TermsCard({ customerId, c, onDone }: { customerId: string; c: Pick<Account['customer'], 'terms' | 'support'>; onDone: () => void }) {
   const { me, toast } = useAdmin();
   const can = me.staffRole === 'ADMIN';
   const staff = useApi<Staff[]>(can ? '/admin/staff' : null);
@@ -324,7 +324,7 @@ function TermsCard({ customerId, c, onDone }: { customerId: string; c: Account['
   if (!edit) return (
     <div className="card pad stack">
       <div className="between"><h2 style={{ margin: 0 }}>شرایط پرداخت و کارشناس</h2>{can && <button type="button" className="btn sm" onClick={() => { setF(init()); setEdit(true); }}>ویرایش</button>}</div>
-      <span className="num"><b>نقد {fa(tc)}٪</b> · <b>چک {fa(100 - tc)}٪</b>{t?.chequeDueDays.length ? ` · سررسید چک: ${t.chequeDueDays.map(d => fa(d)).join('، ')} روزه` : ''}</span>
+      <span className="num"><b>نقد {fa(tc)}٪</b> · <b>چک {fa(100 - tc)}٪</b>{t?.chequeDueDays.length ? ` · سررسید چک: ${t.chequeDueDays.map(d => fa(d)).join('، ')} روزه` : ''}{Number(t?.cashDiscountPct ?? 0) ? ` · تخفیف نقدی ${fa(String(t!.cashDiscountPct))}٪` : ''}{Number(t?.chequeMarkupPct ?? 0) ? ` · افزایش چکی ${fa(String(t!.chequeMarkupPct))}٪` : ''}</span>
       <span className="small">کارشناس فروش: <b>{c.support ? personName(c.support) : 'تعیین نشده'}</b>{!c.support && <span className="muted"> (پیش‌فاکتورها برای همه‌ی کارشناسان می‌رود)</span>}</span>
     </div>
   );
@@ -334,6 +334,10 @@ function TermsCard({ customerId, c, onDone }: { customerId: string; c: Account['
       <div className="row2">
         <label className="stack small">سهم نقد (٪)<input className="in num" inputMode="numeric" value={f.cash} onChange={set('cash')} /></label>
         <label className="stack small">سهم چک (٪)<input className="in num" value={Number.isFinite(cash) && cash >= 0 && cash <= 100 ? fa(100 - cash) : '—'} disabled /></label>
+      </div>
+      <div className="row2">
+        <label className="stack small">تخفیف نقدی (٪ از سهم نقد)<input className="in num" inputMode="decimal" value={f.disc} onChange={set('disc')} /></label>
+        <label className="stack small">افزایش چکی (٪ از سهم چک)<input className="in num" inputMode="decimal" value={f.markup} onChange={set('markup')} /></label>
       </div>
       <label className="stack small">سررسید چک‌ها (روز، با ویرگول جدا کنید)<input className="in num" inputMode="numeric" placeholder="مثلاً ۶۰، ۹۰" value={f.days} onChange={set('days')} /></label>
       <label className="stack small">کارشناس فروش این مشتری

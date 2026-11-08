@@ -3,7 +3,7 @@ import { useApp } from './App';
 import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
-  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, personName, photoUrl, previewTerms, short, useApi,
+  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, discountOf, fa, withPct, lineTotal, lineUnits, personName, photoUrl, previewTerms, short, useApi,
 } from './lib';
 import { BOT_USERNAME, haptic } from './telegram';
 
@@ -11,7 +11,8 @@ const cardPhoto = (f: FamilyCard) => photoUrl(f.media[0]?.key);
 const badgeCls = (b: string) => (b === 'جدید' ? 'new' : b === 'پرفروش' ? 'hot' : 'pick');
 
 function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
-  const { go, quickAdd } = useApp();
+  const { go, quickAdd, me } = useApp();
+  const pct = discountOf(me, f.category.slug);
   return (
     <div className="pcard">
       <button type="button" className="pimg" aria-label={f.name} onClick={() => (withAdd ? quickAdd(f.slug) : go({ name: 'product', slug: f.slug }))}>
@@ -21,7 +22,8 @@ function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
       </button>
       {withAdd && <button type="button" className="add-mini" style={{ position: 'relative', marginTop: -50, marginInlineStart: 'auto', marginInlineEnd: 8 }} aria-label={`افزودن ${f.name}`} onClick={() => quickAdd(f.slug)}><Icon n="plus" s={18} /></button>}
       <button type="button" className="link" style={{ color: 'inherit', textAlign: 'right', fontWeight: 'inherit' }} onClick={() => go({ name: 'product', slug: f.slug })}><b>{f.name}</b></button>
-      <span className="pr num">{f.minPrice ? <>از <strong>{fa(f.minPrice)}</strong> ریال</> : <span className="tag warn">استعلامی</span>}</span>
+      <span className="pr num">{f.minPrice ? <>از <strong>{fa(withPct(BigInt(f.minPrice), pct))}</strong> ریال</> : <span className="tag warn">استعلامی</span>}</span>
+      {pct > 0 && f.minPrice && <span className="mypct num">{fa(pct)}٪ تخفیف شما</span>}
     </div>
   );
 }
@@ -66,6 +68,7 @@ export function HomeScreen() {
       <form className="searchwrap" onSubmit={e => { e.preventDefault(); if (q.trim()) go({ name: 'catalog', q: q.trim() }); }}>
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
+      <MyTerms />
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
         <button type="button" onClick={() => go({ name: 'account' })}><span className="i"><Icon n="file" s={15} /></span>حساب و فاکتورها</button>
@@ -130,9 +133,29 @@ export function CatalogScreen({ cat, q }: { cat?: string; q?: string }) {
   );
 }
 
+/** The customer's own settings from the sales manager: discount per product category and cash/cheque terms. */
+function MyTerms() {
+  const { me, go } = useApp();
+  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+  if (!a) return null;
+  const ds = Object.entries(a.discounts ?? {});
+  const t = a.terms;
+  if (!ds.length && !a.defaultDiscount && t.cashPercent === 100 && !Number(t.cashDiscountPct ?? 0)) return null;
+  return (
+    <section className="myterms">
+      <div className="h"><b>شرایط اختصاصی {a.name}</b><small>قیمت‌های کاتالوگ با همین درصدها نمایش داده می‌شود</small></div>
+      <div className="chipsrow">
+        {ds.map(([slug, d]) => <button key={slug} type="button" className="dchip" onClick={() => go({ name: 'catalog', cat: slug })}><span>{d.name}</span><b className="num">{fa(d.pct)}٪</b></button>)}
+        {!!a.defaultDiscount && <span className="dchip"><span>سایر دسته‌ها</span><b className="num">{fa(a.defaultDiscount)}٪</b></span>}
+      </div>
+      <small className="num">تسویه: نقد {fa(t.cashPercent)}٪{Number(t.cashDiscountPct ?? 0) ? ` (${fa(t.cashDiscountPct!)}٪ تخفیف نقدی)` : ''}{t.cashPercent < 100 ? ` · چک ${fa(100 - t.cashPercent)}٪${t.chequeDueDays.length ? ` ${t.chequeDueDays.map(d => fa(d)).join('/')} روزه` : ''}${Number(t.chequeMarkupPct ?? 0) ? ` (+${fa(t.chequeMarkupPct!)}٪)` : ''}` : ''}</small>
+    </section>
+  );
+}
+
 // ───────── product ─────────
 export function ProductScreen({ slug }: { slug: string }) {
-  const { add, go } = useApp();
+  const { add, go, me } = useApp();
   const f = useApi<Family>(`/catalog/families/${encodeURIComponent(slug)}`);
   const rel = useApi<FamilyCard[]>(f.data ? `/catalog/families?category=${encodeURIComponent(f.data.category.slug)}` : null);
   if (f.error) return <Failed msg="این محصول پیدا نشد." retry={f.reload} />;
@@ -146,7 +169,7 @@ export function ProductScreen({ slug }: { slug: string }) {
       <div className="pad" style={{ display: 'grid', gap: 18 }}>
         <div className="pd-title"><span className="crumb">{p.category.name}{p.brand ? ` · ${p.brand.name}` : ''}{p.model ? ` · ${p.model}` : ''}</span><h1>{p.name}</h1></div>
         {p.description && <p style={{ margin: 0, color: 'var(--muted)' }}>{p.description}</p>}
-        <Picker f={p} onAdd={l => { add(l); }} />
+        <Picker f={p} pct={discountOf(me, p.category.slug)} onAdd={l => { add(l); }} />
         {!!p.specs?.length && <div className="stats">{p.specs.map(([a, b]) => <div key={a}><span>{a}</span><b>{b}</b></div>)}</div>}
         <button type="button" className="cta ghost" onClick={() => go({ name: 'cart' })}><Icon n="cart" s={18} />&nbsp; مشاهده سبد</button>
       </div>

@@ -60,7 +60,7 @@ export class SalesAgentService {
 
   /** One customer message. Text, or a voice note (transcribed); photos and files go to a person. */
   async handle(userId: string, input: { text?: string | null; kind: 'TEXT' | 'VOICE' | 'PHOTO' | 'DOCUMENT'; fileId?: string | null; audio?: { buf: Buffer; name: string } }): Promise<AgentTurn> {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, include: { memberships: { include: { customer: { include: { terms: true, support: { select: { firstName: true, lastName: true } } } } } } } });
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, include: { memberships: { include: { customer: { include: { terms: true, categoryDiscounts: { include: { category: { select: { name: true } } } }, support: { select: { firstName: true, lastName: true } } } } } } } });
     const account = user.memberships[0]?.customer ?? null;
     const conv = await this.conversationFor(user.telegramId, account?.id);
     const msg = await this.prisma.message.create({ data: { conversationId: conv.id, direction: 'IN', kind: input.kind, text: input.text ?? null, telegramFileId: input.fileId ?? null } });
@@ -210,6 +210,7 @@ export class SalesAgentService {
     const context = [
       `مشتری: ${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'بی‌نام'}${account ? ` · ${account.name}${account.isApproved ? '' : ' (حساب هنوز تأیید نشده)'}` : ' · هنوز حساب مشتری ندارد (برای اولین سفارش نام فروشگاه لازم است)'}`,
       account?.terms ? `شرایط پرداخت: ${account.terms.cashPercent}٪ نقد${Number(account.terms.cashDiscountPct) ? ` با ${account.terms.cashDiscountPct}٪ تخفیف نقدی` : ''}${account.terms.cashPercent < 100 ? `، ${100 - account.terms.cashPercent}٪ چک${account.terms.chequeDueDays.length ? ` ${account.terms.chequeDueDays.join('/')} روزه` : ''}${Number(account.terms.chequeMarkupPct) ? ` با ${account.terms.chequeMarkupPct}٪ افزایش` : ''}` : ''}` : '',
+      account?.categoryDiscounts.length ? `تخفیف اختصاصی این مشتری: ${account.categoryDiscounts.map(d => `${d.category.name} ${Number(d.pct)}٪`).join('، ')}. قیمت search_catalog قیمت لیست است؛ قیمت با تخفیف مشتری در نتیجه‌ی set_draft می‌آید و همان را بگو.` : '',
       current?.lines.length ? `پیش‌نویس فعلی: ${current.lines.map(l => `${l.name} ${l.label} × ${l.quantity}`).join('، ')}` : 'پیش‌نویس فعلی: خالی',
       transcript ? `گفتگوی قبلی:\n${transcript}` : '',
       `پیام جدید مشتری: ${text}`,

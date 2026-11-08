@@ -5,6 +5,7 @@ import { ProductsPage } from './pages/Products';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
 import { AccountsPage } from './pages/Accounts';
+import { CustomersPage } from './pages/Customers';
 import { WarehousePage } from './pages/Warehouse';
 import { MessagesPage } from './pages/Messages';
 import { ProxyPage } from './pages/Proxy';
@@ -36,6 +37,7 @@ const AREAS: Area[] = [
     { id: 'chats/all', title: 'همه', roles: AS },
   ] },
   { id: 'customers', title: 'مشتریان و مالی', icon: 'wallet', roles: AS, pages: [
+    { id: 'customers/settings', title: 'تنظیمات مشتریان', roles: AS },
     { id: 'customers/new', title: 'مشتریان جدید', roles: AS, badge: 'newCustomers' },
     { id: 'customers/accounts', title: 'حساب مشتریان', roles: AS },
     { id: 'customers/receipts', title: 'رسیدهای پرداخت', roles: AS, badge: 'reportedPayments' },
@@ -54,7 +56,7 @@ const AREAS: Area[] = [
 ];
 const LEAVES = AREAS.flatMap(a => a.pages.map(p => ({ ...p, area: a })));
 // older names that pages and links still use
-const ALIAS: Record<string, string> = { dashboard: 'home/dashboard', approvals: 'orders/agent', chats: 'chats/human', warehouse: 'warehouse/queue', accounts: 'customers/accounts', products: 'catalog/products', prices: 'catalog/prices', staff: 'system/staff', messages: 'system/messages', proxy: 'system/proxy' };
+const ALIAS: Record<string, string> = { dashboard: 'home/dashboard', approvals: 'orders/agent', chats: 'chats/human', warehouse: 'warehouse/queue', accounts: 'customers/accounts', customers: 'customers/settings', products: 'catalog/products', prices: 'catalog/prices', staff: 'system/staff', messages: 'system/messages', proxy: 'system/proxy' };
 function parseHash(): [string, string | undefined] {
   const h = location.hash.slice(1);
   const leaf = LEAVES.find(l => h === l.id || h.startsWith(l.id + '/'));
@@ -169,6 +171,7 @@ export function App() {
           {id === 'orders/history' && <ApprovalsPage view="hist" />}
           {id.startsWith('chats/') && <ChatsPage key={id} mode={id.slice(6) as 'human' | 'ai' | 'all'} focus={focus} onFocus={setFocus} />}
           {id === 'customers/new' && <ApprovalsPage view="customers" />}
+          {id === 'customers/settings' && <CustomersPage focus={focus} onFocus={setFocus} />}
           {id === 'customers/accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
           {id === 'customers/receipts' && <ApprovalsPage view="pay" />}
           {id === 'warehouse/queue' && <WarehousePage />}

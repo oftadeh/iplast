@@ -289,3 +289,11 @@ fieldset.plain{border:0;padding:0;margin:0;min-width:0}
 .shipform label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
 .shipform .wide{grid-column:1/-1}
 @media (max-width:560px){.shipform{grid-template-columns:1fr}}
+.memadd{display:grid;grid-template-columns:1.2fr 1fr 150px auto;gap:6px}
+@media (max-width:760px){.memadd{grid-template-columns:1fr 1fr}}
+.catdisc{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px}
+.catdisc label{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+.catdisc label.on{border-color:var(--accent,#2563eb);background:rgba(37,99,235,.05)}
+.catdisc label>span:first-child{display:grid;gap:2px;font-size:13px}
+.pctin{display:flex;align-items:center;gap:4px;font-weight:700}
+.pctin .in{width:72px;height:36px;text-align:center}
