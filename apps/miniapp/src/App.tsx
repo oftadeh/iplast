@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
-import { CartLine, Family, Me, api, discountOf, loadCart, login, saveCart } from './lib';
+import { CartLine, Family, Me, api, loadCart, login, mainAccount, saveCart } from './lib';
 import { haptic, setupTelegram, tg } from './telegram';
 import { ChatScreen } from './chat';
 import { Picker } from './Picker';
@@ -137,7 +137,7 @@ export function App() {
                 <div><h3>{sheet.f.name}</h3><div className="meta num">{sheet.f.category.name}{sheet.f.brand ? ` · ${sheet.f.brand.name}` : ''} · {sheet.f.variants.length.toLocaleString('fa-IR')} سایز</div>
                   <button type="button" className="link" onClick={() => go({ name: 'product', slug: sheet.slug })}>جزئیات محصول</button></div>
               </div>
-              <Picker key={sheet.slug} f={sheet.f} pct={discountOf(me, sheet.f.category.slug)} onAdd={l => { add(l); setSheet(null); }} />
+              <Picker key={sheet.slug} f={sheet.f} sale={mainAccount(me)?.sale} onAdd={l => { add(l); setSheet(null); }} />
             </>
           )}
         </div>

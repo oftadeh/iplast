@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyInitData, signInitData, formatRial, splitCashCheque, applyTerms } from './index';
+import { verifyInitData, signInitData, formatRial, splitCashCheque, orderBreakdown, salePct, netPrice, allowedModes } from './index';
 
 const TOKEN = '123456:TEST-TOKEN';
 const now = Date.UTC(2026, 10, 7, 9, 0, 0);
@@ -30,19 +30,34 @@ test('cash/cheque split keeps the total', () => {
   assert.equal(s.cash, 181260000n);
 });
 
-test('applies cash discount, cheque markup and splits cheques', () => {
-  const b = applyTerms(100_000_000n, { cashPercent: 30, chequeDueDays: [60, 90], cashDiscountPct: '2', chequeMarkupPct: '3.5' }, 0n, 1_000_000n);
-  assert.equal(b.cashBase, 30_000_000n);
-  assert.equal(b.cashDiscount, 600_000n);
-  assert.equal(b.chequeMarkup, 2_450_000n);
-  assert.equal(b.cash, 30_400_000n);
-  assert.equal(b.cheque, 72_450_000n);
-  assert.equal(b.cheques.length, 2);
-  assert.equal(b.cheques[0].amount + b.cheques[1].amount, b.cheque);
+test('cash sale: 40% off the list, all in cash', () => {
+  const t = { cashPct: '40', termPct: 30, termMonths: 3 };
+  const unit = netPrice(1_000_000n, salePct(t, 'CASH'));
+  assert.equal(unit, 600_000n);
+  const b = orderBreakdown([{ quantity: 10, unitPrice: unit, listPrice: 1_000_000n }], 'CASH', 0, 0n, 50_000n);
+  assert.equal(b.listTotal, 10_000_000n);
+  assert.equal(b.saleDiscount, 4_000_000n);
+  assert.equal(b.total, 6_050_000n);
+  assert.equal(b.cash, b.total);
+  assert.equal(b.cheques.length, 0);
+});
+test('term sale: 30% off, one cheque after 3 months, freight in cash', () => {
+  const t = { cashPct: 40, termPct: 30, termMonths: 3 };
+  const unit = netPrice(1_000_000n, salePct(t, 'TERM'));
+  const b = orderBreakdown([{ quantity: 10, unitPrice: unit, listPrice: 1_000_000n }, { quantity: 1, unitPrice: null }], 'TERM', 3, 100_000n, 50_000n);
+  assert.equal(b.subtotal, 7_000_000n);
+  assert.equal(b.cheque, 6_900_000n);
+  assert.equal(b.cash, 50_000n);
+  assert.deepEqual(b.cheques.map(c => c.days), [90]);
   assert.equal(b.total, b.cash + b.cheque);
 });
-test('all cash with no terms', () => {
-  const b = applyTerms(5_000n, null, 1_000n);
-  assert.equal(b.total, 4_000n);
-  assert.equal(b.cheques.length, 0);
+test('category overrides the customer default; empty means default', () => {
+  const t = { cashPct: 40, termPct: 30, categories: { pipe: { cash: 35, term: null }, fit: { cash: '', term: '25' } } };
+  assert.equal(salePct(t, 'CASH', 'pipe'), 35);
+  assert.equal(salePct(t, 'TERM', 'pipe'), 30);
+  assert.equal(salePct(t, 'CASH', 'fit'), 40);
+  assert.equal(salePct(t, 'TERM', 'fit'), 25);
+  assert.equal(salePct(null, 'CASH'), 0);
+  assert.deepEqual(allowedModes({ allowCash: false, allowTerm: false }), ['CASH']);
+  assert.deepEqual(allowedModes({ allowCash: false }), ['TERM']);
 });

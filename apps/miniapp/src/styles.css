@@ -414,3 +414,20 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .myterms .chipsrow{display:flex;gap:6px;flex-wrap:wrap}
 .dchip{display:inline-flex;gap:6px;align-items:center;border:0;border-radius:12px;padding:6px 10px;background:#e3f5ec;color:#0f5c3c;font:inherit;font-size:12px}
 .dchip b{font-weight:800}
+.pricebox.modes2{display:grid;gap:8px;justify-content:stretch}
+.pmode{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.pmode+.pmode{border-top:1px solid var(--line);padding-top:8px}
+.pmode .p{font-size:22px}
+.mname{font-size:13px;font-weight:700}
+.listp{font-size:12px;color:var(--muted)}
+.listp s{opacity:.8}
+.pr2{display:grid;gap:1px;font-size:12px}
+.pr2 small{color:var(--muted)}
+.paymodes{display:grid;gap:8px;padding-inline:16px}
+.paymodes>p{font-size:12px;line-height:1.7}
+.paymodes label{display:flex;align-items:center;gap:10px;background:var(--surface);border:1.5px solid var(--line);border-radius:20px;padding:12px;cursor:pointer}
+.paymodes label:has(input:checked){border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 14%,transparent)}
+.paymodes input{accent-color:var(--brand);width:18px;height:18px}
+.paymodes label>span{display:grid;gap:2px;flex:1}
+.paymodes small{color:var(--muted);font-size:12px}
+.paymodes b.num{font-size:15px}

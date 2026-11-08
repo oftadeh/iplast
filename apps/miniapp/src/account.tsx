@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from './App';
 import { Icon } from './icons';
-import { ApiError, apiForm, fa, jalaliToIso, jalaliToday, shrinkPhoto, toEnDigits, useApi } from './lib';
+import { ApiError, apiForm, fa, jalaliToIso, payModeFa, jalaliToday, shrinkPhoto, toEnDigits, useApi } from './lib';
 
 interface Invoice { id: string; number: number; status: 'ISSUED' | 'CANCELLED'; issuedAt: string; total: string; itemCount: number; order: { number: number } | null }
 interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; invoice: { number: number } | null }
@@ -12,7 +12,7 @@ interface Account {
   statement: { kind: 'invoice' | 'payment'; id: string; title: string; at: string; debit: string; credit: string; balance: string }[];
 }
 interface InvoiceDetail {
-  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; total: string; cashPercent: number; note: string | null;
+  id: string; number: number; status: string; issuedAt: string; subtotal: string; discount: string; shipping: string; total: string; cashPercent: number; payMode?: string; termMonths?: number; listTotal?: string; note: string | null;
   customer: { name: string; city: string | null }; order: { id: string; number: number } | null; split: { cash: string; cheque: string }; paidAgainst: string;
   items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string; total: string }[];
 }
@@ -109,12 +109,14 @@ export function InvoiceScreen({ id }: { id: string }) {
         ))}
       </div>
       <div className="summary">
+        <div><span>نوع خرید</span><b>{payModeFa(i.payMode, i.termMonths)}</b></div>
+        {BigInt(i.listTotal ?? '0') > BigInt(i.subtotal) && <div><span>تخفیف {payModeFa(i.payMode)} از قیمت لیست</span><span className="num">−{rial(String(BigInt(i.listTotal!) - BigInt(i.subtotal)))}</span></div>}
         <div><span>جمع اقلام</span><span className="num">{rial(i.subtotal)}</span></div>
         {BigInt(i.discount) > 0n && <div><span>تخفیف</span><span className="num">−{rial(i.discount)}</span></div>}
         {BigInt(i.shipping) > 0n && <div><span>هزینه‌ی حمل</span><span className="num">{rial(i.shipping)}</span></div>}
         <div className="big"><span>مبلغ فاکتور</span><b className="num">{fa(i.total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
-        <div><span>نقد {fa(i.cashPercent)}٪</span><span className="num">{rial(i.split.cash)}</span></div>
-        {i.cashPercent < 100 && <div><span>چک {fa(100 - i.cashPercent)}٪</span><span className="num">{rial(i.split.cheque)}</span></div>}
+        {BigInt(i.split.cash) > 0n && <div><span>{i.payMode === 'TERM' ? 'نقد (کرایه)' : 'نقد'}</span><span className="num">{rial(i.split.cash)}</span></div>}
+        {BigInt(i.split.cheque) > 0n && <div><span>چک{i.payMode === 'TERM' && i.termMonths ? `، سررسید ${fa(i.termMonths)} ماه بعد از فاکتور` : ''}</span><span className="num">{rial(i.split.cheque)}</span></div>}
         {BigInt(i.paidAgainst) > 0n && <p className="num">پرداخت‌شده بابت این فاکتور: {rial(i.paidAgainst)}</p>}
       </div>
       {i.note && <div className="notice" style={{ margin: '12px 16px 0' }}>{i.note}</div>}

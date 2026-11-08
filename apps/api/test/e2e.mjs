@@ -47,14 +47,19 @@ assert.equal(again.id, o1.id); step('idempotency key returns the same order');
 const me = await call('GET', '/api/me', null, owner);
 const cust = me.accounts[0]; assert.equal(cust.role, 'OWNER'); step('owner account created on first order');
 
-await call('PUT', `/api/admin/customers/${cust.customerId}/terms`, { cashPercent: 30, chequeDueDays: [60, 90] }, admin);
-await call('PUT', `/api/admin/customers/${cust.customerId}/terms`, { cashPercent: 130 }, admin, 400); step('admin sets 30% cash / 70% cheque; invalid percent rejected');
+const net = (list, pct) => String(BigInt(list) - BigInt(list) * BigInt(Math.round(pct * 100)) / 10000n);
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: '۴۰', termPct: 30, termMonths: 3 }, admin);
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: 130 }, admin, 400);
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: 40, allowCash: false, allowTerm: false }, admin, 400); step('admin sets cash 40% / term 30% for 3 months; invalid percent or no mode rejected');
 await call('POST', `/api/admin/customers/${cust.customerId}/members`, { telegramId: '7002', role: 'BUYER' }, admin); step('admin adds a second purchasing agent');
 
 const meB = await call('GET', '/api/me', null, buyer);
-assert.equal(meB.accounts[0].terms.cashPercent, 30); step('buyer sees the default terms');
+assert.equal(meB.accounts[0].sale.cashPct, 40); assert.equal(meB.accounts[0].sale.termMonths, 3); assert.deepEqual(meB.accounts[0].sale.modes, ['CASH', 'TERM']); step('buyer sees their cash and term terms');
+const q0 = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
+assert.deepEqual(q0[priced.id], { list: priced.price, cash: net(priced.price, 40), term: net(priced.price, 30) }); step('quote gives list, cash (−40%) and term (−30%) prices');
 const o2 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 10 }] }, buyer);
-assert.equal(o2.placedBy.firstName, 'Buyer'); assert.equal(o2.split.cash, String(BigInt(o2.total) * 30n / 100n)); step('buyer order records who placed it and splits cash/cheque');
+assert.equal(o2.placedBy.firstName, 'Buyer'); assert.equal(o2.payMode, 'CASH'); assert.equal(o2.items[0].unitPrice, net(priced.price, 40)); assert.equal(o2.items[0].listPrice, priced.price);
+assert.equal(o2.breakdown.cash, o2.payable); assert.equal(o2.breakdown.saleDiscount, String(BigInt(priced.price) * 10n - BigInt(o2.total))); step('buyer order: cash sale at list −40%, all in cash, records who placed it');
 
 const buyerList = await call('GET', '/api/orders', null, buyer);
 assert.deepEqual(buyerList.map(o => o.id), [o2.id]);
@@ -71,7 +76,7 @@ await call('POST', '/api/admin/staff', { telegramId: '7101', firstName: 'دیگ�
 const sales = await login(7100, 'Sales'); const sales2 = await login(7101, 'Other');
 await call('PATCH', `/api/admin/customers/${cust.customerId}`, { supportId: staff.id }, admin); step('admin adds sales agents and assigns one to the customer');
 await call('PATCH', `/api/admin/customers/${cust.customerId}`, { supportId: null }, sales, 403); step('sales agent cannot reassign the customer');
-await call('PUT', `/api/admin/customers/${cust.customerId}/terms`, { cashPercent: 50 }, sales, 403); step('sales agent cannot change cash/cheque terms');
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: 50 }, sales, 403); step('sales agent cannot change the sale terms');
 
 // two-step approval: the customer's sales agent first, then the manager
 await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'final_ok' }, admin, 400); step('manager cannot final-approve before the sales agent');
@@ -101,12 +106,15 @@ const accAfter = await call('GET', `/api/admin/accounts/customers/${cust.custome
 const inv1 = accAfter.invoices.find(i => i.order?.number === o1.number);
 assert.ok(inv1); assert.equal(inv1.total, fin.payable); step('final approval issues the invoice with the proforma amount');
 
-// customer terms: cash discount and cheque markup apply to the money
-await call('PUT', `/api/admin/customers/${cust.customerId}/terms`, { cashPercent: 30, chequeDueDays: [60, 90], cashDiscountPct: 2, chequeMarkupPct: 3 }, admin);
-const o3 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 100 }] }, buyer);
-const sub3 = BigInt(priced.price) * 100n, cashB = sub3 * 30n / 100n, chqB = sub3 - cashB;
-const want3 = cashB - cashB * 200n / 10000n + chqB + chqB * 300n / 10000n;
-assert.equal(o3.payable, String(want3)); assert.equal(o3.breakdown.cheques.length, 2); step('cash discount and cheque markup applied; cheque share split into 60/90-day cheques');
+// term sale: list −30%, one cheque due after 3 months; the agent can switch a proforma to cash
+const o3 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 100 }], payMode: 'TERM' }, buyer);
+const sub3 = BigInt(net(priced.price, 30)) * 100n;
+assert.equal(o3.payMode, 'TERM'); assert.equal(o3.termMonths, 3); assert.equal(o3.payable, String(sub3));
+assert.equal(o3.breakdown.cheque, String(sub3)); assert.deepEqual(o3.breakdown.cheques.map(c => c.days), [90]); step('term sale: list −30%, paid by one cheque due in 3 months');
+const o3b = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 10 }], payMode: 'TERM' }, buyer);
+const sw = await call('POST', `/api/admin/orders/${o3b.id}/decide`, { action: 'sales_ok', edit: { payMode: 'CASH' } }, sales);
+assert.equal(sw.status, 'PROFORMA_SENT'); assert.equal(sw.payMode, 'CASH'); assert.equal(sw.items[0].unitPrice, net(priced.price, 40)); assert.equal(sw.breakdown.cheque, '0'); step('agent switches term → cash: lines repriced at −40%, customer must accept');
+await call('POST', `/api/admin/orders/${o3b.id}/decide`, { action: 'reject', comment: 'آزمایشی' }, sales);
 const s3 = await call('POST', `/api/admin/orders/${o3.id}/decide`, { action: 'sales_ok' }, sales);
 assert.equal(s3.status, 'SALES_APPROVED'); step('nothing changed by the agent → straight to the manager, no customer step');
 await call('POST', `/api/admin/orders/${o3.id}/decide`, { action: 'reject', comment: 'آزمایشی' }, admin);
@@ -186,22 +194,23 @@ await call('POST', `/api/admin/accounts/payments/${p1.id}/review`, { ok: false }
 const acc1 = await call('GET', '/api/me/account', null, owner);
 assert.equal(acc1.summary.paid, '50000000'); assert.equal(acc1.summary.pendingCheques, '80000000'); assert.equal(acc1.summary.reported, '0'); step('account: transfer counted, cheque pending until cleared');
 
-// customer settings: discount per product category
-const disc0 = await call('GET', `/api/admin/customers/${cust.customerId}/discounts`, null, sales);
-const cat = disc0.categories.find(c => c.slug === male.category.slug);
-assert.ok(cat && cat.pct === 0); step('every category listed with no discount yet');
-await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 5 }] }, sales, 403); step('only the manager sets category discounts');
-await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 120 }] }, admin, 400);
-const disc1 = await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: '۷٫۵' }] }, admin);
-assert.equal(disc1.categories.find(c => c.id === cat.id).pct, 7.5); step('manager sets 7.5% on a category (Persian digits accepted); over 100 refused');
+// customer settings: different percentages for one product category
+const sale0 = await call('GET', `/api/admin/customers/${cust.customerId}/sale`, null, sales);
+const cat = sale0.categories.find(c => c.slug === male.category.slug);
+assert.ok(cat && cat.cash === null && cat.term === null); step('every category listed, following the default');
+const body = (cash, term) => ({ cashPct: 40, termPct: 30, termMonths: 3, categories: [{ id: cat.id, cash, term }] });
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body(5, ''), sales, 403); step('only the manager sets category percentages');
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body(120, ''), admin, 400);
+const sale1 = await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body('۳۵٫۵', ''), admin);
+assert.equal(sale1.categories.find(c => c.id === cat.id).cash, 35.5); assert.equal(sale1.categories.find(c => c.id === cat.id).term, null); step('manager sets 35.5% cash on a category, term follows the default (Persian digits accepted)');
 const meD = await call('GET', '/api/me', null, buyer);
-assert.equal(meD.accounts[0].discounts[male.category.slug].pct, 7.5); step('customer sees their category discount in their panel');
+assert.deepEqual(meD.accounts[0].sale.categories[male.category.slug], { name: cat.name, cash: 35.5, term: 30 }); step('customer sees the category percentages in their panel');
 const q = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
-assert.equal(q[priced.id], String(BigInt(priced.price) * 9250n / 10000n)); step('their price is the list price minus 7.5%');
+assert.equal(q[priced.id].cash, net(priced.price, 35.5)); assert.equal(q[priced.id].term, net(priced.price, 30)); step('their cash price uses the category %, term price the default');
 const o4 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 4 }] }, buyer);
-assert.equal(o4.items[0].unitPrice, q[priced.id]); step('orders use the discounted price');
-await call('PUT', `/api/admin/customers/${cust.customerId}/discounts`, { items: [{ categoryId: cat.id, pct: 0 }] }, admin);
-assert.equal((await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer))[priced.id], priced.price); step('0 removes the discount');
+assert.equal(o4.items[0].unitPrice, q[priced.id].cash); step('orders use the category price');
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body('', ''), admin);
+assert.equal((await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer))[priced.id].cash, net(priced.price, 40)); step('empty returns the category to the default');
 await call('POST', `/api/admin/orders/${o4.id}/decide`, { action: 'reject', comment: 'آزمایشی' }, admin);
 
 // financial documents on the customer's file

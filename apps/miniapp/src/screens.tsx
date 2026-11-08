@@ -3,7 +3,7 @@ import { useApp } from './App';
 import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
-  ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, discountOf, fa, withPct, lineTotal, lineUnits, personName, photoUrl, previewTerms, short, useApi,
+  ApiError, Category, Family, FamilyCard, Order, PayMode, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, mainAccount, payModeFa, pctFor, personName, photoUrl, salePrices, short, useApi,
 } from './lib';
 import { BOT_USERNAME, haptic } from './telegram';
 
@@ -12,7 +12,8 @@ const badgeCls = (b: string) => (b === 'جدید' ? 'new' : b === 'پرفروش'
 
 function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
   const { go, quickAdd, me } = useApp();
-  const pct = discountOf(me, f.category.slug);
+  const sale = mainAccount(me)?.sale;
+  const ps = f.minPrice ? salePrices(sale, f.category.slug, BigInt(f.minPrice)) : [];
   return (
     <div className="pcard">
       <button type="button" className="pimg" aria-label={f.name} onClick={() => (withAdd ? quickAdd(f.slug) : go({ name: 'product', slug: f.slug }))}>
@@ -22,8 +23,8 @@ function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
       </button>
       {withAdd && <button type="button" className="add-mini" style={{ position: 'relative', marginTop: -50, marginInlineStart: 'auto', marginInlineEnd: 8 }} aria-label={`افزودن ${f.name}`} onClick={() => quickAdd(f.slug)}><Icon n="plus" s={18} /></button>}
       <button type="button" className="link" style={{ color: 'inherit', textAlign: 'right', fontWeight: 'inherit' }} onClick={() => go({ name: 'product', slug: f.slug })}><b>{f.name}</b></button>
-      <span className="pr num">{f.minPrice ? <>از <strong>{fa(withPct(BigInt(f.minPrice), pct))}</strong> ریال</> : <span className="tag warn">استعلامی</span>}</span>
-      {pct > 0 && f.minPrice && <span className="mypct num">{fa(pct)}٪ تخفیف شما</span>}
+      <span className="pr num">{ps.length ? <>از <strong>{fa(ps[0].price)}</strong> ریال{sale ? <small className="muted"> {payModeFa(ps[0].mode)}</small> : null}</> : <span className="tag warn">استعلامی</span>}</span>
+      {ps.length > 1 && <span className="mypct num">مدت‌دار {fa(sale!.termMonths)} ماهه: {fa(ps[1].price)}</span>}
     </div>
   );
 }
@@ -133,22 +134,26 @@ export function CatalogScreen({ cat, q }: { cat?: string; q?: string }) {
   );
 }
 
-/** The customer's own settings from the sales manager: discount per product category and cash/cheque terms. */
+/** The customer's own terms from the sales manager: cash and term percentages, and the categories that differ. */
 function MyTerms() {
   const { me, go } = useApp();
-  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+  const a = mainAccount(me);
   if (!a) return null;
-  const ds = Object.entries(a.discounts ?? {});
-  const t = a.terms;
-  if (!ds.length && !a.defaultDiscount && t.cashPercent === 100 && !Number(t.cashDiscountPct ?? 0)) return null;
+  const t = a.sale;
+  const ds = Object.entries(t.categories);
+  if (!ds.length && !t.cashPct && !t.termPct) return null;
+  const both = t.modes.length > 1;
   return (
     <section className="myterms">
-      <div className="h"><b>شرایط اختصاصی {a.name}</b><small>قیمت‌های کاتالوگ با همین درصدها نمایش داده می‌شود</small></div>
+      <div className="h"><b>شرایط خرید {a.name}</b><small>قیمت‌های کاتالوگ با همین درصدها، از قیمت لیست، حساب شده است</small></div>
       <div className="chipsrow">
-        {ds.map(([slug, d]) => <button key={slug} type="button" className="dchip" onClick={() => go({ name: 'catalog', cat: slug })}><span>{d.name}</span><b className="num">{fa(d.pct)}٪</b></button>)}
-        {!!a.defaultDiscount && <span className="dchip"><span>سایر دسته‌ها</span><b className="num">{fa(a.defaultDiscount)}٪</b></span>}
+        {t.modes.includes('CASH') && <span className="dchip"><span>نقدی</span><b className="num">{fa(t.cashPct)}٪</b></span>}
+        {t.modes.includes('TERM') && <span className="dchip"><span>مدت‌دار {fa(t.termMonths)} ماهه</span><b className="num">{fa(t.termPct)}٪</b></span>}
       </div>
-      <small className="num">تسویه: نقد {fa(t.cashPercent)}٪{Number(t.cashDiscountPct ?? 0) ? ` (${fa(t.cashDiscountPct!)}٪ تخفیف نقدی)` : ''}{t.cashPercent < 100 ? ` · چک ${fa(100 - t.cashPercent)}٪${t.chequeDueDays.length ? ` ${t.chequeDueDays.map(d => fa(d)).join('/')} روزه` : ''}${Number(t.chequeMarkupPct ?? 0) ? ` (+${fa(t.chequeMarkupPct!)}٪)` : ''}` : ''}</small>
+      {ds.length > 0 && <div className="chipsrow">{ds.map(([slug, d]) => (
+        <button key={slug} type="button" className="dchip" onClick={() => go({ name: 'catalog', cat: slug })}><span>{d.name}</span><b className="num">{[t.modes.includes('CASH') ? `${both ? 'نقد ' : ''}${fa(d.cash)}٪` : '', t.modes.includes('TERM') ? `${both ? 'مدت ' : ''}${fa(d.term)}٪` : ''].filter(Boolean).join(' · ')}</b></button>
+      ))}</div>}
+      {t.modes.includes('TERM') && <small className="num">مدت‌دار یعنی پرداخت با چک، سررسید {fa(t.termMonths)} ماه بعد. موقع ثبت سفارش نوع خرید را انتخاب می‌کنید.</small>}
     </section>
   );
 }
@@ -169,7 +174,7 @@ export function ProductScreen({ slug }: { slug: string }) {
       <div className="pad" style={{ display: 'grid', gap: 18 }}>
         <div className="pd-title"><span className="crumb">{p.category.name}{p.brand ? ` · ${p.brand.name}` : ''}{p.model ? ` · ${p.model}` : ''}</span><h1>{p.name}</h1></div>
         {p.description && <p style={{ margin: 0, color: 'var(--muted)' }}>{p.description}</p>}
-        <Picker f={p} pct={discountOf(me, p.category.slug)} onAdd={l => { add(l); }} />
+        <Picker f={p} sale={mainAccount(me)?.sale} onAdd={l => { add(l); }} />
         {!!p.specs?.length && <div className="stats">{p.specs.map(([a, b]) => <div key={a}><span>{a}</span><b>{b}</b></div>)}</div>}
         <button type="button" className="cta ghost" onClick={() => go({ name: 'cart' })}><Icon n="cart" s={18} />&nbsp; مشاهده سبد</button>
       </div>
@@ -186,7 +191,8 @@ export function CartScreen() {
   const [newName, setNewName] = useState('');
   const [newCity, setNewCity] = useState('');
   const [note, setNote] = useState('');
-  const [prices, setPrices] = useState<Record<string, string | null> | null>(null);
+  const [prices, setPrices] = useState<Record<string, { list: string | null; cash: string | null; term: string | null }> | null>(null);
+  const [payMode, setPayMode] = useState<PayMode | ''>('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [idem] = useState(() => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()));
@@ -197,18 +203,21 @@ export function CartScreen() {
   // personal prices of this customer (falls back to the list price on the server)
   useEffect(() => {
     if (!authed || !cart.length) { setPrices(null); return; }
-    api<Record<string, string | null>>('/me/quote', { method: 'POST', body: { variantIds: cart.map(c => c.variantId), customerId: acct || undefined } }).then(setPrices, () => setPrices(null));
+    api<Record<string, { list: string | null; cash: string | null; term: string | null }>>('/me/quote', { method: 'POST', body: { variantIds: cart.map(c => c.variantId), customerId: acct || undefined } }).then(setPrices, () => setPrices(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, idsKey, acct]);
 
   if (!cart.length) return (<><div className="top"><h1>سبد سفارش</h1></div><div className="empty">سبد خالی است.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div></>);
 
-  const lines = cart.map(l => ({ ...l, price: prices && l.variantId in prices ? prices[l.variantId] : l.price }));
-  const total = lines.reduce((s, l) => s + (lineTotal(l) ?? 0n), 0n);
+  const sale = account?.sale;
+  const modes: PayMode[] = sale?.modes ?? ['CASH'];
+  const mode: PayMode = payMode && modes.includes(payMode) ? payMode : modes[0];
+  const priceIn = (l: typeof cart[number], m: PayMode) => (prices && l.variantId in prices ? prices[l.variantId][m === 'CASH' ? 'cash' : 'term'] : l.price);
+  const totalIn = (m: PayMode) => cart.reduce((s, l) => s + (lineTotal({ ...l, price: priceIn(l, m) }) ?? 0n), 0n);
+  const lines = cart.map(l => ({ ...l, price: priceIn(l, mode) }));
+  const total = totalIn(mode);
+  const listTotal = prices ? cart.reduce((s, l) => s + (lineTotal({ ...l, price: prices[l.variantId]?.list ?? null }) ?? 0n), 0n) : 0n;
   const inq = lines.filter(l => l.price === null).length;
-  const pv = previewTerms(total, account?.terms);
-  const cashPct = pv.pct;
-  const cash = pv.cash;
   const upd = (i: number, patch: Partial<typeof cart[number]>) => setCart(cart.map((c, k) => (k === i ? { ...c, ...patch } : c)));
 
   const submit = async () => {
@@ -221,7 +230,7 @@ export function CartScreen() {
         body: {
           ...(accounts.length ? { customerId: acct } : { newCustomer: { name: newName.trim(), city: newCity.trim() || undefined } }),
           items: cart.map(l => ({ variantId: l.variantId, quantity: lineUnits(l), ...(l.mode === 'pack' && l.perPack ? { packs: l.n } : {}) })),
-          note: note.trim() || undefined, idempotencyKey: idem,
+          note: note.trim() || undefined, idempotencyKey: idem, payMode: mode,
         },
       });
       haptic('success'); setCart([]); reloadMe(); toast(`سفارش #${fa(o.number)} ثبت شد`);
@@ -268,15 +277,19 @@ export function CartScreen() {
             </label>
           ))}
         </div>
-        <div className="sec"><h2 style={{ fontSize: 16 }}>شرایط تسویه شما</h2></div>
-        <div className="split">
-          <div className="sbar"><i style={{ width: `${cashPct}%` }} /></div>
-          <div className="srow">
-            <div><span className="dot c" /><span>نقد <b className="num">{fa(cashPct)}٪</b></span><small className="num">{total ? `${fa(cash)} ریال` : '—'}</small></div>
-            <div><span className="dot q" /><span>چک <b className="num">{fa(100 - cashPct)}٪</b></span><small className="num">{total ? `${fa(pv.cheque)} ریال` : '—'}</small></div>
-          </div>
-          {(pv.cashDiscount > 0n || pv.chequeMarkup > 0n) && <p className="num">{pv.cashDiscount ? `تخفیف نقدی ${fa(account?.terms.cashDiscountPct ?? '0')}٪: ${fa(pv.cashDiscount)} ریال کمتر. ` : ''}{pv.chequeMarkup ? `افزایش چکی ${fa(account?.terms.chequeMarkupPct ?? '0')}٪: ${fa(pv.chequeMarkup)} ریال بیشتر.` : ''}</p>}
-          <p>{account?.terms.chequeDueDays.length ? `سررسید چک‌ها: ${account.terms.chequeDueDays.map(d => fa(d) + ' روزه').join('، ')}. ` : ''}این درصدها را واحد فروش برای حساب شما تعیین کرده است. مبالغ نهایی در پیش‌فاکتور می‌آید.</p>
+        <div className="sec"><h2 style={{ fontSize: 16 }}>نوع خرید</h2></div>
+        <div className="paymodes" role="radiogroup">
+          {modes.map(m => {
+            const pct = pctFor(sale, undefined, m);
+            return (
+              <label key={m}>
+                <input type="radio" name="paymode" checked={mode === m} onChange={() => setPayMode(m)} />
+                <span><b>{payModeFa(m, m === 'TERM' ? sale?.termMonths : null)}</b><small className="num">{m === 'CASH' ? 'پرداخت کامل نقد یا واریز' : `پرداخت با چک، سررسید ${fa(sale?.termMonths ?? 3)} ماه بعد`}{pct ? ` · ${fa(pct)}٪ زیر قیمت لیست` : ''}</small></span>
+                <b className="num">{totalIn(m) ? `${fa(totalIn(m))}` : '—'}</b>
+              </label>
+            );
+          })}
+          <p className="muted small" style={{ margin: 0 }}>درصدها را واحد فروش برای حساب شما تعیین کرده است{sale && Object.keys(sale.categories).length ? '؛ بعضی دسته‌ها درصد جدا دارند و در جمع بالا حساب شده‌اند' : ''}. مبلغ نهایی در پیش‌فاکتور می‌آید.</p>
         </div>
       </> : <>
         <div className="sec"><h2 style={{ fontSize: 16 }}>اولین سفارش شما</h2></div>
@@ -289,7 +302,9 @@ export function CartScreen() {
       <div className="summary">
         <div><span>اقلام قیمت‌دار</span><span className="num">{fa(lines.length - inq)} قلم</span></div>
         <div><span>اقلام استعلامی</span><span className="num">{fa(inq)} قلم</span></div>
-        <div className="big"><span>مبلغ تقریبی با شرایط تسویه</span><b className="num">{fa(accounts.length ? pv.total : total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
+        {listTotal > total && <div><span>جمع به قیمت لیست</span><span className="num"><s>{fa(listTotal)}</s></span></div>}
+        {listTotal > total && <div><span>تخفیف {payModeFa(mode)}</span><span className="num">{fa(listTotal - total)} ریال</span></div>}
+        <div className="big"><span>مبلغ تقریبی {accounts.length ? payModeFa(mode, mode === 'TERM' ? sale?.termMonths : null) : ''}</span><b className="num">{fa(total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
         <p>قیمت اقلام استعلامی، تخفیف و کرایه را کارشناس فروش در پیش‌فاکتور نهایی می‌کند.</p>
       </div>
       {err && <div className="notice warn">{err}</div>}
@@ -339,7 +354,6 @@ export function OrderScreen({ id }: { id: string }) {
   const stopped = d.status === 'REJECTED' || d.status === 'CANCELLED';
   const at = STEP_OF[d.status] ?? 0;
   const pct = Math.min(1, (at + 0.5) / 6), C = 2 * Math.PI * 34;
-  const cashPct = d.termsSnapshot?.cashPercent ?? 100;
   const lastComment = [...(d.events ?? [])].reverse().find(e => e.comment)?.comment;
   return (
     <>
@@ -362,7 +376,7 @@ export function OrderScreen({ id }: { id: string }) {
             <b className="num">{i.unitPrice !== null ? `${fa(BigInt(i.unitPrice) * BigInt(i.quantity))}` : <span className="tag warn">استعلامی</span>}</b></div>
         ))}
       </div>
-      <MoneySummary d={d} cashPct={cashPct} />
+      <MoneySummary d={d} />
       {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>
@@ -393,16 +407,19 @@ export function OrderScreen({ id }: { id: string }) {
   );
 }
 
-function MoneySummary({ d, cashPct }: { d: Order; cashPct: number }) {
+function MoneySummary({ d }: { d: Order }) {
   const b = d.breakdown;
   const priced = !d.items.some(i => i.unitPrice === null);
+  const n = (x?: string) => (x ? BigInt(x) : 0n);
   return (
     <div className="summary">
-      {b && BigInt(b.discount) > 0n && <div><span>تخفیف</span><span className="num">{fa(b.discount)} ریال</span></div>}
-      <div><span>نقد {fa(cashPct)}٪{b && BigInt(b.cashDiscount) > 0n ? ` (تخفیف نقدی ${fa(b.cashDiscountPct)}٪)` : ''}{b && BigInt(b.shipping) > 0n ? ' + کرایه' : ''}</span><span className="num">{fa(b?.cash ?? d.split?.cash ?? '0')} ریال</span></div>
-      <div><span>چک {fa(100 - cashPct)}٪{b && BigInt(b.chequeMarkup) > 0n ? ` (افزایش چکی ${fa(b.chequeMarkupPct)}٪)` : ''}</span><span className="num">{fa(b?.cheque ?? d.split?.cheque ?? '0')} ریال</span></div>
-      {b && b.cheques.length > 1 && b.cheques.map((c, i) => <div key={i} style={{ fontSize: 12 }}><span>چک {fa(i + 1)}{c.days !== null ? ` · ${fa(c.days)} روزه` : ''}</span><span className="num">{fa(c.amount)} ریال</span></div>)}
+      <div><span>نوع خرید</span><b>{payModeFa(b?.mode ?? d.payMode, b?.termMonths ?? d.termMonths)}</b></div>
+      {b && n(b.saleDiscount) > 0n && <><div><span>جمع به قیمت لیست</span><span className="num">{fa(b.listTotal!)} ریال</span></div><div><span>تخفیف {payModeFa(b.mode)}</span><span className="num">{fa(b.saleDiscount!)} ریال</span></div></>}
+      {b && n(b.discount) > 0n && <div><span>تخفیف کارشناس</span><span className="num">{fa(b.discount)} ریال</span></div>}
+      {b && n(b.shipping) > 0n && <div><span>کرایه</span><span className="num">{fa(b.shipping)} ریال</span></div>}
       <div className="big"><span>{priced ? 'مبلغ قابل پرداخت' : 'جمع تقریبی'}</span><b className="num">{fa(d.payable ?? d.total)} <small style={{ fontSize: 12, fontWeight: 600 }}>ریال</small></b></div>
+      {b && b.cheques.map((c, i) => <div key={i} style={{ fontSize: 12 }}><span>چک{c.days !== null ? `، سررسید ${fa(b.termMonths ?? Math.round(c.days / 30))} ماه بعد` : ''}</span><span className="num">{fa(c.amount)} ریال</span></div>)}
+      {b && n(b.cheque) > 0n && n(b.cash) > 0n && <div style={{ fontSize: 12 }}><span>نقد (کرایه)</span><span className="num">{fa(b.cash)} ریال</span></div>}
       {d.placedBy && <p>ثبت‌کننده: {personName(d.placedBy)} · {dateFa(d.createdAt)}</p>}
     </div>
   );

@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Agent, run, tool } from '@openai/agents';
 import { z } from 'zod';
-import { formatRial } from '@iplast/shared';
+import { allowedModes, formatRial, payModeFa } from '@iplast/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersService, STATUS_FA } from '../orders/orders.service';
 import { TelegramService } from '../common/telegram.service';
-import { quote } from '../orders/pricing';
+import { quote, saleTerms } from '../orders/pricing';
 import { AssistantService, DraftLine } from './assistant.service';
 import { AccountingService, METHOD_FA, PAY_STATUS_FA } from '../accounting/accounting';
 
@@ -17,8 +17,8 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 روش کار:
 1. سفارش مشتری را با search_catalog پیدا کن و با set_draft در پیش‌نویس بگذار. هر بار که اقلام تغییر کرد، set_draft را با فهرست کامل و جدید صدا بزن.
 2. اگر کالا یا سایز مبهم است، کوتاه بپرس؛ حدس نزن. «نری» = اتصال نر، «مادگی» = اتصال ماده، «بوشن/رابط» = رابط. اعداد ۲۰ تا ۲۰۰ معمولاً قطر لوله و ½ تا ۴ اینچ سایز رزوه است. کارتن/کیسه/بسته = pack؛ عدد/شاخه = unit.
-3. وقتی پیش‌نویس کامل شد، فهرست کوتاه و جمع را بگو و بپرس «ثبت کنم؟».
-4. فقط وقتی مشتری صریحاً تأیید کرد (مثلاً «بله»، «ثبت کن»، «اوکی»)، submit_order را صدا بزن. اگر نام فروشگاه/شرکت لازم بود، اول بپرس و بعد با companyName صدا بزن.
+3. وقتی پیش‌نویس کامل شد، فهرست کوتاه و جمع را بگو. دو نوع فروش داریم: «نقدی» (قیمت لیست منهای درصد نقدی مشتری) و «مدت‌دار» (قیمت لیست منهای درصد مدت‌دار، پرداخت با چک بعد از چند ماه). اگر مشتری نگفته، هر دو جمع را از نتیجه‌ی set_draft بگو و بپرس کدام را می‌خواهد و «ثبت کنم؟».
+4. فقط وقتی مشتری صریحاً تأیید کرد (مثلاً «بله»، «ثبت کن»، «اوکی»)، submit_order را با payMode انتخاب‌شده (CASH یا TERM) صدا بزن. اگر نام فروشگاه/شرکت لازم بود، اول بپرس و بعد با companyName صدا بزن.
 5. بعد از ثبت بگو: «پیش‌فاکتور شماره‌ی X ثبت شد و برای تأیید کارشناس فروش رفت.» تأیید، تخفیف، زمان ارسال و قیمت استعلامی با کارشناس است؛ قول نده.
 6. برای پیگیری سفارش از my_orders و برای جزئیات یک سفارش (اقلام، مبلغ نقد و چک، بارنامه، راننده) از order_detail استفاده کن.
 7. وقتی کارشناس قیمت‌ها را نهایی کرد، سفارش «پیش‌فاکتور نهایی؛ منتظر تأیید مشتری» است. مبلغ و مهلت را بگو و بپرس تأیید می‌کند یا نه. فقط با تأیید صریح مشتری answer_proforma با ok=true، و اگر تغییر خواست با ok=false و توضیح او صدا بزن.
@@ -103,7 +103,9 @@ export class SalesAgentService {
       name: 'set_draft', description: 'پیش‌نویس سفارش را با فهرست کامل اقلام جایگزین می‌کند (variantId فقط از search_catalog). فهرست خالی یعنی پاک کردن پیش‌نویس.',
       parameters: z.object({ items: z.array(z.object({ variantId: z.string(), quantity: z.number().int().positive(), unit: z.enum(['unit', 'pack']) })) }),
       execute: async ({ items }) => {
-        const q = await quote(this.prisma, items.map(i => i.variantId), customerId);
+        const terms = await saleTerms(this.prisma, customerId);
+        const q = await quote(this.prisma, items.map(i => i.variantId), customerId, 'CASH', terms);
+        const qt = await quote(this.prisma, items.map(i => i.variantId), customerId, 'TERM', terms);
         const lines: DraftLine[] = [];
         const missing: string[] = [];
         for (const i of items) {
@@ -115,7 +117,14 @@ export class SalesAgentService {
         const d = await this.prisma.assistantDraft.create({ data: { userId, source: 'agent', inputText: text.slice(0, 1500), reply: '', items: lines as object[], model: process.env.OPENAI_MODEL ?? null } });
         draftId = d.id;
         const v = await this.ai.view(d.id, userId, customerId);
-        return JSON.stringify({ lines: v.lines.map(l => ({ name: `${l.name} ${l.label}`, quantity: l.quantity, unit: l.unitName, packs: l.mode === 'pack' ? l.n : null, price: l.price ? formatRial(BigInt(l.price) * BigInt(l.quantity)) : 'استعلامی' })), total: formatRial(BigInt(v.total)), invalidIds: missing });
+        const sum = (m: Map<string, { unitPrice: bigint | null }>) => lines.reduce((t, l) => t + (m.get(l.variantId)?.unitPrice ?? 0n) * BigInt(l.quantity), 0n);
+        const modes = allowedModes(terms);
+        return JSON.stringify({
+          lines: v.lines.map(l => ({ name: `${l.name} ${l.label}`, quantity: l.quantity, unit: l.unitName, packs: l.mode === 'pack' ? l.n : null, cashPrice: l.price ? formatRial(BigInt(l.price) * BigInt(l.quantity)) : 'استعلامی' })),
+          totalCash: modes.includes('CASH') ? `${formatRial(sum(q))} (نقدی، ${terms.cashPct}٪ زیر قیمت لیست)` : 'برای این مشتری فعال نیست',
+          totalTerm: modes.includes('TERM') ? `${formatRial(sum(qt))} (مدت‌دار ${terms.termMonths} ماهه، ${terms.termPct}٪ زیر قیمت لیست)` : 'برای این مشتری فعال نیست',
+          invalidIds: missing,
+        });
       },
     });
     const owned = user.memberships.filter(m => m.role === 'OWNER' || m.role === 'VIEWER').map(m => m.customerId);
@@ -142,10 +151,9 @@ export class SalesAgentService {
         return JSON.stringify({
           number: o.number, status: STATUS_FA[o.status],
           items: o.items.map(i => ({ name: i.title, quantity: i.quantity, packs: i.packs, unitPrice: formatRial(i.unitPrice) })),
+          saleType: payModeFa(b.mode, b.termMonths), listTotal: formatRial(b.listTotal), saleDiscount: b.saleDiscount ? formatRial(b.saleDiscount) : null,
           subtotal: formatRial(b.subtotal), discount: b.discount ? formatRial(b.discount) : null, freight: b.shipping ? formatRial(b.shipping) : null,
-          cash: `${b.cashPercent}٪: ${formatRial(b.cash)}${b.cashDiscount ? ` (تخفیف نقدی ${b.cashDiscountPct}٪)` : ''}`,
-          cheque: b.cheque ? `${100 - b.cashPercent}٪: ${formatRial(b.cheque)}${b.chequeMarkup ? ` (افزایش چکی ${b.chequeMarkupPct}٪)` : ''}` : null,
-          cheques: b.cheques.map(c => ({ amount: formatRial(c.amount), days: c.days })), payable: formatRial(b.total),
+          cash: formatRial(b.cash), cheque: b.cheque ? `${formatRial(b.cheque)}، سررسید ${b.termMonths} ماه بعد` : null, payable: formatRial(b.total),
           proformaExpires: o.status === 'PROFORMA_SENT' && o.proformas[0] ? o.proformas[0].expiresAt.toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' }) : null,
           shipments: o.shipments.map(sh => ({ date: sh.shippedAt.toLocaleDateString('fa-IR'), carrier: sh.carrier, waybillNo: sh.waybillNo, driver: sh.driverName, driverPhone: sh.driverPhone, plate: sh.plate, freight: sh.freight !== null ? formatRial(sh.freight) : null })),
         });
@@ -177,8 +185,8 @@ export class SalesAgentService {
     });
     const submit = tool({
       name: 'submit_order', description: 'پیش‌نویس فعلی را به‌عنوان پیش‌فاکتور ثبت می‌کند. فقط بعد از تأیید صریح مشتری. برای مشتری جدید companyName لازم است.',
-      parameters: z.object({ companyName: z.string().nullable(), note: z.string().nullable() }),
-      execute: async ({ companyName, note }) => {
+      parameters: z.object({ companyName: z.string().nullable(), note: z.string().nullable(), payMode: z.enum(['CASH', 'TERM']).nullable() }),
+      execute: async ({ companyName, note, payMode }) => {
         if (!draftId) return 'پیش‌نویسی نیست؛ اول set_draft.';
         const d = await this.prisma.assistantDraft.findUnique({ where: { id: draftId } });
         const items = (d?.items as unknown as DraftLine[] | undefined) ?? [];
@@ -190,7 +198,7 @@ export class SalesAgentService {
           const o = await this.orders.create(userId, {
             customerId: ms[0]?.customerId, newCustomer: ms.length ? undefined : { name: companyName!.trim() },
             items: items.map(i => ({ variantId: i.variantId, quantity: i.quantity, ...(i.packs ? { packs: i.packs } : {}) })),
-            idempotencyKey: `draft:${draftId}`, note: [note?.trim(), 'ثبت توسط ایجنت فروش در گفتگو'].filter(Boolean).join('\n'),
+            payMode: payMode ?? undefined, idempotencyKey: `draft:${draftId}`, note: [note?.trim(), 'ثبت توسط ایجنت فروش در گفتگو'].filter(Boolean).join('\n'),
           }, 'agent');
           await this.prisma.assistantDraft.update({ where: { id: draftId }, data: { usedAt: new Date() } });
           orderNumber = o.number;
@@ -209,8 +217,7 @@ export class SalesAgentService {
     const current = draftId ? await this.ai.view(draftId, userId, customerId).catch(() => null) : null;
     const context = [
       `مشتری: ${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'بی‌نام'}${account ? ` · ${account.name}${account.isApproved ? '' : ' (حساب هنوز تأیید نشده)'}` : ' · هنوز حساب مشتری ندارد (برای اولین سفارش نام فروشگاه لازم است)'}`,
-      account?.terms ? `شرایط پرداخت: ${account.terms.cashPercent}٪ نقد${Number(account.terms.cashDiscountPct) ? ` با ${account.terms.cashDiscountPct}٪ تخفیف نقدی` : ''}${account.terms.cashPercent < 100 ? `، ${100 - account.terms.cashPercent}٪ چک${account.terms.chequeDueDays.length ? ` ${account.terms.chequeDueDays.join('/')} روزه` : ''}${Number(account.terms.chequeMarkupPct) ? ` با ${account.terms.chequeMarkupPct}٪ افزایش` : ''}` : ''}` : '',
-      account?.categoryDiscounts.length ? `تخفیف اختصاصی این مشتری: ${account.categoryDiscounts.map(d => `${d.category.name} ${Number(d.pct)}٪`).join('، ')}. قیمت search_catalog قیمت لیست است؛ قیمت با تخفیف مشتری در نتیجه‌ی set_draft می‌آید و همان را بگو.` : '',
+      account ? `شرایط فروش این مشتری: ${[account.terms?.allowCash !== false ? `نقدی ${Number(account.terms?.cashDiscountPct ?? 0)}٪ زیر قیمت لیست` : '', account.terms?.allowTerm !== false ? `مدت‌دار ${account.terms?.termMonths ?? 3} ماهه ${Number(account.terms?.termDiscountPct ?? 0)}٪ زیر قیمت لیست` : ''].filter(Boolean).join('؛ ')}.${account.categoryDiscounts.length ? ` درصد ویژه‌ی دسته‌ها: ${account.categoryDiscounts.map(d => `${d.category.name}${d.cashPct !== null ? ` نقدی ${Number(d.cashPct)}٪` : ''}${d.termPct !== null ? ` مدت‌دار ${Number(d.termPct)}٪` : ''}`).join('، ')}.` : ''} قیمت search_catalog قیمت لیست است؛ قیمت مشتری در نتیجه‌ی set_draft می‌آید و همان را بگو.` : '',
       current?.lines.length ? `پیش‌نویس فعلی: ${current.lines.map(l => `${l.name} ${l.label} × ${l.quantity}`).join('، ')}` : 'پیش‌نویس فعلی: خالی',
       transcript ? `گفتگوی قبلی:\n${transcript}` : '',
       `پیام جدید مشتری: ${text}`,

@@ -2,7 +2,8 @@ import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Session, SessionGuard } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { quote } from '../orders/pricing';
+import { allowedModes, salePct } from '@iplast/shared';
+import { quote, saleTerms } from '../orders/pricing';
 
 @Controller('me')
 @UseGuards(SessionGuard)
@@ -20,7 +21,6 @@ export class MeController {
             customer: {
               include: {
                 terms: true,
-                priceGroup: true,
                 categoryDiscounts: { include: { category: { select: { slug: true, name: true } } } },
                 support: { select: { firstName: true, lastName: true, username: true } },
                 members: { include: { user: { select: { id: true, firstName: true, lastName: true, username: true } } } },
@@ -34,17 +34,30 @@ export class MeController {
       id: user.id, firstName: user.firstName, lastName: user.lastName, username: user.username, staffRole: user.staffRole,
       accounts: user.memberships.map(m => ({
         customerId: m.customerId, role: m.role, name: m.customer.name, isApproved: m.customer.isApproved,
-        terms: m.customer.terms ? { cashPercent: m.customer.terms.cashPercent, chequeDueDays: m.customer.terms.chequeDueDays, cashDiscountPct: m.customer.terms.cashDiscountPct.toString(), chequeMarkupPct: m.customer.terms.chequeMarkupPct.toString() } : { cashPercent: 100, chequeDueDays: [] },
+        sale: this.sale(m.customer.terms, m.customer.categoryDiscounts),
         support: m.customer.support,
-        // the customer's own discount per product category (percent off the list price), and the default for the rest
-        discounts: Object.fromEntries(m.customer.categoryDiscounts.filter(d => Number(d.pct) > 0).map(d => [d.category.slug, { name: d.category.name, pct: Number(d.pct) }])),
-        defaultDiscount: m.customer.priceGroup ? Number(m.customer.priceGroup.discountPct) : 0,
         members: m.customer.members.map(x => ({ ...x.user, role: x.role })),
       })),
     };
   }
 
-  /** Personal prices for the given sizes (falls back to the list price). */
+  /**
+   * The customer's two ways to buy, set by the sales manager: «نقدی» % and «مدت‌دار» % off the list price (with the
+   * months), and the product categories where they differ (by category slug, both values resolved).
+   */
+  private sale(t: { cashDiscountPct: { toString(): string }; termDiscountPct: { toString(): string }; termMonths: number; allowCash: boolean; allowTerm: boolean } | null, cats: { categoryId: string; cashPct: { toString(): string } | null; termPct: { toString(): string } | null; category: { slug: string; name: string } }[]) {
+    const terms = {
+      cashPct: Number(t?.cashDiscountPct.toString() ?? 0), termPct: Number(t?.termDiscountPct.toString() ?? 0), termMonths: t?.termMonths ?? 3,
+      allowCash: t?.allowCash ?? true, allowTerm: t?.allowTerm ?? true,
+      categories: Object.fromEntries(cats.map(c => [c.categoryId, { cash: c.cashPct === null ? null : Number(c.cashPct.toString()), term: c.termPct === null ? null : Number(c.termPct.toString()) }])),
+    };
+    return {
+      modes: allowedModes(terms), cashPct: terms.cashPct, termPct: terms.termPct, termMonths: terms.termMonths,
+      categories: Object.fromEntries(cats.map(c => [c.category.slug, { name: c.category.name, cash: salePct(terms, 'CASH', c.categoryId), term: salePct(terms, 'TERM', c.categoryId) }])),
+    };
+  }
+
+  /** Prices of the given sizes for this customer: list, cash and term (personal prices win over the percentages). */
   @Post('quote')
   async quote(@Session() s: SessionClaims, @Body() body: { variantIds?: string[]; customerId?: string }) {
     const ids = Array.isArray(body?.variantIds) ? body.variantIds.slice(0, 300) : [];
@@ -57,6 +70,8 @@ export class MeController {
       const ms = await this.prisma.customerMember.findMany({ where: { userId: s.sub, role: { in: ['OWNER', 'BUYER'] } }, take: 2 });
       if (ms.length === 1) customerId = ms[0].customerId;
     }
-    return Object.fromEntries([...(await quote(this.prisma, ids, customerId)).entries()].map(([k, v]) => [k, v.unitPrice]));
+    const t = await saleTerms(this.prisma, customerId);
+    const [cash, term] = await Promise.all([quote(this.prisma, ids, customerId, 'CASH', t), quote(this.prisma, ids, customerId, 'TERM', t)]);
+    return Object.fromEntries([...cash.entries()].map(([k, v]) => [k, { list: v.listPrice?.toString() ?? null, cash: v.unitPrice?.toString() ?? null, term: term.get(k)?.unitPrice?.toString() ?? null }]));
   }
 }

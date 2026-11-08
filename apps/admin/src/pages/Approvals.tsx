@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, STATUS_CLASS, api, dateFa, fa, openPrivate, personName, rial, toEnDigits, useApi, useBlobUrl } from '../lib';
+import { ApiError, STATUS_CLASS, api, dateFa, fa, openPrivate, payModeFa, pctFa, pctOff, personName, rial, termsLine, toEnDigits, useApi, useBlobUrl, type PayMode } from '../lib';
 
 interface Row {
   id: string; number: number; status: string; statusFa: string; createdAt: string; total: string; payable?: string; itemCount: number; inquiryCount: number; channel: string;
@@ -8,20 +8,17 @@ interface Row {
   placedBy: { firstName: string | null; lastName: string | null; username: string | null };
 }
 interface List { rows: Row[]; counts: Record<string, number> }
-interface Breakdown {
-  subtotal: string; discount: string; shipping: string; cashDiscount: string; chequeMarkup: string; cash: string; cheque: string; total: string;
-  cashPercent: number; cashDiscountPct: number; chequeMarkupPct: number; cheques: { days: number | null; amount: string }[];
-}
+interface Snapshot { cashPct?: number; termPct?: number; termMonths?: number; allowCash?: boolean; allowTerm?: boolean; categories?: Record<string, { cash?: number | null; term?: number | null }> }
 interface Detail {
-  id: string; status: string; note: string | null; total: string; payable: string; split: { cash: string; cheque: string }; breakdown: Breakdown;
-  discount: string; shipping: string;
-  termsSnapshot: { cashPercent?: number; chequeDueDays?: number[]; cashDiscountPct?: string; chequeMarkupPct?: string } | null; customer: { name: string; city: string | null };
-  items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null }[];
+  id: string; status: string; note: string | null; total: string; payable: string;
+  discount: string; shipping: string; payMode: PayMode; termMonths: number;
+  termsSnapshot: Snapshot | null; customer: { name: string; city: string | null };
+  items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice: string | null; salePct: string | null }[];
   events: { id: string; status: string; comment: string | null; createdAt: string }[];
   proformas: { id: string; version: number; total: string; issuedAt: string; expiresAt: string; acceptedAt: string | null; changed: boolean }[];
 }
 type Line = { qty: string; price: string; remove: boolean };
-interface Customer { id: string; name: string; city: string | null; isApproved: boolean; createdAt: string; terms: { cashPercent: number } | null; _count: { members: number; orders: number } }
+interface Customer { id: string; name: string; city: string | null; isApproved: boolean; createdAt: string; terms: { cashDiscountPct: string; termDiscountPct: string; termMonths: number; allowCash: boolean; allowTerm: boolean } | null; _count: { members: number; orders: number } }
 interface Reported {
   id: string; amount: string; method: string; methodFa: string; chequeNumber: string | null; bank: string | null; dueDate: string | null;
   receivedAt: string; note: string | null; hasReceipt: boolean; receiptPdf?: boolean; customer: { id: string; name: string }; invoice: { number: number } | null;
@@ -106,27 +103,34 @@ function Orders({ list, empty, onChanged, title }: { list: { data: List | null; 
 }
 
 const big = (s: string) => { const t = toEnDigits(s).replace(/[^\d]/g, ''); return t ? BigInt(t) : null; };
-const pctOf = (a: bigint, p?: string | number) => (a * BigInt(Math.round((Number(p ?? 0) || 0) * 100))) / 10000n;
 const grp = (s: string) => { const n = big(s); return n === null ? '' : fa(n); };
 
-/** Live preview of the money with the customer's terms, the same rule the server applies. */
-function preview(d: Detail, lines: Record<string, Line>, discount: string, shipping: string) {
-  let sub = 0n, missing = 0;
+/**
+ * Live preview of the money, the same rule the server applies. When the agent switches cash ↔ term, lines priced
+ * from the list get the other percentage (the order's terms snapshot); a price typed by the agent stays as typed.
+ */
+function preview(d: Detail, lines: Record<string, Line>, discount: string, shipping: string, mode: PayMode, months: number) {
+  const t = d.termsSnapshot ?? {};
+  let list = 0n, sub = 0n, missing = 0;
+  const unit: Record<string, bigint | null> = {};
   for (const i of d.items) {
     const l = lines[i.id];
-    if (l?.remove) continue;
     const q = big(l?.qty ?? '') ?? BigInt(i.quantity);
-    const p = big(l?.price ?? '') ?? (i.unitPrice === null ? null : BigInt(i.unitPrice));
+    let p = big(l?.price ?? '');
+    if (p === null && i.unitPrice !== null) {
+      p = BigInt(i.unitPrice);
+      if (mode !== d.payMode && i.listPrice !== null && i.salePct !== null) p = BigInt(i.listPrice) - pctOff(BigInt(i.listPrice), mode === 'CASH' ? t.cashPct : t.termPct);
+    }
+    unit[i.id] = p;
+    if (l?.remove) continue;
     if (p === null) { missing++; continue; }
     sub += p * q;
+    list += (i.listPrice !== null && BigInt(i.listPrice) > p ? BigInt(i.listPrice) : p) * q;
   }
-  const t = d.termsSnapshot ?? {};
   const disc = big(discount) ?? 0n, ship = big(shipping) ?? 0n;
-  const base = sub - (disc > sub ? sub : disc);
-  const pct = Math.min(100, Math.max(0, t.cashPercent ?? 100));
-  const cashBase = (base * BigInt(pct)) / 100n, chequeBase = base - cashBase;
-  const cash = cashBase - pctOf(cashBase, t.cashDiscountPct) + ship, cheque = chequeBase + pctOf(chequeBase, t.chequeMarkupPct);
-  return { sub, missing, cash, cheque, total: cash + cheque, pct };
+  const goods = sub - (disc > sub ? sub : disc);
+  const cheque = mode === 'TERM' ? goods : 0n;
+  return { list, sub, missing, unit, cash: goods - cheque + ship, cheque, total: goods + ship, months };
 }
 
 function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: () => void; open: boolean }) {
@@ -139,6 +143,8 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
   const [discount, setDiscount] = useState('');
   const [shipping, setShipping] = useState('');
   const [agentNote, setAgentNote] = useState('');
+  const [payMode, setPayMode] = useState<PayMode | ''>('');
+  const [months, setMonths] = useState('');
   const d = useApi<Detail>(open ? `/admin/orders/${r.id}` : null);
   const atAgent = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'].includes(r.status);
   const atFinal = r.status === 'SALES_APPROVED';
@@ -148,12 +154,14 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
   const setLine = (id: string, patch: Partial<Line>) => setLines(x => ({ ...x, [id]: { ...{ qty: '', price: '', remove: false }, ...x[id], ...patch } }));
 
   const dd = d.data;
-  const pv = dd ? preview(dd, lines, discount || dd.discount, shipping || dd.shipping) : null;
+  const sale: PayMode = (payMode || dd?.payMode || 'CASH') as PayMode;
+  const mon = sale === 'TERM' ? Number(toEnDigits(months)) || (dd?.payMode === 'TERM' && dd.termMonths ? dd.termMonths : dd?.termsSnapshot?.termMonths ?? 3) : 0;
+  const pv = dd ? preview(dd, lines, discount || dd.discount, shipping || dd.shipping, sale, mon) : null;
   const edited = dd ? Object.entries(lines).some(([id, l]) => {
     const i = dd.items.find(x => x.id === id);
     if (!i) return false;
     return l.remove || (big(l.qty) !== null && big(l.qty) !== BigInt(i.quantity)) || (big(l.price) !== null && String(big(l.price)) !== i.unitPrice);
-  }) || (discount !== '' && big(discount) !== BigInt(dd.discount)) || (shipping !== '' && big(shipping) !== BigInt(dd.shipping)) || dd.items.some(i => i.unitPrice === null) || r.status === 'PROFORMA_SENT' || r.status === 'PROFORMA_EXPIRED' : false;
+  }) || sale !== dd.payMode || (sale === 'TERM' && mon !== dd.termMonths) || (discount !== '' && big(discount) !== BigInt(dd.discount)) || (shipping !== '' && big(shipping) !== BigInt(dd.shipping)) || dd.items.some(i => i.unitPrice === null) || r.status === 'PROFORMA_SENT' || r.status === 'PROFORMA_EXPIRED' : false;
 
   const decide = async (action: 'sales_ok' | 'final_ok' | 'fix' | 'reject', comment?: string) => {
     setBusy(true);
@@ -161,11 +169,12 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
       const edit = action === 'sales_ok' ? {
         items: Object.entries(lines).map(([id, l]) => ({ id, remove: l.remove || undefined, quantity: l.qty ? toEnDigits(l.qty) : undefined, unitPrice: l.price ? toEnDigits(l.price) : undefined })),
         discount: discount ? toEnDigits(discount) : undefined, shipping: shipping ? toEnDigits(shipping) : undefined,
+        ...(dd && (sale !== dd.payMode || (sale === 'TERM' && mon !== dd.termMonths)) ? { payMode: sale, termMonths: sale === 'TERM' ? mon : undefined } : {}),
       } : undefined;
       const o = await api<{ status: string }>(`/admin/orders/${r.id}/decide`, { method: 'POST', body: { action, comment, edit } });
       const no = `پیش‌فاکتور #${fa(r.number)}`;
       toast(o.status === 'CONFIRMED' ? `${no} تأیید نهایی شد و فاکتور صادر شد` : o.status === 'PROFORMA_SENT' ? `${no} برای تأیید مشتری فرستاده شد` : o.status === 'SALES_APPROVED' ? `${no} تأیید شد و برای مدیر رفت` : o.status === 'NEEDS_FIX' ? `${no} برای اصلاح به مشتری برگشت` : `${no} رد شد`);
-      setMode(null); setLines({}); onChanged();
+      setMode(null); setLines({}); setPayMode(''); setMonths(''); onChanged();
     } catch (e) { toast(e instanceof ApiError ? e.message : 'ثبت نشد'); } finally { setBusy(false); }
   };
   const pf = dd?.proformas?.[0];
@@ -182,6 +191,18 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
         <div className="obody">
           {!dd ? <div className="muted small">در حال بارگذاری…</div> : (
             <>
+              <div className="paymode">
+                <span className="small muted">نوع فروش</span>
+                {canEdit ? (
+                  <>
+                    <div className="seg" role="radiogroup" aria-label="نوع فروش">
+                      {(['CASH', 'TERM'] as const).map(m => <button key={m} type="button" role="radio" aria-checked={sale === m} onClick={() => setPayMode(m)}>{m === 'CASH' ? `نقدی ${pctFa(dd.termsSnapshot?.cashPct ?? 0)}` : `مدت‌دار ${pctFa(dd.termsSnapshot?.termPct ?? 0)}`}</button>)}
+                    </div>
+                    {sale === 'TERM' && <label className="small row">مدت <input className="in num" style={{ width: 56 }} inputMode="numeric" value={months} placeholder={fa(mon)} onChange={e => setMonths(toEnDigits(e.target.value).replace(/[^\d]/g, ''))} /> ماه</label>}
+                  </>
+                ) : <b>{payModeFa(dd.payMode, dd.termMonths)}</b>}
+                {sale !== dd.payMode && <span className="st ask">قیمت‌ها با درصد {payModeFa(sale)} دوباره حساب شد</span>}
+              </div>
               {canEdit ? (
                 <div className="pfedit">
                   <div className="pfrow head"><span>کالا</span><span>تعداد</span><span>قیمت واحد (ریال)</span><span /></div>
@@ -189,9 +210,9 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
                     const l = lines[i.id];
                     return (
                       <div key={i.id} className={`pfrow ${l?.remove ? 'gone' : ''} ${i.unitPrice === null && !l?.price ? 'need' : ''}`}>
-                        <span>{i.title}{i.packs ? <small className="muted num"> · {fa(i.packs)} بسته</small> : null}</span>
+                        <span>{i.title}{i.packs ? <small className="muted num"> · {fa(i.packs)} بسته</small> : null}{i.listPrice !== null && pv?.unit[i.id] != null && BigInt(i.listPrice) > pv.unit[i.id]! && <small className="muted num"><br />لیست {fa(i.listPrice)} · −{pctFa(Number(((BigInt(i.listPrice) - pv.unit[i.id]!) * 10000n) / BigInt(i.listPrice)) / 100)}</small>}</span>
                         <input className="in num" inputMode="numeric" aria-label="تعداد" value={l?.qty ? grp(l.qty) : ''} placeholder={fa(i.quantity)} onChange={e => setLine(i.id, { qty: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
-                        <input className="in num" inputMode="numeric" aria-label="قیمت واحد" value={l?.price ? grp(l.price) : ''} placeholder={i.unitPrice === null ? 'استعلامی — قیمت بگذارید' : fa(i.unitPrice)} onChange={e => setLine(i.id, { price: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
+                        <input className="in num" inputMode="numeric" aria-label="قیمت واحد" value={l?.price ? grp(l.price) : ''} placeholder={pv?.unit[i.id] == null ? 'استعلامی — قیمت بگذارید' : fa(pv.unit[i.id]!)} onChange={e => setLine(i.id, { price: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
                         <button type="button" className="btn sm" title={l?.remove ? 'برگرداندن' : 'حذف این قلم'} onClick={() => setLine(i.id, { remove: !l?.remove })}>{l?.remove ? '↺' : '✕'}</button>
                       </div>
                     );
@@ -211,10 +232,12 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
               )}
               {pv && (
                 <div className="pfsum num">
+                  {pv.list > pv.sub && <><div><span>جمع به قیمت لیست</span><span>{fa(pv.list)}</span></div><div><span>تخفیف {payModeFa(sale)}</span><span>−{fa(pv.list - pv.sub)}</span></div></>}
                   <div><span>جمع اقلام</span><span>{fa(pv.sub)}</span></div>
-                  <div><span>نقد {fa(pv.pct)}٪{Number(dd.termsSnapshot?.cashDiscountPct ?? 0) ? ` (−${fa(dd.termsSnapshot!.cashDiscountPct!)}٪)` : ''}</span><span>{fa(pv.cash)}</span></div>
-                  <div><span>چک {fa(100 - pv.pct)}٪{Number(dd.termsSnapshot?.chequeMarkupPct ?? 0) ? ` (+${fa(dd.termsSnapshot!.chequeMarkupPct!)}٪)` : ''}{dd.termsSnapshot?.chequeDueDays?.length ? ` · ${dd.termsSnapshot.chequeDueDays.map(x => fa(x)).join('/')} روزه` : ''}</span><span>{fa(pv.cheque)}</span></div>
+                  {(big(discount || dd.discount) ?? 0n) > 0n && <div><span>تخفیف کارشناس</span><span>−{fa(big(discount || dd.discount)!)}</span></div>}
+                  {(big(shipping || dd.shipping) ?? 0n) > 0n && <div><span>کرایه</span><span>{fa(big(shipping || dd.shipping)!)}</span></div>}
                   <div className="tot"><span>مبلغ قابل پرداخت</span><span>{rial(String(pv.total))}</span></div>
+                  <div className="muted small"><span>{sale === 'TERM' ? `چک ${fa(pv.cheque)} با سررسید ${fa(pv.months)} ماه بعد${pv.cash ? ` · نقد (کرایه) ${fa(pv.cash)}` : ''}` : `پرداخت نقدی ${fa(pv.cash)}`}</span></div>
                   {pv.missing > 0 && <div className="st ask">{fa(pv.missing)} قلم هنوز قیمت ندارد</div>}
                 </div>
               )}
@@ -308,24 +331,19 @@ function PaymentCard({ p, onDone }: { p: Reported; onDone: () => void }) {
 }
 
 function NewCustomer({ c, onDone }: { c: Customer; onDone: () => void }) {
-  const { toast, me } = useAdmin();
-  const [cash, setCash] = useState(String(c.terms?.cashPercent ?? 100));
+  const { toast, open } = useAdmin();
   const [busy, setBusy] = useState(false);
   const approve = async () => {
     setBusy(true);
-    try {
-      const pct = Number(toEnDigits(cash));
-      if (me.staffRole === 'ADMIN' && pct !== (c.terms?.cashPercent ?? 100)) await api(`/admin/customers/${c.id}/terms`, { method: 'PUT', body: { cashPercent: pct, chequeDueDays: [] } });
-      await api(`/admin/customers/${c.id}`, { method: 'PATCH', body: { isApproved: true } });
-      toast(`${c.name} تأیید شد`); onDone();
-    } catch (e) { toast(e instanceof ApiError ? e.message : 'ثبت نشد'); } finally { setBusy(false); }
+    try { await api(`/admin/customers/${c.id}`, { method: 'PATCH', body: { isApproved: true } }); toast(`${c.name} تأیید شد`); onDone(); }
+    catch (e) { toast(e instanceof ApiError ? e.message : 'ثبت نشد'); } finally { setBusy(false); }
   };
   return (
     <article className="card pad stack">
       <div className="between"><b>{c.name}</b><span className="muted small num">{dateFa(c.createdAt)}</span></div>
-      <span className="muted small num">{c.city ?? 'شهر نامشخص'} · {fa(c._count.members)} کاربر · {fa(c._count.orders)} سفارش</span>
+      <span className="muted small num">{c.city ?? 'شهر نامشخص'} · {fa(c._count.members)} کاربر · {fa(c._count.orders)} سفارش · شرایط فروش: {termsLine(c.terms)}</span>
       <div className="decide" style={{ padding: 0 }}>
-        {me.staffRole === 'ADMIN' && <label className="row small">نقد٪ <input className="in num" style={{ width: 70 }} inputMode="numeric" value={cash} onChange={e => setCash(e.target.value)} /></label>}
+        <button type="button" className="btn" onClick={() => open('customers/settings', `${c.id}/sale`)}>تعیین شرایط فروش</button>
         <button type="button" className="btn ok-fill" disabled={busy} onClick={approve}>✓ تأیید مشتری</button>
       </div>
     </article>

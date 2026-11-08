@@ -26,18 +26,20 @@ export interface Family extends Omit<FamilyCard, 'sizeCount' | 'minPrice'> {
 }
 export interface Account {
   customerId: string; role: 'OWNER' | 'BUYER' | 'VIEWER'; name: string; isApproved: boolean;
-  terms: { cashPercent: number; chequeDueDays: number[]; cashDiscountPct?: string; chequeMarkupPct?: string };
+  /** Set by the sales manager: «نقدی» % and «مدت‌دار» % off the list price, the months, and categories that differ. */
+  sale: Sale;
   support: { firstName: string | null; lastName: string | null; username: string | null } | null;
-  discounts?: Record<string, { name: string; pct: number }>; defaultDiscount?: number;
   members: { id: string; firstName: string | null; lastName: string | null; username: string | null; role: string }[];
 }
+export type PayMode = 'CASH' | 'TERM';
+export interface Sale { modes: PayMode[]; cashPct: number; termPct: number; termMonths: number; categories: Record<string, { name: string; cash: number; term: number }> }
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
-export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
+export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice?: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
 export interface Order {
   id: string; number: number; status: string; statusFa: string; createdAt: string; note: string | null; total: string;
   items: OrderItem[]; customer: { id: string; name: string }; placedBy: { firstName: string | null; lastName: string | null } | null;
   split?: { cash: string; cheque: string }; events?: { id: string; status: string; comment: string | null; createdAt: string }[];
-  termsSnapshot?: { cashPercent?: number; chequeDueDays?: number[] } | null;
+  payMode?: PayMode; termMonths?: number;
   payable?: string; breakdown?: Breakdown;
   proformas?: { id: string; version: number; total: string; issuedAt: string; expiresAt: string; acceptedAt: string | null; changed: boolean }[];
   shipments?: Shipment[];
@@ -45,18 +47,10 @@ export interface Order {
 }
 export interface Shipment { id: string; waybillNo: string | null; carrier: string | null; driverName: string | null; driverPhone: string | null; plate: string | null; freight: string | null; freightBy: string | null; note: string | null; shippedAt: string }
 export interface Breakdown {
-  subtotal: string; discount: string; shipping: string; cashBase: string; chequeBase: string; cashDiscount: string; chequeMarkup: string;
-  cash: string; cheque: string; total: string; cashPercent: number; cashDiscountPct: number; chequeMarkupPct: number; cheques: { days: number | null; amount: string }[];
+  mode?: PayMode; termMonths?: number; listTotal?: string; saleDiscount?: string;
+  subtotal: string; discount: string; shipping: string; cash: string; cheque: string; total: string; cheques: { days: number | null; amount: string }[];
 }
-
-/** Same rule as the server: cash share minus the cash discount, cheque share plus the cheque markup. */
-export function previewTerms(total: bigint, t?: { cashPercent: number; cashDiscountPct?: string; chequeMarkupPct?: string }) {
-  const pct = Math.min(100, Math.max(0, t?.cashPercent ?? 100));
-  const cashBase = (total * BigInt(pct)) / 100n, chequeBase = total - cashBase;
-  const of = (a: bigint, p: string | undefined) => (a * BigInt(Math.round((Number(p ?? 0) || 0) * 100))) / 10000n;
-  const cashDiscount = of(cashBase, t?.cashDiscountPct), chequeMarkup = of(chequeBase, t?.chequeMarkupPct);
-  return { pct, cash: cashBase - cashDiscount, cheque: chequeBase + chequeMarkup, cashDiscount, chequeMarkup, total: cashBase - cashDiscount + chequeBase + chequeMarkup };
-}
+export const payModeFa = (m: PayMode | string | undefined, months?: number | null) => (m === 'TERM' ? `مدت‌دار${months ? ` ${fa(months)} ماهه` : ''}` : 'نقدی');
 
 let token: string | null = null;
 try { token = sessionStorage.getItem('token'); } catch { /* storage blocked */ }
@@ -175,11 +169,18 @@ export async function shrinkPhoto(f: File): Promise<Blob> {
   } catch { return f; }
 }
 
-/** The customer's own discount (percent off the list price) on a product category, set by the sales manager. */
-export function discountOf(me: Me | null | undefined, categorySlug: string | undefined) {
-  const a = me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
-  if (!a || !categorySlug) return 0;
-  return a.discounts?.[categorySlug]?.pct ?? a.defaultDiscount ?? 0;
+/** The account the user orders for by default (not a view-only one). */
+export const mainAccount = (me: Me | null | undefined) => me?.accounts.find(x => x.role !== 'VIEWER') ?? me?.accounts[0];
+/** Percent off the list price for a product category and sale mode, for this customer. */
+export function pctFor(sale: Sale | undefined, categorySlug: string | undefined, mode: PayMode) {
+  if (!sale) return 0;
+  const c = categorySlug ? sale.categories[categorySlug] : undefined;
+  return c ? (mode === 'CASH' ? c.cash : c.term) : mode === 'CASH' ? sale.cashPct : sale.termPct;
 }
 /** List price minus a percent, rounded down to whole Rials (same rule as the server). */
-export const withPct = (price: bigint, pct: number) => (pct ? (price * BigInt(Math.round((100 - pct) * 100))) / 10000n : price);
+export const withPct = (price: bigint, pct: number) => (pct ? price - (price * BigInt(Math.round(pct * 100))) / 10000n : price);
+/** The two prices of a list price for this customer, in the modes they may use. */
+export function salePrices(sale: Sale | undefined, categorySlug: string | undefined, list: bigint) {
+  const modes = sale?.modes ?? ['CASH'];
+  return modes.map(m => ({ mode: m, pct: pctFor(sale, categorySlug, m), price: withPct(list, pctFor(sale, categorySlug, m)) }));
+}

@@ -113,3 +113,15 @@ export async function openPrivate(path: string) {
   if (w) w.location.href = url; else window.location.href = url;
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Sale modes. «نقدی»: list price − cash %. «مدت‌دار»: list price − term %, paid by cheque after the months. */
+export type PayMode = 'CASH' | 'TERM';
+export const payModeFa = (m: string, months?: number | null) => (m === 'TERM' ? `مدت‌دار${months ? ` ${fa(months)} ماهه` : ''}` : 'نقدی');
+/** Percent off an amount (2 decimals), rounded down to whole Rials, as the server does. */
+export const pctOff = (a: bigint, p: number | string | null | undefined) => (a * BigInt(Math.round((Number(p ?? 0) || 0) * 100))) / 10000n;
+export const pctFa = (p: number | string) => `${Number(p).toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪`;
+/** Short line for a customer's terms: «نقدی ۴۰٪ · مدت‌دار ۳ ماهه ۳۰٪». */
+export function termsLine(t: { cashDiscountPct?: string | number; termDiscountPct?: string | number; termMonths?: number; allowCash?: boolean; allowTerm?: boolean } | null | undefined) {
+  if (!t) return 'قیمت لیست (شرایط تعیین نشده)';
+  return [t.allowCash !== false ? `نقدی ${pctFa(t.cashDiscountPct ?? 0)}` : '', t.allowTerm !== false ? `مدت‌دار ${fa(t.termMonths ?? 3)} ماهه ${pctFa(t.termDiscountPct ?? 0)}` : ''].filter(Boolean).join(' · ');
+}

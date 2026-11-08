@@ -14,38 +14,73 @@ export function splitCashCheque(total: bigint, cashPercent: number): { cash: big
   return { cash, cheque: total - cash };
 }
 
-export interface Terms { cashPercent?: number; chequeDueDays?: number[]; cashDiscountPct?: string | number; chequeMarkupPct?: string | number }
-export interface Breakdown {
-  subtotal: bigint; discount: bigint; shipping: bigint;
-  cashBase: bigint; chequeBase: bigint; cashDiscount: bigint; chequeMarkup: bigint;
-  cash: bigint; cheque: bigint; total: bigint; cashPercent: number;
-  cashDiscountPct: number; chequeMarkupPct: number;
-  cheques: { days: number | null; amount: bigint }[];
+/**
+ * Two ways to sell. «نقدی»: the list price minus the customer's cash discount (e.g. 40%). «مدت‌دار» (روال): the list
+ * price minus a smaller discount (e.g. 30%), paid by cheque after the agreed number of months (e.g. 3).
+ * Each customer has their own two percentages and term, and may have different ones per product category.
+ */
+export type PayMode = 'CASH' | 'TERM';
+export interface SaleTerms {
+  cashPct?: number | string; termPct?: number | string; termMonths?: number;
+  allowCash?: boolean; allowTerm?: boolean;
+  /** Per product category: overrides of the two percentages; null = the customer's default. */
+  categories?: Record<string, { cash?: number | string | null; term?: number | string | null }>;
+}
+export const payModeFa = (mode: PayMode, months?: number | null) => (mode === 'CASH' ? 'نقدی' : `مدت‌دار${months ? ` ${toFaDigits(months)} ماهه` : ''}`);
+
+const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0; };
+/** Discount percent off the list price for a sale mode and product category. */
+export function salePct(t: SaleTerms | null | undefined, mode: PayMode, categoryId?: string | null): number {
+  const c = categoryId ? t?.categories?.[categoryId] : undefined;
+  const own = mode === 'CASH' ? c?.cash : c?.term;
+  if (own !== null && own !== undefined && own !== '') return num(own);
+  return num(mode === 'CASH' ? t?.cashPct : t?.termPct);
+}
+/** Modes a customer may buy with; at least one. */
+export function allowedModes(t: SaleTerms | null | undefined): PayMode[] {
+  const m: PayMode[] = [];
+  if (t?.allowCash !== false) m.push('CASH');
+  if (t?.allowTerm !== false) m.push('TERM');
+  return m.length ? m : ['CASH'];
 }
 
 /** Percent (up to 2 decimals) of an amount, rounded down to whole Rials. */
-const pctOf = (amount: bigint, pct: number) => (amount * BigInt(Math.round(pct * 100))) / 10000n;
+export const pctOf = (amount: bigint, pct: number) => (amount * BigInt(Math.round(pct * 100))) / 10000n;
+/** The price after a percent discount. */
+export const netPrice = (list: bigint, pct: number) => list - pctOf(list, pct);
+
+export interface Breakdown {
+  mode: PayMode; termMonths: number;
+  /** Lines at list price, the sale discount (cash or term %), the lines after it. */
+  listTotal: bigint; saleDiscount: bigint; subtotal: bigint;
+  /** Extra discount and freight added by the sales agent. */
+  discount: bigint; shipping: bigint;
+  total: bigint; cash: bigint; cheque: bigint;
+  cheques: { days: number | null; amount: bigint }[];
+}
 
 /**
- * The customer's money terms applied to an order: the cash share gets the cash discount, the cheque share gets
- * the cheque markup, and the cheque share is split into equal cheques by the agreed due days. Freight is paid in cash.
+ * The money of an order. Unit prices already carry the sale discount; the list prices show how much it was.
+ * Cash sale: everything in cash. Term sale: the goods are paid by a cheque due after termMonths, freight in cash.
  */
-export function applyTerms(subtotal: bigint, terms: Terms | null | undefined, discount = 0n, shipping = 0n): Breakdown {
-  const cashPercent = Math.min(100, Math.max(0, Math.round(terms?.cashPercent ?? 100)));
-  const cashDiscountPct = Math.max(0, Number(terms?.cashDiscountPct ?? 0) || 0);
-  const chequeMarkupPct = Math.max(0, Number(terms?.chequeMarkupPct ?? 0) || 0);
-  const base = subtotal - (discount > subtotal ? subtotal : discount);
-  const { cash: cashBase, cheque: chequeBase } = splitCashCheque(base, cashPercent);
-  const cashDiscount = pctOf(cashBase, cashDiscountPct);
-  const chequeMarkup = pctOf(chequeBase, chequeMarkupPct);
-  const cash = cashBase - cashDiscount + shipping;
-  const cheque = chequeBase + chequeMarkup;
-  const days = (terms?.chequeDueDays ?? []).filter(d => Number.isFinite(d) && d >= 0);
-  const cheques: Breakdown['cheques'] = [];
-  if (cheque > 0n) {
-    const n = BigInt(Math.max(1, days.length));
-    const each = cheque / n;
-    (days.length ? days : [null]).forEach((d, i) => cheques.push({ days: d, amount: i === days.length - 1 || !days.length ? cheque - each * (n - 1n) : each }));
+export function orderBreakdown(
+  items: { quantity: number; unitPrice: bigint | null; listPrice?: bigint | null }[],
+  mode: PayMode = 'CASH', termMonths = 0, discount = 0n, shipping = 0n,
+): Breakdown {
+  let listTotal = 0n, subtotal = 0n;
+  for (const i of items) {
+    if (i.unitPrice === null) continue;
+    const q = BigInt(i.quantity);
+    subtotal += i.unitPrice * q;
+    listTotal += (i.listPrice !== null && i.listPrice !== undefined && i.listPrice > i.unitPrice ? i.listPrice : i.unitPrice) * q;
   }
-  return { subtotal, discount: subtotal - base, shipping, cashBase, chequeBase, cashDiscount, chequeMarkup, cash, cheque, total: cash + cheque, cashPercent, cashDiscountPct, chequeMarkupPct, cheques };
+  const d = discount > subtotal ? subtotal : discount;
+  const goods = subtotal - d;
+  const months = mode === 'TERM' ? Math.max(0, Math.round(termMonths)) : 0;
+  const cheque = mode === 'TERM' ? goods : 0n;
+  const cash = goods - cheque + shipping;
+  return {
+    mode, termMonths: months, listTotal, saleDiscount: listTotal - subtotal, subtotal, discount: d, shipping,
+    total: goods + shipping, cash, cheque, cheques: cheque > 0n ? [{ days: months ? months * 30 : null, amount: cheque }] : [],
+  };
 }
