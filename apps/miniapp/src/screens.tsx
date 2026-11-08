@@ -347,6 +347,7 @@ export function OrdersScreen() {
 }
 
 export function OrderScreen({ id }: { id: string }) {
+  const { go } = useApp();
   const o = useApi<Order>(`/orders/${encodeURIComponent(id)}`);
   if (o.error) return <Failed msg={o.error} retry={o.reload} />;
   if (!o.data) return <Loading h={300} />;
@@ -377,6 +378,7 @@ export function OrderScreen({ id }: { id: string }) {
         ))}
       </div>
       <MoneySummary d={d} />
+      <div className="pf-open"><button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 مشاهده پیش‌فاکتور رسمی</button></div>
       {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>

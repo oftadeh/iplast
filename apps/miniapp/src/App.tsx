@@ -3,6 +3,7 @@ import { Icon } from './icons';
 import { CartLine, Family, Me, api, loadCart, login, mainAccount, saveCart } from './lib';
 import { haptic, setupTelegram, tg } from './telegram';
 import { ChatScreen } from './chat';
+import { ProformaScreen } from './proforma';
 import { Picker } from './Picker';
 import { AccountScreen, InvoiceScreen } from './account';
 import { AssistantScreen, CartScreen, CatalogScreen, DraftView, HomeScreen, OrderScreen, OrdersScreen, ProductScreen } from './screens';
@@ -10,7 +11,7 @@ import { AssistantScreen, CartScreen, CatalogScreen, DraftView, HomeScreen, Orde
 export type Route =
   | { name: 'home' } | { name: 'catalog'; cat?: string; q?: string } | { name: 'product'; slug: string }
   | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'assistant' } | { name: 'chat' }
-  | { name: 'account' } | { name: 'invoice'; id: string };
+  | { name: 'account' } | { name: 'invoice'; id: string } | { name: 'proforma'; id: string };
 
 interface Ctx {
   route: Route; go: (r: Route, replace?: boolean) => void; back: () => void;
@@ -59,6 +60,13 @@ export function App() {
       if (!ok) return;
       reloadMe();
       // opened from the bot's «بررسی و ثبت در سبد» button: load the assistant's draft into the cart
+      // opened from the bot's «مشاهده پیش‌فاکتور» button
+      const pf = new URLSearchParams(location.search).get('pf');
+      if (pf && /^[a-z0-9]{10,40}$/.test(pf)) {
+        history.replaceState(null, '', location.pathname);
+        setStack([{ name: 'home' }, { name: 'orders' }, { name: 'order', id: pf }, { name: 'proforma', id: pf }]);
+        return;
+      }
       const draft = new URLSearchParams(location.search).get('draft');
       if (draft && /^[a-z0-9]{10,40}$/.test(draft)) {
         try {
@@ -95,7 +103,7 @@ export function App() {
   const count = cart.length;
   const navItems: [Route, string, string][] = [[{ name: 'home' }, 'home', 'خانه'], [{ name: 'catalog' }, 'grid', 'محصولات']];
   const navItems2: [Route, string, string][] = [[{ name: 'orders' }, 'box', 'سفارش‌ها']];
-  const isTab = (n: string) => route.name === n || (n === 'orders' && ['order', 'account', 'invoice'].includes(route.name)) || (n === 'catalog' && route.name === 'product');
+  const isTab = (n: string) => route.name === n || (n === 'orders' && ['order', 'account', 'invoice', 'proforma'].includes(route.name)) || (n === 'catalog' && route.name === 'product');
 
   const ctx: Ctx = { route, go, back, cart, setCart, add, me, authed, reloadMe, quickAdd, toast, aiEnabled };
   return (
@@ -113,6 +121,7 @@ export function App() {
             {route.name === 'chat' && <ChatScreen />}
             {route.name === 'account' && <AccountScreen />}
             {route.name === 'invoice' && <InvoiceScreen id={route.id} />}
+            {route.name === 'proforma' && <ProformaScreen id={route.id} />}
           </div>
         </div>
 

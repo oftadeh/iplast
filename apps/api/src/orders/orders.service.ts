@@ -231,7 +231,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (askCustomer) {
         await this.prisma.order.update({ where: { id: orderId }, data: { status: 'PROFORMA_SENT', events: { create: { status: 'PROFORMA_SENT', byUserId, comment: note } } } });
         const { text } = await this.orderText(orderId, `🧾 پیش‌فاکتور نهایی (نسخه ${pf.version})`);
-        const kb = { inline_keyboard: [[{ text: '✅ تأیید پیش‌فاکتور', callback_data: `pf:${orderId}:ok` }, { text: '✏️ تغییر می‌خواهم', callback_data: `pf:${orderId}:no` }]] };
+        const kb = { inline_keyboard: [
+          ...(process.env.MINIAPP_URL ? [[{ text: '📄 مشاهده پیش‌فاکتور', web_app: { url: `${process.env.MINIAPP_URL}?pf=${orderId}` } }]] : []),
+          [{ text: '✅ تأیید پیش‌فاکتور', callback_data: `pf:${orderId}:ok` }, { text: '✏️ تغییر می‌خواهم', callback_data: `pf:${orderId}:no` }],
+        ] };
         const until = expiresAt.toLocaleString('fa-IR', { dateStyle: 'short', timeStyle: 'short' });
         for (const t of await this.customerChats(orderId)) await this.tg.send(t, `${text}${note ? `\nتوضیح کارشناس: ${note}` : ''}\n\nکارشناس فروش قیمت‌ها را نهایی کرده است. لطفاً تا ${until} تأیید کنید؛ بعد از آن پیش‌فاکتور منقضی می‌شود.`, kb);
         return { status: 'PROFORMA_SENT' as OrderStatus };
@@ -396,7 +399,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async get(userId: string, id: string, staff = false) {
     const o = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: true, events: { orderBy: { createdAt: 'asc' } }, proformas: true, shipments: { orderBy: { shippedAt: 'asc' } }, documents: { orderBy: { createdAt: 'desc' }, select: { id: true, kind: true, title: true, mime: true, size: true, byCustomer: true, createdAt: true, paymentId: true, shipmentId: true } }, customer: { include: { terms: true } }, placedBy: { select: { id: true, firstName: true, lastName: true, username: true } } },
+      include: { items: true, events: { orderBy: { createdAt: 'asc' } }, proformas: true, shipments: { orderBy: { shippedAt: 'asc' } }, documents: { orderBy: { createdAt: 'desc' }, select: { id: true, kind: true, title: true, mime: true, size: true, byCustomer: true, createdAt: true, paymentId: true, shipmentId: true } }, customer: { include: { terms: true, support: { select: { firstName: true, lastName: true, phone: true } } } }, placedBy: { select: { id: true, firstName: true, lastName: true, username: true } } },
     });
     if (!o) throw new NotFoundException();
     if (!staff && o.placedById !== userId) {
