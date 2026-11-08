@@ -1,3 +1,4 @@
+import { ownerIds } from '../common/owner';
 import { BadRequestException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { TelegramService } from '../common/telegram.service';
@@ -18,7 +19,8 @@ export class AuthService implements OnModuleInit {
    * lock themselves out (for example by adding their own ID as a sales agent). Other managers are added in the panel.
    */
   async onModuleInit() {
-    const ids = (process.env.ADMIN_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x));
+    // after a transfer in the panel the owner lives in the database, not in .env
+    const ids = await ownerIds(this.prisma);
     for (const id of ids) {
       await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'ADMIN' }, update: { staffRole: 'ADMIN', isActive: true } });
     }
@@ -35,6 +37,8 @@ export class AuthService implements OnModuleInit {
   }
 
   private roleCache = new Map<string, { role: string | null; at: number }>();
+  /** A role was changed in the panel: it applies on the next request, not after the cache expires. */
+  forgetRole(userId: string) { this.roleCache.delete(userId); }
   /** The staff role as it is now in the database (cached for a few seconds). Null for inactive or non-staff users. */
   async currentStaffRole(userId: string) {
     const hit = this.roleCache.get(userId);

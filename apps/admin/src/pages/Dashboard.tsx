@@ -4,6 +4,7 @@ import { Icon } from '../icons';
 import { InviteCard, type Growth } from './Growth';
 
 interface Dash {
+  fresh?: Partial<Record<string, number>>;
   queue: { unansweredChats: number; salesReview: number; awaitingCustomer: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; joinRequests?: number; reportedPayments: number };
   orders: { today: number; last30: number; open: number; delivered: number; byStatus: Record<string, number> };
   money: { receivable: string; invoiced: string; chequesDue7: string; chequesDue7Count: number };
@@ -49,13 +50,13 @@ export function DashboardPage() {
   const money = role !== 'WAREHOUSE';
 
   const tasks = [
-    { n: q.finalApproval, t: 'منتظر تأیید نهایی شما', s: 'orders/final', icon: 'check', tone: 'hot', show: role === 'ADMIN' },
-    { n: q.salesReview, t: 'پیش‌فاکتور برای قیمت‌گذاری', s: 'orders/agent', icon: 'receipt', tone: 'hot', show: role !== 'WAREHOUSE' },
-    { n: q.unansweredChats, t: 'مشتری منتظر جواب', s: 'chats/human', icon: 'chat', tone: 'hot', show: role !== 'WAREHOUSE' },
-    { n: q.reportedPayments, t: 'رسید پرداخت برای بررسی', s: 'customers/receipts', icon: 'wallet', tone: 'warn', show: role !== 'WAREHOUSE' },
-    { n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'customers/new', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
-    { n: q.joinRequests ?? 0, t: 'درخواست عضویت در مجموعه', s: 'customers/joins', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
-    { n: q.warehouse, t: 'سفارش برای آماده‌سازی و ارسال', s: 'warehouse/queue', icon: 'truck', tone: 'warn', show: role !== 'SALES' },
+    { k: 'finalApproval', n: q.finalApproval, t: 'منتظر تأیید نهایی شما', s: 'orders/final', icon: 'check', tone: 'hot', show: role === 'ADMIN' },
+    { k: 'salesReview', n: q.salesReview, t: 'پیش‌فاکتور برای قیمت‌گذاری', s: 'orders/agent', icon: 'receipt', tone: 'hot', show: role !== 'WAREHOUSE' },
+    { k: 'unansweredChats', n: q.unansweredChats, t: 'مشتری منتظر جواب', s: 'chats/human', icon: 'chat', tone: 'hot', show: role !== 'WAREHOUSE' },
+    { k: 'reportedPayments', n: q.reportedPayments, t: 'رسید پرداخت برای بررسی', s: 'customers/receipts', icon: 'wallet', tone: 'warn', show: role !== 'WAREHOUSE' },
+    { k: 'newCustomers', n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'customers/new', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
+    { k: 'joinRequests', n: q.joinRequests ?? 0, t: 'درخواست عضویت در مجموعه', s: 'customers/joins', icon: 'users', tone: 'warn', show: role !== 'WAREHOUSE' },
+    { k: 'warehouse', n: q.warehouse, t: 'سفارش برای آماده‌سازی و ارسال', s: 'warehouse/queue', icon: 'truck', tone: 'warn', show: role !== 'SALES' },
   ].filter(x => x.show && x.n > 0);
   const waiting = tasks.reduce((a, x) => a + x.n, 0);
 
@@ -100,7 +101,7 @@ export function DashboardPage() {
             <button key={x.t} type="button" className={`d-task ${x.tone}`} onClick={() => open(x.s)}>
               <span className="ic"><Icon n={x.icon} s={18} /></span>
               <b className="num">{fa(x.n)}</b>
-              <span className="t">{x.t}</span>
+              <span className="t">{x.t}{(data.fresh?.[x.k] ?? 0) > 0 && <span className="newchip num">{fa(data.fresh![x.k]!)} جدید</span>}</span>
               <span className="go">بررسی <Icon n="arrow" s={14} /></span>
             </button>
           ))}

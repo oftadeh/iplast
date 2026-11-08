@@ -110,8 +110,15 @@ export function App() {
   // counts on the menu: what is waiting in each page
   useEffect(() => {
     if (!me) return;
-    const load = () => api<{ queue: Queue }>('/admin/dashboard').then(d => setQueue(d.queue), () => {});
-    load(); const t = window.setInterval(load, 30000); return () => window.clearInterval(t);
+    // the menu shows what is new since this person last opened each page; opening a page clears its count
+    const load = () => api<{ fresh: Queue }>('/admin/dashboard/counts').then(d => setQueue(d.fresh), () => {});
+    const badge = AREAS.flatMap(a => a.pages).find(p => p.id === section)?.badge;
+    if (badge) api('/admin/dashboard/seen', { method: 'POST', body: { badge } }).then(load, load); else load();
+    let soon = 0;
+    const changed = () => { window.clearTimeout(soon); soon = window.setTimeout(load, 400); };
+    window.addEventListener('iplast:changed', changed);
+    const t = window.setInterval(load, 30000);
+    return () => { window.clearInterval(t); window.clearTimeout(soon); window.removeEventListener('iplast:changed', changed); };
   }, [me, section]);
 
   if (checking) return <div className="login"><div className="card">در حال بررسی ورود…</div></div>;

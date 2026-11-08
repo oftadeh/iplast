@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { useAdmin } from '../App';
-import { ApiError, api, dateFa, fa, getToken, rial, useApi } from '../lib';
+import { ApiError, api, apiForm, dateFa, fa, getToken, rial, useApi } from '../lib';
 
-interface PriceList { id: string; title: string; status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'; sourceFile: string | null; createdAt: string; publishedAt: string | null; _count?: { prices: number; importRows: number } }
+interface PriceList { id: string; title: string; status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'; sourceFile: string | null; hasFile?: boolean; createdAt: string; publishedAt: string | null; _count?: { prices: number; importRows: number } }
 interface Row {
   id: string; page: number | null; familyTitle: string | null; rawText: string; accountingCode: string | null; perPack: number | null;
   amount: string | null; match: 'MATCHED' | 'AMBIGUOUS' | 'NEW' | 'UNMATCHED'; variantId: string | null; resolvedBy: string | null;
@@ -68,7 +68,15 @@ export function PricesPage() {
               <tr key={l.id} className="click" aria-selected={l.id === current} onClick={() => setSel(l.id)}>
                 <td><b>{l.title}</b></td>
                 <td><span className={`st ${LIST_ST[l.status][1]}`}>{LIST_ST[l.status][0]}</span></td>
-                <td className="small muted">{l.sourceFile ?? '—'}</td>
+                <td className="small muted">{l.sourceFile ?? '—'}{l.status === 'ACTIVE' && (
+                  <label className="linkbtn" style={{ display: 'block' }} onClick={e => e.stopPropagation()}>
+                    {l.hasFile ? '📄 فایل برای مشتری آماده است · تعویض' : '📎 گذاشتن PDF برای ارسال به مشتری'}
+                    <input type="file" accept="application/pdf" hidden onChange={async e => {
+                      const f = e.target.files?.[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);
+                      try { await apiForm(`/admin/prices/lists/${l.id}/file`, fd); toast('فایل لیست قیمت گذاشته شد؛ ایجنت آن را برای مشتری می‌فرستد'); lists.reload(); } catch (x) { toast(x instanceof ApiError ? x.message : 'ثبت نشد'); }
+                    }} />
+                  </label>
+                )}</td>
                 <td className="num small">{l._count?.prices ? fa(l._count.prices) : '—'}</td>
                 <td className="num small muted">{dateFa(l.publishedAt ?? l.createdAt)}</td>
               </tr>

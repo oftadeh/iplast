@@ -37,6 +37,8 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
     try { const j = await r.json(); if (typeof j?.message === 'string') msg = j.message; } catch { /* */ }
     throw new ApiError(r.status, msg);
   }
+  // something was handled: the menu counts refresh
+  if ((init?.method ?? 'GET') !== 'GET' && !path.startsWith('/admin/dashboard/seen')) window.dispatchEvent(new Event('iplast:changed'));
   return r.json() as Promise<T>;
 }
 
@@ -53,7 +55,7 @@ export function useApi<T>(path: string | null) {
 }
 
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole: 'ADMIN' | 'SALES' | 'WAREHOUSE' | null }
-export interface Staff { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; staffRole: 'ADMIN' | 'SALES' | 'WAREHOUSE'; isActive: boolean; _count: { supportOf: number } }
+export interface Staff { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; staffRole: 'ADMIN' | 'SALES' | 'WAREHOUSE'; isActive: boolean; owner?: boolean; phone?: string | null; _count: { supportOf: number } }
 
 /** Jalali (شمسی) date → ISO date string (YYYY-MM-DD), for cheque due dates. */
 export function jalaliToIso(jy: number, jm: number, jd: number) {

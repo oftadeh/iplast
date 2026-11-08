@@ -309,4 +309,47 @@ const cx = await call('POST', `/api/orders/${edited.id}/cancel`, { reason: 'دی
 assert.equal(cx.status, 'CANCELLED');
 assert.equal((await call('GET', `/api/orders/${edited.id}`, null, owner)).status, 'CANCELLED'); step('the customer cancels an order that is not approved yet');
 await call('POST', `/api/orders/${o1.id}/cancel`, {}, owner, 400); step('an order past final approval cannot be cancelled from the app');
+
+// menu counts: «new» clears when the page is opened, «pending» drops only when handled
+const c0 = await call('GET', '/api/admin/dashboard/counts', null, admin);
+await call('POST', '/api/admin/dashboard/seen', { badge: 'salesReview' }, admin);
+const c1 = await call('GET', '/api/admin/dashboard/counts', null, admin);
+assert.equal(c1.fresh.salesReview, 0); assert.equal(c1.queue.salesReview, c0.queue.salesReview); step('opening a page clears its «new» count; pending work still counts');
+const fresh = await call('POST', '/api/orders', { customerId: cust.customerId, items: [{ variantId: priced.id, quantity: 2 }] }, owner);
+const c2 = await call('GET', '/api/admin/dashboard/counts', null, admin);
+assert.equal(c2.fresh.salesReview, 1); assert.equal(c2.queue.salesReview, c0.queue.salesReview + 1); step('a new order shows as one «new»');
+await call('POST', `/api/orders/${fresh.id}/cancel`, {}, owner);
+const c3 = await call('GET', '/api/admin/dashboard/counts', null, admin);
+assert.equal(c3.queue.salesReview, c0.queue.salesReview); step('handled (cancelled) work leaves the count');
+await call('POST', '/api/admin/dashboard/seen', { badge: 'nope' }, admin, 400); step('unknown badge refused');
+
+// sales agents switched on and off; their customers move to another agent
+const ag = await call('POST', '/api/admin/staff', { telegramId: '7401', firstName: 'Leaving', role: 'SALES' }, admin);
+const agTok = await login(7401, 'Leaving');
+await call('PATCH', `/api/admin/customers/${io.customer.id}`, { supportId: ag.id }, admin);
+const off = await call('PATCH', `/api/admin/staff/${ag.id}`, { isActive: false, moveCustomersTo: salesMe.id }, admin);
+assert.equal(off.isActive, false); assert.equal(off.moved, 1);
+assert.equal((await call('GET', `/api/admin/customers/${io.customer.id}`, null, admin)).support?.id, salesMe.id); step('a sales agent is switched off and their customers go to another agent');
+await call('GET', '/api/admin/dashboard', null, agTok, 403); step('a switched-off agent cannot open the panel');
+await call('PATCH', `/api/admin/staff/${ag.id}`, { isActive: true }, admin);
+await call('GET', '/api/admin/dashboard', null, agTok); step('switched on again, they can');
+
+// handing the senior manager role to someone else
+const adminMe = await call('GET', '/api/me', null, admin);
+await call('PATCH', `/api/admin/staff/${adminMe.id}`, { isActive: false }, sales, 403);
+await call('POST', '/api/admin/staff/owner', { telegramId: '7501' }, sales, 403); step('only a manager reaches the transfer');
+const second = await call('POST', '/api/admin/staff', { telegramId: '7502', role: 'ADMIN' }, admin);
+const secondTok = await login(7502, 'Second');
+await call('POST', '/api/admin/staff/owner', { telegramId: '7501' }, secondTok, 403); step('a manager who is not the senior manager cannot transfer it');
+await call('POST', '/api/admin/staff/owner', { telegramId: '7501', firstName: 'New Boss', phone: '۰۹۱۲۳۴۵۶۷۸۹', keepOld: true }, admin);
+let st = await call('GET', '/api/admin/staff', null, admin);
+assert.ok(st.find(x => x.telegramId === '7501').owner && !st.find(x => x.telegramId === '42').owner);
+assert.equal(st.find(x => x.telegramId === '7501').phone, '09123456789'); step('the senior manager is handed to a new ID and phone');
+await call('POST', '/api/admin/staff/owner', { telegramId: '7502' }, admin, 403); step('the old one can no longer transfer it');
+const boss = await login(7501, 'New Boss');
+await call('PATCH', `/api/admin/staff/${st.find(x => x.telegramId === '7501').id}`, { isActive: false }, admin, 400); step('nobody can switch off the senior manager');
+await call('POST', '/api/admin/staff/owner', { telegramId: '7502', keepOld: false }, boss);
+st = await call('GET', '/api/admin/staff', null, secondTok);
+assert.ok(st.find(x => x.telegramId === '7502').owner && !st.find(x => x.telegramId === '7501').isActive);
+await call('GET', '/api/admin/dashboard', null, boss, 403); step('handed on without keeping access: the previous one is switched off at once');
 console.log(`\nall ${n} checks passed`);
