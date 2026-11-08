@@ -12,6 +12,7 @@ export class OrdersController {
   @Get() mine(@Session() s: SessionClaims) { return this.orders.listMine(s.sub); }
   /** The customer accepts the final proforma, or asks the sales agent for a change. */
   @Post(':id/accept') accept(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { ok?: boolean; comment?: string }) { return this.orders.customerDecide(s.sub, id, b?.ok !== false, b?.comment); }
+  @Post(':id/cancel') cancel(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { reason?: string }) { return this.orders.customerCancel(s.sub, id, b?.reason); }
   @Get(':id/reorder') reorder(@Session() s: SessionClaims, @Param('id') id: string) { return this.orders.reorder(s.sub, id); }
   @Get(':id') one(@Session() s: SessionClaims, @Param('id') id: string) { return this.orders.get(s.sub, id, !!s.staff); }
 }

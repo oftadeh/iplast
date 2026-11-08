@@ -522,6 +522,7 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .editbar{margin:0 16px 12px;padding:12px 14px;border-radius:16px;background:color-mix(in srgb,#F0A43C 16%,var(--surface));border:1px solid color-mix(in srgb,#F0A43C 45%,transparent);font-size:13px;line-height:1.8;display:grid;gap:8px}
 .editbar button{justify-self:start;border:0;background:none;color:var(--brand-2);font:inherit;font-weight:700;padding:0;cursor:pointer}
 .linkbtn{border:0;background:none;color:var(--brand-2);font:inherit;font-weight:700;padding:0;margin-top:6px;cursor:pointer;text-align:right}
+.linkbtn.danger{display:block;margin:10px auto 0;color:#b42318;font-size:13px;text-align:center}
 .companies{display:grid;gap:10px}
 .company{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:10px 12px}
 .company .av{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand-2) 14%,var(--surface));color:var(--brand-2);font-weight:900;flex:none}

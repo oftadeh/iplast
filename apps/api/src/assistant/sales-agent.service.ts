@@ -3,7 +3,7 @@ import { Agent, run, tool } from '@openai/agents';
 import { z } from 'zod';
 import { allowedModes, formatRial, payModeFa } from '@iplast/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { OrdersService, STATUS_FA } from '../orders/orders.service';
+import { EDITABLE, OrdersService, STATUS_FA } from '../orders/orders.service';
 import { TelegramService } from '../common/telegram.service';
 import { quote, saleTerms } from '../orders/pricing';
 import { AssistantService, DraftLine } from './assistant.service';
@@ -23,9 +23,14 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 6. برای پیگیری سفارش از my_orders و برای جزئیات یک سفارش (اقلام، مبلغ نقد و چک، بارنامه، راننده) از order_detail استفاده کن.
 7. وقتی کارشناس قیمت‌ها را نهایی کرد، سفارش «پیش‌فاکتور نهایی؛ منتظر تأیید مشتری» است. مبلغ و مهلت را بگو و بپرس تأیید می‌کند یا نه. فقط با تأیید صریح مشتری answer_proforma با ok=true، و اگر تغییر خواست با ok=false و توضیح او صدا بزن.
 8. برای مانده‌ی حساب، فاکتورها، چک‌های در جریان و سررسیدها از my_account استفاده کن. برای ثبت پرداخت بگو عکس یا PDF فیش یا چک را از پنل کاربری ← حساب و فاکتورها بفرستد.
-9. در این موارد handoff را صدا بزن و به مشتری بگو کارشناس فروش به‌زودی جواب می‌دهد: مشتری آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه؛ سؤالی که با ابزارها جوابش را نداری.
+9. لغو: اگر مشتری خواست سفارش یا درخواستی را لغو/حذف کند، اگر شماره را نگفته با my_orders پیدا کن و اگر بیش از یکی ممکن است بپرس کدام. شماره و اقلام را بگو و بپرس «لغو کنم؟». فقط با تأیید صریح cancel_order را صدا بزن. سفارشی که تأیید نهایی شده از این‌جا لغو نمی‌شود؛ handoff کن.
+10. اصلاح: برای تغییر سفارشی که هنوز تأیید نهایی نشده، load_order را صدا بزن تا اقلامش در پیش‌نویس بیاید، تغییرات را با set_draft (فهرست کامل) اعمال کن، جمع جدید را بگو و با تأیید صریح submit_order را با replacesOrder = شماره‌ی سفارش قدیم صدا بزن. سفارش قدیم خودکار لغو می‌شود و شماره‌ی جدید می‌گیرد؛ هر دو شماره را بگو.
+11. سفارش مجدد: load_order و بعد مثل سفارش جدید (submit_order بدون replacesOrder). قیمت‌ها قیمت امروز است.
+12. اگر مشتری فقط پیش‌نویس (سفارشی که هنوز ثبت نشده) را نمی‌خواهد، set_draft با فهرست خالی.
+13. در این موارد handoff را صدا بزن و به مشتری بگو کارشناس فروش به‌زودی جواب می‌دهد: مشتری آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه؛ سؤالی که با ابزارها جوابش را نداری.
 
 قواعد:
+- هرگز نگو کاری انجام شد (ثبت، لغو، اصلاح، تأیید، پاک کردن) مگر این‌که در همین نوبت ابزار مربوطش را صدا زده باشی و نتیجه‌اش موفق («ثبت شد»، «لغو شد») بوده باشد. اگر نتیجه «نشد» بود، همان دلیل را بگو. اگر برای کاری ابزار نداری، بگو از دست تو برنمی‌آید و handoff کن.
 - فقط از نتیجه‌ی ابزارها استفاده کن. هرگز کالا، سایز، قیمت، موجودی یا زمان ارسال از خودت نساز. «استعلامی» یعنی قیمت را کارشناس اعلام می‌کند.
 - فارسی، مؤدب، کوتاه (حداکثر چند جمله). اعداد را فارسی بنویس.
 - پیام کوتاهی مثل سلام یا تشکر را کوتاه جواب بده.`;
@@ -185,8 +190,8 @@ export class SalesAgentService {
     });
     const submit = tool({
       name: 'submit_order', description: 'پیش‌نویس فعلی را به‌عنوان پیش‌فاکتور ثبت می‌کند. فقط بعد از تأیید صریح مشتری. برای مشتری جدید companyName لازم است.',
-      parameters: z.object({ companyName: z.string().nullable(), note: z.string().nullable(), payMode: z.enum(['CASH', 'TERM']).nullable() }),
-      execute: async ({ companyName, note, payMode }) => {
+      parameters: z.object({ companyName: z.string().nullable(), note: z.string().nullable(), payMode: z.enum(['CASH', 'TERM']).nullable(), replacesOrder: z.number().int().nullable().describe('شماره‌ی سفارش قدیم وقتی این ثبت، اصلاح آن سفارش است؛ وگرنه null') }),
+      execute: async ({ companyName, note, payMode, replacesOrder }) => {
         if (!draftId) return 'پیش‌نویسی نیست؛ اول set_draft.';
         const d = await this.prisma.assistantDraft.findUnique({ where: { id: draftId } });
         const items = (d?.items as unknown as DraftLine[] | undefined) ?? [];
@@ -194,16 +199,52 @@ export class SalesAgentService {
         const ms = user.memberships.filter(m => m.role === 'OWNER' || m.role === 'BUYER');
         if (!ms.length && user.memberships.length) return 'این کاربر اجازه‌ی ثبت سفارش ندارد؛ handoff کن.';
         if (!ms.length && !companyName?.trim()) return 'NEED_COMPANY_NAME: نام فروشگاه یا شرکت را از مشتری بپرس.';
+        let replaces: string | undefined;
+        if (replacesOrder) {
+          const old = await findOrder(replacesOrder);
+          if (!old) return `ثبت نشد: سفارش #${replacesOrder} برای این مشتری نیست.`;
+          replaces = old.id;
+        }
         try {
           const o = await this.orders.create(userId, {
             customerId: ms[0]?.customerId, newCustomer: ms.length ? undefined : { name: companyName!.trim() },
             items: items.map(i => ({ variantId: i.variantId, quantity: i.quantity, ...(i.packs ? { packs: i.packs } : {}) })),
-            payMode: payMode ?? undefined, idempotencyKey: `draft:${draftId}`, note: [note?.trim(), 'ثبت توسط ایجنت فروش در گفتگو'].filter(Boolean).join('\n'),
+            payMode: payMode ?? undefined, replaces, idempotencyKey: `draft:${draftId}`, note: [note?.trim(), 'ثبت توسط ایجنت فروش در گفتگو'].filter(Boolean).join('\n'),
           }, 'agent');
           await this.prisma.assistantDraft.update({ where: { id: draftId }, data: { usedAt: new Date() } });
           orderNumber = o.number;
-          return `ثبت شد: پیش‌فاکتور ${o.number}، وضعیت: ${o.statusFa}`;
+          return `ثبت شد: پیش‌فاکتور ${o.number}، وضعیت: ${o.statusFa}${replacesOrder ? `؛ سفارش #${replacesOrder} لغو شد و این نسخه‌ی اصلاح‌شده‌ی آن است` : ''}`;
         } catch (e) { return `ثبت نشد: ${(e as Error).message}`; }
+      },
+    });
+    const findOrder = (number: number) => this.prisma.order.findFirst({ where: { number, ...visible }, include: { items: true } });
+    const cancel = tool({
+      name: 'cancel_order', description: 'سفارش یا پیش‌فاکتوری را که هنوز تأیید نهایی نشده واقعاً لغو می‌کند. فقط بعد از تأیید صریح مشتری.',
+      parameters: z.object({ number: z.number().int(), reason: z.string().nullable() }),
+      execute: async ({ number, reason }) => {
+        const o = await findOrder(number);
+        if (!o) return 'لغو نشد: سفارشی با این شماره برای این مشتری نیست.';
+        try {
+          const r = await this.orders.customerCancel(userId, o.id, reason ?? undefined);
+          return 'already' in r ? `این سفارش از قبل لغو شده بود (#${r.number}).` : `لغو شد: سفارش #${r.number}، وضعیت: ${r.statusFa}`;
+        } catch (e) { return `لغو نشد: ${(e as Error).message}`; }
+      },
+    });
+    const loadOrder = tool({
+      name: 'load_order', description: 'اقلام یک سفارش قبلی را (با قیمت امروز) در پیش‌نویس می‌گذارد؛ برای اصلاح آن سفارش یا سفارش مجدد. editable نشان می‌دهد هنوز قابل اصلاح است یا نه.',
+      parameters: z.object({ number: z.number().int() }),
+      execute: async ({ number }) => {
+        const o = await findOrder(number);
+        if (!o) return 'سفارشی با این شماره برای این مشتری نیست.';
+        const lines: DraftLine[] = o.items.map(i => ({ variantId: i.variantId, quantity: i.quantity, mode: i.packs ? 'pack' : 'unit', packs: i.packs ?? null }));
+        const d = await this.prisma.assistantDraft.create({ data: { userId, source: 'agent', inputText: `از سفارش #${o.number}`, reply: '', items: lines as object[], model: process.env.OPENAI_MODEL ?? null } });
+        draftId = d.id;
+        const v = await this.ai.view(d.id, userId, customerId);
+        return JSON.stringify({
+          order: o.number, status: STATUS_FA[o.status], editable: EDITABLE.includes(o.status),
+          lines: v.lines.map(l => ({ name: `${l.name} ${l.label}`, quantity: l.quantity, unit: l.unitName, packs: l.mode === 'pack' ? l.n : null, forSetDraft: { variantId: l.variantId, quantity: l.n, unit: l.mode } })),
+          hint: 'برای تغییر، set_draft را با همه‌ی forSetDraft ها (با تغییرات) صدا بزن.',
+        });
       },
     });
     const toHuman = tool({
@@ -225,7 +266,7 @@ export class SalesAgentService {
 
     let reply: string;
     try {
-      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, orderDetail, answerProforma, myAccount, submit, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
+      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, orderDetail, answerProforma, myAccount, submit, cancel, loadOrder, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
       const r = await run(agent, context, { maxTurns: 12 });
       reply = (r.finalOutput as { reply: string }).reply.trim();
     } catch (e) {

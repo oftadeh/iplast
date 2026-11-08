@@ -409,15 +409,25 @@ function useEditOrder() {
 }
 
 /** «اصلاح» (while not yet finally approved) and «سفارش مجدد» for one order. */
-function OrderActions({ o, compact }: { o: Order; compact?: boolean }) {
-  const { me } = useApp();
+function OrderActions({ o, compact, onChange }: { o: Order; compact?: boolean; onChange?: () => void }) {
+  const { me, toast } = useApp();
   const re = useReorder(), ed = useEditOrder();
   const editable = canEdit(o, me?.accounts ?? []);
+  const [busy, setBusy] = useState(false);
+  const cancel = async () => {
+    if (!window.confirm(`سفارش #${fa(o.number)} لغو شود؟`)) return;
+    setBusy(true);
+    try { await api(`/orders/${encodeURIComponent(o.id)}/cancel`, { method: 'POST', body: {} }); haptic('success'); toast(`سفارش #${fa(o.number)} لغو شد`); onChange?.(); }
+    catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
   return (
-    <div className={`oactions ${compact ? 'compact' : ''}`} onClick={e => e.stopPropagation()}>
-      {editable && <button type="button" className="cta ghost" disabled={ed.busy} onClick={() => ed.run(o)}>✏️ اصلاح</button>}
-      <button type="button" className="cta ghost" disabled={re.busy} onClick={() => re.run(o.id)}>🔁 سفارش مجدد</button>
-    </div>
+    <>
+      <div className={`oactions ${compact ? 'compact' : ''}`} onClick={e => e.stopPropagation()}>
+        {editable && <button type="button" className="cta ghost" disabled={ed.busy} onClick={() => ed.run(o)}>✏️ اصلاح</button>}
+        <button type="button" className="cta ghost" disabled={re.busy} onClick={() => re.run(o.id)}>🔁 سفارش مجدد</button>
+      </div>
+      {editable && !compact && <button type="button" className="linkbtn danger" disabled={busy} onClick={cancel}>لغو این سفارش</button>}
+    </>
   );
 }
 
@@ -476,7 +486,7 @@ export function OrderScreen({ id }: { id: string }) {
       </div>
       <MoneySummary d={d} />
       <div className="pf-open"><button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 پیش‌فاکتور رسمی</button></div>
-      <OrderActions o={d} />
+      <OrderActions o={d} onChange={o.reload} />
       {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>

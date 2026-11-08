@@ -436,6 +436,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return { status: 'SALES_APPROVED' as OrderStatus, statusFa: STATUS_FA.SALES_APPROVED, number: o.number };
   }
 
+  /** The customer withdraws an order that is not finally approved yet (mini app button or the AI agent). */
+  async customerCancel(userId: string, orderId: string, reason?: string) {
+    const o = await this.prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
+    if (!o) throw new NotFoundException('سفارش پیدا نشد');
+    const m = await this.prisma.customerMember.findUnique({ where: { customerId_userId: { customerId: o.customerId, userId } } });
+    if (!m || m.role === 'VIEWER' || (m.role === 'BUYER' && o.placedById !== userId)) throw new ForbiddenException('اجازه‌ی لغو این سفارش را ندارید');
+    if (o.status === 'CANCELLED') return { status: o.status, statusFa: STATUS_FA.CANCELLED, number: o.number, already: true };
+    if (!EDITABLE.includes(o.status)) throw new BadRequestException(`این سفارش «${STATUS_FA[o.status]}» است و دیگر از اپ لغو نمی‌شود؛ به کارشناس فروش پیام بدهید.`);
+    const note = reason?.trim().slice(0, 300);
+    await this.setStatus(userId, orderId, 'CANCELLED', note ? `لغو توسط مشتری: ${note}` : 'لغو توسط مشتری');
+    for (const a of await this.salesAgentsOf(o.customerId)) await this.tg.send(a.telegramId, `🚫 مشتری «${o.customer.name}» سفارش #${o.number} را لغو کرد.${note ? `\n💬 ${note}` : ''}`);
+    return { status: 'CANCELLED' as OrderStatus, statusFa: STATUS_FA.CANCELLED, number: o.number };
+  }
+
   private async expire(orderId: string) {
     const o = await this.prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
     if (!o || o.status !== 'PROFORMA_SENT') return;
