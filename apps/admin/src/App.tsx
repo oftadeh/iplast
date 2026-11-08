@@ -10,27 +10,58 @@ import { MessagesPage } from './pages/Messages';
 import { ProxyPage } from './pages/Proxy';
 import { DashboardPage } from './pages/Dashboard';
 import { ChatsPage } from './pages/Chats';
+import { AiPage } from './pages/Ai';
 import { Icon } from './icons';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
 export const useAdmin = () => useContext(AdminCtx);
 
-// Focused on decisions and the catalog: approve orders and customers, define products, keep prices current.
-// Conversations stay in the bot chat itself (staff reply there).
+// Work areas (branches) and their pages (sub-branches). A page id is "<area>/<page>"; the hash is "#<page id>[/<item id>]".
 type Role = NonNullable<Me['staffRole']>;
-const SECTIONS: { id: string; title: string; icon: string; group: string; roles: Role[] }[] = [
-  { id: 'dashboard', title: 'پیشخوان', icon: 'home', group: '', roles: ['ADMIN', 'SALES', 'WAREHOUSE'] },
-  { id: 'approvals', title: 'تأییدها', icon: 'check', group: 'عملیات فروش', roles: ['ADMIN', 'SALES'] },
-  { id: 'chats', title: 'گفتگوها', icon: 'chat', group: 'عملیات فروش', roles: ['ADMIN', 'SALES'] },
-  { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', group: 'عملیات فروش', roles: ['ADMIN', 'WAREHOUSE'] },
-  { id: 'accounts', title: 'حساب مشتریان', icon: 'wallet', group: 'مالی', roles: ['ADMIN', 'SALES'] },
-  { id: 'products', title: 'کالاها', icon: 'box', group: 'کاتالوگ', roles: ['ADMIN', 'SALES'] },
-  { id: 'prices', title: 'به‌روزرسانی قیمت', icon: 'tag', group: 'کاتالوگ', roles: ['ADMIN', 'SALES'] },
-  { id: 'messages', title: 'پیام و اعلان', icon: 'bell', group: 'مدیریت سیستم', roles: ['ADMIN'] },
-  { id: 'staff', title: 'کارکنان', icon: 'users', group: 'مدیریت سیستم', roles: ['ADMIN'] },
-  { id: 'proxy', title: 'پراکسی سرور', icon: 'shield', group: 'مدیریت سیستم', roles: ['ADMIN'] },
+interface Leaf { id: string; title: string; roles: Role[]; badge?: keyof Queue }
+interface Area { id: string; title: string; icon: string; roles: Role[]; pages: Leaf[] }
+export interface Queue { salesReview: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number; unansweredChats: number }
+const A: Role[] = ['ADMIN'], AS: Role[] = ['ADMIN', 'SALES'], ALL: Role[] = ['ADMIN', 'SALES', 'WAREHOUSE'];
+const AREAS: Area[] = [
+  { id: 'home', title: 'پیشخوان', icon: 'home', roles: ALL, pages: [{ id: 'home/dashboard', title: 'پیشخوان', roles: ALL }] },
+  { id: 'orders', title: 'سفارش‌ها', icon: 'check', roles: AS, pages: [
+    { id: 'orders/agent', title: 'تأیید کارشناس', roles: AS, badge: 'salesReview' },
+    { id: 'orders/final', title: 'تأیید نهایی مدیر', roles: AS, badge: 'finalApproval' },
+    { id: 'orders/history', title: 'سابقه', roles: AS },
+  ] },
+  { id: 'chats', title: 'گفتگوها', icon: 'chat', roles: AS, pages: [
+    { id: 'chats/human', title: 'نیاز به کارشناس', roles: AS, badge: 'unansweredChats' },
+    { id: 'chats/ai', title: 'در دست ایجنت', roles: AS },
+    { id: 'chats/all', title: 'همه', roles: AS },
+  ] },
+  { id: 'customers', title: 'مشتریان و مالی', icon: 'wallet', roles: AS, pages: [
+    { id: 'customers/new', title: 'مشتریان جدید', roles: AS, badge: 'newCustomers' },
+    { id: 'customers/accounts', title: 'حساب مشتریان', roles: AS },
+    { id: 'customers/receipts', title: 'رسیدهای پرداخت', roles: AS, badge: 'reportedPayments' },
+  ] },
+  { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', roles: ['ADMIN', 'WAREHOUSE'], pages: [{ id: 'warehouse/queue', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'], badge: 'warehouse' }] },
+  { id: 'catalog', title: 'کاتالوگ', icon: 'box', roles: AS, pages: [
+    { id: 'catalog/products', title: 'کالاها', roles: AS },
+    { id: 'catalog/prices', title: 'به‌روزرسانی قیمت', roles: AS },
+  ] },
+  { id: 'system', title: 'تنظیمات', icon: 'shield', roles: A, pages: [
+    { id: 'system/ai', title: 'ایجنت هوش مصنوعی', roles: A },
+    { id: 'system/staff', title: 'کارکنان', roles: A },
+    { id: 'system/messages', title: 'پیام و اعلان', roles: A },
+    { id: 'system/proxy', title: 'پراکسی سرور', roles: A },
+  ] },
 ];
+const LEAVES = AREAS.flatMap(a => a.pages.map(p => ({ ...p, area: a })));
+// older names that pages and links still use
+const ALIAS: Record<string, string> = { dashboard: 'home/dashboard', approvals: 'orders/agent', chats: 'chats/human', warehouse: 'warehouse/queue', accounts: 'customers/accounts', products: 'catalog/products', prices: 'catalog/prices', staff: 'system/staff', messages: 'system/messages', proxy: 'system/proxy' };
+function parseHash(): [string, string | undefined] {
+  const h = location.hash.slice(1);
+  const leaf = LEAVES.find(l => h === l.id || h.startsWith(l.id + '/'));
+  if (leaf) return [leaf.id, h.slice(leaf.id.length + 1) || undefined];
+  const [first, ...rest] = h.split('/');
+  return [ALIAS[first] ?? 'home/dashboard', rest.join('/') || undefined];
+}
 
 interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; platform?: string; isVersionAtLeast?(v: string): boolean; requestFullscreen?(): void; disableVerticalSwipes?(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
 /** Opened inside Telegram (from the mini app or the bot's /admin): signs in with the user's own Telegram account. */
@@ -40,9 +71,10 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(!!getToken() || !!tgApp());
   const [denied, setDenied] = useState(false);
-  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return SECTIONS.some(s => s.id === h) ? h : 'dashboard'; });
+  const [section, setSection] = useState<string>(() => parseHash()[0]);
   const [navOpen, setNavOpen] = useState(false);
-  const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
+  const [focus, setFocus] = useState<string | undefined>(() => parseHash()[1]);
+  const [queue, setQueue] = useState<Queue | null>(null);
   const [toastText, setToastText] = useState('');
   const t = useRef<number>();
   const toast = useCallback((s: string) => { setToastText(s); clearTimeout(t.current); t.current = window.setTimeout(() => setToastText(''), 2500); }, []);
@@ -66,6 +98,12 @@ export function App() {
     } else if (getToken()) loadMe();
   }, [loadMe]);
   useEffect(() => { history.replaceState(null, '', `#${section}${focus ? '/' + focus : ''}`); }, [section, focus]);
+  // counts on the menu: what is waiting in each page
+  useEffect(() => {
+    if (!me) return;
+    const load = () => api<{ queue: Queue }>('/admin/dashboard').then(d => setQueue(d.queue), () => {});
+    load(); const t = window.setInterval(load, 30000); return () => window.clearInterval(t);
+  }, [me, section]);
 
   if (checking) return <div className="login"><div className="card">در حال بررسی ورود…</div></div>;
   if (!me && tgApp()) return (
@@ -76,43 +114,75 @@ export function App() {
   );
   if (!me) return <Login onDone={loadMe} />;
 
-  const open = (s: string, id?: string) => { setSection(s); setFocus(id); setNavOpen(false); window.scrollTo(0, 0); };
-  const visible = SECTIONS.filter(s => s.roles.includes(me.staffRole!));
-  const current = visible.some(s => s.id === section) ? section : visible[0].id;
+  const role = me.staffRole!;
+  const areas = AREAS.map(a => ({ ...a, pages: a.pages.filter(p => p.roles.includes(role)) })).filter(a => a.roles.includes(role) && a.pages.length);
+  const leaves = areas.flatMap(a => a.pages.map(p => ({ ...p, area: a })));
+  const open = (s: string, id?: string) => {
+    const target = leaves.find(l => l.id === s) ?? leaves.find(l => l.id === ALIAS[s]) ?? leaves.find(l => l.area.id === s);
+    setSection(target?.id ?? leaves[0].id); setFocus(id); setNavOpen(false); window.scrollTo(0, 0);
+  };
+  const cur = leaves.find(l => l.id === section) ?? leaves[0];
+  const n = (b?: keyof Queue) => (b && queue ? queue[b] : 0);
+  const areaCount = (a: Area) => a.pages.reduce((x, p) => x + n(p.badge), 0);
+  const Badge = ({ v }: { v: number }) => (v ? <span className="cnt num">{v.toLocaleString('fa-IR')}</span> : null);
+  // phone: the four busiest areas sit in a bottom bar within thumb reach; the rest are under «بیشتر»
+  const bottom = areas.filter(a => ['home', 'orders', 'chats', 'warehouse', 'catalog'].includes(a.id)).slice(0, 4);
+  const id = cur.id;
   return (
     <AdminCtx.Provider value={{ me, toast, open }}>
       <div className={navOpen ? 'shell nav-open' : 'shell'}>
         <aside className="side">
           <div className="brand"><span className="mark">iP</span><div>اصفهان پلاست<small>پنل مدیریت</small></div></div>
-          <nav>{visible.map((s, i) => (
-            <div key={s.id} style={{ display: 'contents' }}>
-              {s.group && s.group !== visible[i - 1]?.group && <div className="navgroup">{s.group}</div>}
-              <button type="button" aria-current={s.id === current ? 'page' : undefined} onClick={() => open(s.id)}><Icon n={s.icon} />{s.title}</button>
-            </div>
-          ))}</nav>
+          <nav className="tree">{areas.map(a => {
+            const here = a.id === cur.area.id;
+            if (a.pages.length === 1) return (
+              <button key={a.id} type="button" className="area" aria-current={here ? 'page' : undefined} onClick={() => open(a.pages[0].id)}><Icon n={a.icon} /><span>{a.title}</span><Badge v={areaCount(a)} /></button>
+            );
+            return (
+              <div key={a.id} className={here ? 'branch open' : 'branch'}>
+                <button type="button" className="area" aria-expanded={here} onClick={() => open(a.pages[0].id)}><Icon n={a.icon} /><span>{a.title}</span>{!here && <Badge v={areaCount(a)} />}<i className="chev" /></button>
+                {here && <div className="leaves">{a.pages.map(p => (
+                  <button key={p.id} type="button" aria-current={p.id === id ? 'page' : undefined} onClick={() => open(p.id)}><span>{p.title}</span><Badge v={n(p.badge)} /></button>
+                ))}</div>}
+              </div>
+            );
+          })}</nav>
           <div className="who">
             <span className="avatar">{personName(me).slice(0, 1)}</span>
-            <div><b>{personName(me)}</b><small>{ROLE_FA[me.staffRole!]}</small></div>
+            <div><b>{personName(me)}</b><small>{ROLE_FA[role]}</small></div>
             {!tgApp() && <button type="button" title="خروج" aria-label="خروج" onClick={() => { setToken(null); setMe(null); }}><Icon n="logout" /></button>}
           </div>
         </aside>
         <div className="scrim" onClick={() => setNavOpen(false)} />
         <header className="top">
-          <button type="button" className="burger" aria-label="منو" onClick={() => setNavOpen(o => !o)}><Icon n="menu" s={20} /></button>
-          <div className="crumb"><span className="muted">پنل مدیریت</span><span className="sep">/</span><b>{visible.find(s => s.id === current)?.title}</b></div>
+          <div className="crumb"><span className="muted">{cur.area.title}</span>{cur.area.pages.length > 1 && <><span className="sep">/</span><b>{cur.title}</b></>}</div>
+          {cur.area.pages.length > 1 && (
+            <div className="subtabs" role="tablist">{cur.area.pages.map(p => (
+              <button key={p.id} type="button" role="tab" aria-selected={p.id === id} onClick={() => open(p.id)}>{p.title}<Badge v={n(p.badge)} /></button>
+            ))}</div>
+          )}
         </header>
         <main>
-          {current === 'dashboard' && <DashboardPage />}
-          {current === 'approvals' && <ApprovalsPage />}
-          {current === 'chats' && <ChatsPage focus={focus} onFocus={setFocus} />}
-          {current === 'warehouse' && <WarehousePage />}
-          {current === 'messages' && <MessagesPage />}
-          {current === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}
-          {current === 'prices' && <PricesPage />}
-          {current === 'accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
-          {current === 'staff' && <StaffPage />}
-          {current === 'proxy' && <ProxyPage />}
+          {id === 'home/dashboard' && <DashboardPage />}
+          {id === 'orders/agent' && <ApprovalsPage view="agent" />}
+          {id === 'orders/final' && <ApprovalsPage view="final" />}
+          {id === 'orders/history' && <ApprovalsPage view="hist" />}
+          {id.startsWith('chats/') && <ChatsPage key={id} mode={id.slice(6) as 'human' | 'ai' | 'all'} focus={focus} onFocus={setFocus} />}
+          {id === 'customers/new' && <ApprovalsPage view="customers" />}
+          {id === 'customers/accounts' && <AccountsPage focus={focus} onFocus={setFocus} />}
+          {id === 'customers/receipts' && <ApprovalsPage view="pay" />}
+          {id === 'warehouse/queue' && <WarehousePage />}
+          {id === 'catalog/products' && <ProductsPage focus={focus} onFocus={setFocus} />}
+          {id === 'catalog/prices' && <PricesPage />}
+          {id === 'system/ai' && <AiPage />}
+          {id === 'system/staff' && <StaffPage />}
+          {id === 'system/messages' && <MessagesPage />}
+          {id === 'system/proxy' && <ProxyPage />}
         </main>
+        <nav className="bottombar" aria-label="بخش‌ها">
+          {bottom.map(a => <button key={a.id} type="button" aria-current={a.id === cur.area.id ? 'page' : undefined} onClick={() => open(a.pages[0].id)}><Icon n={a.icon} s={20} /><span>{a.title}</span><Badge v={areaCount(a)} /></button>)}
+          <button type="button" aria-current={!bottom.some(a => a.id === cur.area.id) ? 'page' : undefined} onClick={() => setNavOpen(o => !o)}><Icon n="menu" s={20} /><span>بیشتر</span></button>
+        </nav>
       </div>
       {toastText && <div className="toast" role="status">{toastText}</div>}
     </AdminCtx.Provider>

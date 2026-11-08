@@ -28,49 +28,27 @@ const FINAL = 'SALES_APPROVED';
  * One place to decide. Step 1: the customer's sales agent checks the proforma. Step 2: a manager gives the final OK.
  * Also: receipts customers sent (cheque / bank transfer photos) and new customer accounts.
  */
-export function ApprovalsPage() {
+export function ApprovalsPage({ view }: { view: 'agent' | 'final' | 'hist' | 'pay' | 'customers' }) {
   const { me } = useAdmin();
   const isAdmin = me.staffRole === 'ADMIN';
-  const agent = useApi<List>(`/admin/orders?status=${AGENT}`);
-  const final = useApi<List>(`/admin/orders?status=${FINAL}`);
-  const paid = useApi<Reported[]>('/admin/accounts/reported');
-  const customers = useApi<Customer[]>('/admin/customers');
-  const [picked, setTab] = useState<string | null>(null);
-  const [histTab, setHist] = useState<'CONFIRMED' | 'REJECTED' | null>(null);
-  const hist = useApi<List>(histTab ? `/admin/orders?status=${histTab}` : null);
+  const agent = useApi<List>(view === 'agent' ? `/admin/orders?status=${AGENT}` : null);
+  const final = useApi<List>(view === 'final' ? `/admin/orders?status=${FINAL}` : null);
+  const paid = useApi<Reported[]>(view === 'pay' ? '/admin/accounts/reported' : null);
+  const customers = useApi<Customer[]>(view === 'customers' ? '/admin/customers' : null);
+  const [histTab, setHist] = useState<'CONFIRMED' | 'REJECTED'>('CONFIRMED');
+  const hist = useApi<List>(view === 'hist' ? `/admin/orders?status=${histTab}` : null);
 
   const newCustomers = (customers.data ?? []).filter(c => !c.isApproved);
-  const n = { agent: (agent.data?.rows.length ?? 0) + newCustomers.length, final: final.data?.rows.length ?? 0, pay: paid.data?.length ?? 0 };
-  const tab = picked ?? (isAdmin && n.final ? 'final' : !n.agent && n.pay ? 'pay' : 'agent');
+  const tab = view;
+  void isAdmin;
   const reload = () => { agent.reload(); final.reload(); hist.reload(); };
-  const tabs = [
-    { id: 'agent', title: 'تأیید کارشناس', n: n.agent },
-    { id: 'final', title: 'تأیید نهایی مدیر', n: n.final },
-    { id: 'pay', title: 'رسید پرداخت', n: n.pay },
-    { id: 'hist', title: 'سابقه', n: null },
-  ];
 
   return (
     <>
-      <div className="head"><h1>تأییدها</h1></div>
-      <div className="chips">
-        {tabs.map(t => (
-          <button key={t.id} type="button" className="chip" aria-pressed={tab === t.id} onClick={() => { setTab(t.id); if (t.id === 'hist' && !histTab) setHist('CONFIRMED'); }}>
-            {t.title}{t.n !== null && <span className="n num">{fa(t.n)}</span>}
-          </button>
-        ))}
-      </div>
-
       {tab === 'agent' && (
         <>
-          <p className="muted small" style={{ margin: 0 }}>مرحله‌ی ۱: کارشناس فروشِ هر مشتری پیش‌فاکتور را بررسی می‌کند. بعد از تأیید او، برای مدیر پیامک و پیام تلگرام می‌رود.</p>
-          {newCustomers.length > 0 && (
-            <section className="stack">
-              <h2>مشتریان جدید <span className="muted small num">({fa(newCustomers.length)})</span></h2>
-              {newCustomers.map(c => <NewCustomer key={c.id} c={c} onDone={customers.reload} />)}
-            </section>
-          )}
-          <Orders list={agent} empty="پیش‌فاکتوری منتظر کارشناس نیست." onChanged={reload} title={newCustomers.length ? 'پیش‌فاکتورها' : undefined} />
+          <p className="muted small" style={{ margin: 0 }}>مرحله‌ی ۱: پیش‌فاکتورهایی که ایجنت هوش مصنوعی یا خود مشتری ثبت کرده. کارشناس فروشِ هر مشتری بررسی و تأیید می‌کند؛ بعد برای مدیر پیامک و پیام تلگرام می‌رود.</p>
+          <Orders list={agent} empty="پیش‌فاکتوری منتظر کارشناس نیست." onChanged={reload} />
         </>
       )}
       {tab === 'final' && (
@@ -85,6 +63,14 @@ export function ApprovalsPage() {
           {paid.error ? <div className="err">{paid.error}</div> : !paid.data ? <div className="card pad muted">در حال بارگذاری…</div>
             : !paid.data.length ? <div className="empty">رسیدی منتظر بررسی نیست.</div>
             : paid.data.map(p => <PaymentCard key={p.id} p={p} onDone={paid.reload} />)}
+        </section>
+      )}
+      {tab === 'customers' && (
+        <section className="stack">
+          <p className="muted small" style={{ margin: 0 }}>حساب‌هایی که با اولین سفارش ساخته شده‌اند و هنوز تأیید نشده‌اند.</p>
+          {customers.error ? <div className="err">{customers.error}</div> : !customers.data ? <div className="card pad muted">در حال بارگذاری…</div>
+            : !newCustomers.length ? <div className="empty">مشتری جدیدی منتظر تأیید نیست.</div>
+            : newCustomers.map(c => <NewCustomer key={c.id} c={c} onDone={customers.reload} />)}
         </section>
       )}
       {tab === 'hist' && (
@@ -139,7 +125,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
       <button type="button" className="ohead" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className="num"><b>#{fa(r.number)}</b> · {r.customer.name}</span>
         <span className={`st ${STATUS_CLASS(r.status)}`}>{SHORT[r.status] ?? r.statusFa}</span>
-        <span className="muted small num">{personName(r.placedBy)} · {r.channel === 'bot' ? 'ربات' : 'مینی‌اپ'} · {dateFa(r.createdAt)} · کارشناس: {agentName ?? 'تعیین نشده'}</span>
+        <span className="muted small num">{personName(r.placedBy)} · {r.channel === 'agent' ? '🤖 ایجنت هوش مصنوعی' : r.channel === 'bot' ? 'ربات' : 'مینی‌اپ'} · {dateFa(r.createdAt)} · کارشناس: {agentName ?? 'تعیین نشده'}</span>
         <span className="small num"><b>{fa(r.itemCount)} قلم</b>{r.inquiryCount ? <span className="st ask" style={{ marginInlineStart: 6 }}>{fa(r.inquiryCount)} استعلامی</span> : null} · {BigInt(r.total) ? rial(r.total) : '—'}</span>
       </button>
       {open && (

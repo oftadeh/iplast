@@ -401,3 +401,5 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .chat-composer{position:sticky;bottom:calc(10px + var(--bot-safe));z-index:5;margin-top:4px}
 .chat-composer textarea{min-height:38px}
 .chatview{padding-bottom:0;min-height:100%;gap:14px}.chatview .chat{flex:1}
+.draftin{display:grid;gap:4px;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+.draftin .hd{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}

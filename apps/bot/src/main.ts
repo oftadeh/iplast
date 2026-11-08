@@ -66,22 +66,24 @@ const INTERNAL_KEY = process.env.INTERNAL_KEY ?? '';
  * Order assistant (OpenAI, in the API service): turns a text or voice order into a draft cart.
  * Returns null when the assistant is off or found nothing to order, so the human agent handles it alone.
  */
-async function assistantDraft(from: { id: number; first_name?: string; username?: string }, text?: string, fileId?: string) {
-  if (!INTERNAL_KEY || process.env.ASSISTANT_IN_BOT === '0') return null;
+interface AgentTurn { mode: 'ai' | 'human'; messageId: string; agentTg: string | null; reply: string | null; heard: string | null; handoff: string | null; orderNumber: number | null; draftId: string | null; hasItems: boolean }
+/** The AI sales agent's answer to one customer message; null when the API is unreachable (then the old relay runs). */
+async function agentTurn(from: { id: number; first_name?: string; last_name?: string; username?: string }, kind: string, text?: string, fileId?: string): Promise<AgentTurn | null> {
+  if (!INTERNAL_KEY) return null;
   try {
-    const r = await fetch(`${API_INTERNAL_URL}/internal/assistant`, {
+    const r = await fetch(`${API_INTERNAL_URL}/internal/agent`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_KEY },
-      body: JSON.stringify({ telegramId: String(from.id), firstName: from.first_name, username: from.username, text, fileId }),
-      signal: AbortSignal.timeout(60_000),
+      body: JSON.stringify({ telegramId: String(from.id), firstName: from.first_name, lastName: from.last_name, username: from.username, kind, text, fileId }),
+      signal: AbortSignal.timeout(90_000),
     });
-    if (!r.ok) return null;
-    const j = await r.json() as { enabled: boolean; draftId?: string; hasItems?: boolean; heard?: string | null; text?: string };
-    return j.enabled && j.hasItems ? j : null;
+    if (!r.ok) { console.error('agent http', r.status); return null; }
+    return await r.json() as AgentTurn;
   } catch (e) {
-    console.error('assistant failed', e);
+    console.error('agent failed', e);
     return null;
   }
 }
+
 
 /** POST to the API's internal routes; returns the JSON body, or throws with the API's Persian message. */
 async function internal<T>(path: string, body: object): Promise<T> {
@@ -218,7 +220,11 @@ bot.on('message', async (ctx, next) => {
       telegramFileId: m.voice?.file_id ?? m.audio?.file_id ?? m.photo?.at(-1)?.file_id ?? m.document?.file_id,
     },
   });
-  if (agent && !original.conversation.assigneeId) await prisma.conversation.update({ where: { id: original.conversationId }, data: { assigneeId: agent.id } });
+  // a person answered: the AI agent steps back in this chat until it is handed back from the panel
+  await prisma.conversation.update({ where: { id: original.conversationId }, data: {
+    ...(agent && !original.conversation.assigneeId ? { assigneeId: agent.id } : {}),
+    ...(original.conversation.handoffAt ? {} : { handoffAt: new Date(), handoffReason: 'کارشناس وارد گفتگو شد' }),
+  } });
   await ctx.reply('✓ برای مشتری ارسال شد.');
 });
 
@@ -239,44 +245,56 @@ bot.on('message', async ctx => {
     try { await confirmDraft(ctx, pending.draftId, name); } catch (e) { await ctx.reply((e as Error).message); }
     return;
   }
-  const tg = BigInt(from.id);
-  const user = await prisma.user.findUnique({ where: { telegramId: tg }, include: { memberships: { select: { customerId: true, customer: { select: { name: true } } }, take: 1 } } });
-  let conv = await prisma.conversation.findFirst({ where: { userTelegramId: tg, isOpen: true } });
-  if (!conv) conv = await prisma.conversation.create({ data: { userTelegramId: tg, customerId: user?.memberships[0]?.customerId } });
   const m = ctx.message;
   const fileId = m.voice?.file_id ?? m.audio?.file_id ?? m.photo?.at(-1)?.file_id ?? m.document?.file_id;
-  const saved = await prisma.message.create({
-    data: { conversationId: conv.id, direction: 'IN', kind, text: m.text ?? m.caption, telegramFileId: fileId },
-  });
-  await prisma.conversation.update({ where: { id: conv.id }, data: { isOpen: true } }); // bumps updatedAt for the panel list
-  const agent = await pickSupport(from.id);
-  const name = [from.first_name, from.last_name].filter(Boolean).join(' ') + (from.username ? ` (@${from.username})` : '');
-  const company = user?.memberships[0]?.customer.name;
-  if (!agent) await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
-  else try {
-    await ctx.api.sendMessage(agent, `پیام از ${name}${company ? ` · ${company}` : ''}\nبرای پاسخ، روی پیام زیر Reply بزنید.`);
-    const copy = await ctx.api.copyMessage(agent, ctx.chat.id, m.message_id);
-    await prisma.message.update({ where: { id: saved.id }, data: { relayChatId: BigInt(agent), relayMessageId: copy.message_id } });
-    await ctx.reply('پیام شما برای کارشناس فروش ارسال شد.');
-  } catch (e) {
-    // the agent has not started the bot yet, or blocked it
-    console.error('relay failed', agent, e);
-    await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
+  // the AI sales agent answers first; it places the proforma and hands the chat to a person when needed
+  const isVoice = !!(m.voice ?? m.audio);
+  if (kind === 'TEXT' || isVoice) await ctx.replyWithChatAction('typing').catch(() => {});
+  const t = await agentTurn(from, kind, m.text ?? m.caption, fileId);
+  if (t && t.mode === 'ai') {
+    if (t.reply) {
+      const heard = t.heard ? `🎙 شنیدم: «${t.heard}»\n\n` : '';
+      const kb = new InlineKeyboard();
+      if (t.hasItems && t.draftId) {
+        kb.text('✅ ثبت همین سفارش', `cd:${t.draftId}`);
+        if (MINIAPP_URL) kb.row().webApp('🛒 ویرایش در سبد', `${MINIAPP_URL}${MINIAPP_URL.includes('?') ? '&' : '?'}draft=${t.draftId}`);
+      }
+      await ctx.reply(heard + t.reply, t.hasItems ? { reply_markup: kb } : {});
+    }
+    if (t.handoff && t.agentTg === null && (kind === 'PHOTO' || kind === 'DOCUMENT')) {
+      // a file goes to the person who now has the chat
+      const conv = await prisma.message.findUnique({ where: { id: t.messageId }, include: { conversation: true } });
+      const agentUser = conv?.conversation.assigneeId ? await prisma.user.findUnique({ where: { id: conv.conversation.assigneeId } }) : null;
+      if (agentUser) {
+        const copy = await ctx.api.copyMessage(Number(agentUser.telegramId), ctx.chat.id, m.message_id).catch(() => null);
+        if (copy) await prisma.message.update({ where: { id: t.messageId }, data: { relayChatId: agentUser.telegramId, relayMessageId: copy.message_id } });
+      }
+    }
+    return;
   }
 
-  // The assistant drafts a cart from text or voice orders; the human agent still sees and answers everything.
-  if (kind === 'TEXT' || kind === 'VOICE') {
-    await ctx.replyWithChatAction('typing').catch(() => {});
-    const d = await assistantDraft(from, m.text, m.voice?.file_id ?? m.audio?.file_id);
-    if (d?.text && d.draftId) {
-      const heard = d.heard ? `🎙 شنیدم: «${d.heard}»\n\n` : '';
-      const kb = new InlineKeyboard().text('✅ ثبت همین سفارش', `cd:${d.draftId}`);
-      if (MINIAPP_URL) kb.row().webApp('🛒 ویرایش در سبد', `${MINIAPP_URL}${MINIAPP_URL.includes('?') ? '&' : '?'}draft=${d.draftId}`);
-      const tip = MINIAPP_URL ? '' : '\n\nبرای تغییر، سفارش اصلاح‌شده را دوباره بفرستید.';
-      await ctx.reply(heard + d.text + tip, { reply_markup: kb });
-      await prisma.message.create({ data: { conversationId: conv.id, direction: 'OUT', kind: 'TEXT', text: `[دستیار]\n${heard}${d.text}` } });
-      if (agent) await ctx.api.sendMessage(agent, `🤖 پیش‌نویس دستیار برای ${name}:\n${heard}${d.text}`).catch(() => {});
-    }
+  // a person has this chat (or the agent is off): copy the message to them, as before
+  let savedId = t?.messageId ?? null;
+  let agent = t?.agentTg ? Number(t.agentTg) : null;
+  if (!t) {
+    const tg = BigInt(from.id);
+    const user = await prisma.user.findUnique({ where: { telegramId: tg }, include: { memberships: { select: { customerId: true }, take: 1 } } });
+    let conv = await prisma.conversation.findFirst({ where: { userTelegramId: tg, isOpen: true } });
+    if (!conv) conv = await prisma.conversation.create({ data: { userTelegramId: tg, customerId: user?.memberships[0]?.customerId } });
+    savedId = (await prisma.message.create({ data: { conversationId: conv.id, direction: 'IN', kind, text: m.text ?? m.caption, telegramFileId: fileId } })).id;
+    await prisma.conversation.update({ where: { id: conv.id }, data: { isOpen: true } });
+    agent = await pickSupport(from.id);
+  }
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ') + (from.username ? ` (@${from.username})` : '');
+  if (!agent) { await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.'); return; }
+  try {
+    await ctx.api.sendMessage(agent, `پیام از ${name}\nبرای پاسخ، روی پیام زیر Reply بزنید.`);
+    const copy = await ctx.api.copyMessage(agent, ctx.chat.id, m.message_id);
+    if (savedId) await prisma.message.update({ where: { id: savedId }, data: { relayChatId: BigInt(agent), relayMessageId: copy.message_id } });
+    await ctx.reply('پیام شما برای کارشناس فروش ارسال شد.');
+  } catch (e) {
+    console.error('relay failed', agent, e);
+    await ctx.reply('پیام شما ثبت شد. کارشناس فروش به‌زودی پاسخ می‌دهد.');
   }
 });
 

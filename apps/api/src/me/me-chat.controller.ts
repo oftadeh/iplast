@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { SalesAgentService } from '../assistant/sales-agent.service';
 import type { Response } from 'express';
 import { Session, SessionGuard } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
@@ -7,14 +9,14 @@ import { TelegramService } from '../common/telegram.service';
 import { AssistantService } from '../assistant/assistant.service';
 
 /**
- * Chat with the customer's sales agent inside the mini app. It is the same conversation as the bot chat:
- * messages sent here reach the agent in Telegram (a Reply there comes back here) and appear in the admin panel.
- * When the order assistant is on, an order-like message also gets a draft cart from the assistant.
+ * Chat inside the mini app; the same conversation as the bot chat. The AI sales agent answers first and places
+ * the proforma; once it hands the chat to a person, messages reach that sales agent in Telegram (a Reply there
+ * comes back here) and everything shows in the admin panel.
  */
 @Controller('me/chat')
 @UseGuards(SessionGuard)
 export class MeChatController {
-  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly ai: AssistantService) {}
+  constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService, private readonly ai: AssistantService, private readonly agent: SalesAgentService) {}
 
   private async user(s: SessionClaims) {
     return this.prisma.user.findUniqueOrThrow({
@@ -26,50 +28,52 @@ export class MeChatController {
   @Get()
   async get(@Session() s: SessionClaims) {
     const u = await this.user(s);
-    if (u.staffRole) return { staff: true, messages: [], agent: null, ai: this.ai.enabled };
+    if (u.staffRole) return { staff: true, messages: [], agent: null, ai: this.agent.enabled, human: false };
     const conv = await this.prisma.conversation.findFirst({ where: { userTelegramId: u.telegramId }, orderBy: { updatedAt: 'desc' }, include: { messages: { orderBy: { createdAt: 'asc' }, take: 300 } } });
     const fixed = u.memberships.find(m => m.customer.support?.isActive)?.customer.support;
     const agentId = conv?.assigneeId ?? fixed?.id;
     const agent = agentId ? await this.prisma.user.findUnique({ where: { id: agentId }, select: { firstName: true, lastName: true } }) : null;
     return {
-      staff: false, ai: this.ai.enabled, agent,
+      staff: false, ai: this.agent.enabled, agent, human: !!conv?.handoffAt && !!conv?.isOpen,
       messages: (conv?.messages ?? []).map(m => ({ id: m.id, direction: m.direction, kind: m.kind, text: m.text, hasFile: !!m.telegramFileId, createdAt: m.createdAt })),
     };
   }
 
   @Post()
-  async send(@Session() s: SessionClaims, @Body() b: { text?: string; assistant?: boolean }) {
+  async send(@Session() s: SessionClaims, @Body() b: { text?: string }) {
     const text = String(b?.text ?? '').trim().slice(0, 3500);
     if (!text) throw new BadRequestException('پیام خالی است');
+    return this.turn(s, { kind: 'TEXT', text });
+  }
+
+  /** A voice note recorded in the mini app: the AI agent transcribes and answers it. */
+  @Post('voice')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  async voice(@Session() s: SessionClaims, @UploadedFile() file?: { buffer: Buffer; originalname: string }) {
+    if (!file?.buffer?.length) throw new BadRequestException('فایل صوتی نرسید');
+    return this.turn(s, { kind: 'VOICE', audio: { buf: file.buffer, name: file.originalname || 'voice.webm' } });
+  }
+
+  private async turn(s: SessionClaims, input: { kind: 'TEXT' | 'VOICE'; text?: string; audio?: { buf: Buffer; name: string } }) {
     const u = await this.user(s);
     if (u.staffRole) throw new BadRequestException('کارکنان از پنل مدیریت ← گفتگوها پاسخ می‌دهند');
-    const account = u.memberships[0]?.customer;
-    let conv = await this.prisma.conversation.findFirst({ where: { userTelegramId: u.telegramId, isOpen: true } });
-    if (!conv) conv = await this.prisma.conversation.create({ data: { userTelegramId: u.telegramId, customerId: account?.id } });
-    const saved = await this.prisma.message.create({ data: { conversationId: conv.id, direction: 'IN', kind: 'TEXT', text } });
-    await this.prisma.conversation.update({ where: { id: conv.id }, data: { isOpen: true } });
-
-    // to the agent in Telegram, the same way the bot relays messages (a Reply there comes back to the customer)
-    const agentTg = await this.pickAgent(conv.assigneeId, u.memberships.find(m => m.customer.support?.isActive)?.customer.support?.telegramId);
-    if (agentTg) {
-      const name = [u.firstName, u.lastName].filter(Boolean).join(' ') + (u.username ? ` (@${u.username})` : '');
-      await this.tg.send(agentTg, `پیام از ${name}${account ? ` · ${account.name}` : ''} (از مینی‌اپ)\nبرای پاسخ، روی پیام زیر Reply بزنید یا از پنل مدیریت ← گفتگوها جواب دهید.`);
-      const id = await this.tg.sendForId(agentTg, text);
-      if (id) await this.prisma.message.update({ where: { id: saved.id }, data: { relayChatId: agentTg, relayMessageId: id } });
+    const t = await this.agent.handle(s.sub, input);
+    if (t.mode === 'human') {
+      // a person handles this chat: pass the message on to them in Telegram (a Reply there comes back here)
+      let text = input.text ?? '';
+      if (input.audio) { try { text = '🎙 ' + await this.ai.transcribe(input.audio.buf, input.audio.name); } catch { text = '🎙 پیام صوتی (از مینی‌اپ؛ متنش خوانده نشد)'; } await this.prisma.message.update({ where: { id: t.messageId }, data: { text } }); }
+      const conv = await this.prisma.conversation.findUnique({ where: { id: t.conversationId } });
+      const fixed = u.memberships.find(m => m.customer.support?.isActive)?.customer.support ?? null;
+      const a = await this.agent.agentFor(conv?.assigneeId ?? null, fixed);
+      if (a) {
+        if (conv && !conv.assigneeId) await this.prisma.conversation.update({ where: { id: conv.id }, data: { assigneeId: a.id } });
+        const name = [u.firstName, u.lastName].filter(Boolean).join(' ') + (u.username ? ` (@${u.username})` : '');
+        await this.tg.send(a.telegramId, `پیام از ${name}${u.memberships[0] ? ` · ${u.memberships[0].customer.name}` : ''} (مینی‌اپ)\nبرای پاسخ روی پیام زیر Reply بزنید.`);
+        const id = await this.tg.sendForId(a.telegramId, text);
+        if (id) await this.prisma.message.update({ where: { id: t.messageId }, data: { relayChatId: a.telegramId, relayMessageId: id } });
+      }
     }
-
-    let draft: unknown = null;
-    if (b?.assistant !== false && this.ai.enabled) {
-      try {
-        const d = await this.ai.draft(s.sub, text, 'miniapp-chat', account?.id ?? null);
-        if (d.lines.length) {
-          draft = d;
-          await this.prisma.message.create({ data: { conversationId: conv.id, direction: 'OUT', kind: 'TEXT', text: `[دستیار]\n${d.reply}` } });
-          if (agentTg) await this.tg.send(agentTg, `🤖 پیش‌نویس دستیار:\n${this.ai.chatText(d)}`);
-        }
-      } catch { /* the agent still has the message; the assistant is a bonus */ }
-    }
-    return { ok: true, draft, ...(await this.get(s)) };
+    return { ok: true, draft: t.draft ?? null, orderNumber: t.orderNumber ?? null, ...(await this.get(s)) };
   }
 
   /** A voice note, photo or PDF from the agent in this customer's own conversation. */
@@ -84,16 +88,4 @@ export class MeChatController {
     res.send(f.body);
   }
 
-  /** The assigned agent, else the customer's fixed agent, else the active sales agent with the fewest open chats. */
-  private async pickAgent(assigneeId: string | null, fixedTg?: bigint): Promise<bigint | null> {
-    if (assigneeId) {
-      const a = await this.prisma.user.findUnique({ where: { id: assigneeId } });
-      if (a?.isActive && a.staffRole) return a.telegramId;
-    }
-    if (fixedTg) return fixedTg;
-    const agents = await this.prisma.user.findMany({ where: { staffRole: 'SALES', isActive: true }, include: { _count: { select: { supportOf: true } } } });
-    const pool = agents.length ? agents : await this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true }, include: { _count: { select: { supportOf: true } } } });
-    if (!pool.length) return null;
-    return pool[Math.floor(Math.random() * pool.length)].telegramId;
-  }
 }

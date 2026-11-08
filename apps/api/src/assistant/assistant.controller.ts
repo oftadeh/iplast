@@ -8,6 +8,7 @@ import { OrdersService, STATUS_FA } from '../orders/orders.service';
 import { audit } from '../common/audit';
 import { AssistantService } from './assistant.service';
 import { AccountingService } from '../accounting/accounting';
+import { SalesAgentService } from './sales-agent.service';
 
 function checkKey(key: string | undefined) {
   const want = process.env.INTERNAL_KEY ?? '';
@@ -130,5 +131,36 @@ export class InternalPaymentsController {
     const staff = await this.prisma.user.findUnique({ where: { telegramId: tgId(b.telegramId) } });
     if (!staff?.isActive || !staff.staffRole) throw new UnauthorizedException();
     return this.acc.review(staff.id, String(b.paymentId), !!b.ok);
+  }
+}
+
+/** Every customer message the bot receives goes to the AI sales agent first (bot container only, INTERNAL_KEY). */
+@Controller('internal/agent')
+export class InternalAgentController {
+  constructor(private readonly agent: SalesAgentService, private readonly prisma: PrismaService) {}
+
+  @Post()
+  async message(@Headers('x-internal-key') key: string | undefined, @Body() b: { telegramId?: string; firstName?: string; lastName?: string; username?: string; kind?: string; text?: string; fileId?: string }) {
+    checkKey(key);
+    const tg = tgId(b.telegramId);
+    const user = await this.prisma.user.upsert({
+      where: { telegramId: tg }, create: { telegramId: tg, firstName: b.firstName?.slice(0, 60), lastName: b.lastName?.slice(0, 60), username: b.username?.slice(0, 60) },
+      update: { ...(b.firstName ? { firstName: b.firstName.slice(0, 60) } : {}), ...(b.username ? { username: b.username.slice(0, 60) } : {}) },
+      include: { memberships: { include: { customer: { select: { support: { select: { id: true, telegramId: true, isActive: true } } } } } } },
+    });
+    const kind = (['TEXT', 'VOICE', 'PHOTO', 'DOCUMENT'] as const).find(k => k === b.kind) ?? 'TEXT';
+    const t = await this.agent.handle(user.id, { kind, text: b.text?.slice(0, 3500) ?? null, fileId: b.fileId ?? null });
+    let agentTg: string | null = null;
+    if (t.mode === 'human') {
+      const conv = await this.prisma.conversation.findUnique({ where: { id: t.conversationId } });
+      const fixed = user.memberships.find(m => m.customer.support?.isActive)?.customer.support ?? null;
+      const a = await this.agent.agentFor(conv?.assigneeId ?? null, fixed);
+      if (a && conv && !conv.assigneeId) await this.prisma.conversation.update({ where: { id: conv.id }, data: { assigneeId: a.id } });
+      agentTg = a ? String(a.telegramId) : null;
+    }
+    return {
+      mode: t.mode, messageId: t.messageId, agentTg, reply: t.reply ?? null, heard: t.heard ?? null, handoff: t.handoff ?? null,
+      orderNumber: t.orderNumber ?? null, draftId: t.draft?.id ?? null, hasItems: !!t.draft?.lines.length,
+    };
   }
 }

@@ -385,6 +385,9 @@ model Conversation {
   userTelegramId BigInt
   assigneeId     String? // sales-support user id
   isOpen         Boolean   @default(true)
+  // the AI sales agent answers until it hands the chat to a person (customer asks, a photo/file, or a case it can't handle)
+  handoffAt      DateTime?
+  handoffReason  String?
   messages       Message[]
   updatedAt      DateTime  @updatedAt
 

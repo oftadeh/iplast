@@ -11,9 +11,19 @@ import { AssistantService } from '../assistant/assistant.service';
 export class AdminDashboardController {
   constructor(private readonly prisma: PrismaService, private readonly ai: AssistantService) {}
 
-  /** Is the order assistant actually reachable from this server? */
+  /** Is the AI agent actually reachable from this server, and what has it done in the last 30 days? */
   @Get('ai')
-  ai_() { return this.ai.check(); }
+  async ai_() {
+    const since = new Date(Date.now() - 30 * 864e5);
+    const [check, orders, chats, handoffs, recent] = await Promise.all([
+      this.ai.check(),
+      this.prisma.order.count({ where: { channel: 'agent', createdAt: { gte: since } } }),
+      this.prisma.conversation.count({ where: { updatedAt: { gte: since } } }),
+      this.prisma.conversation.count({ where: { handoffAt: { gte: since } } }),
+      this.prisma.order.findMany({ where: { channel: 'agent' }, orderBy: { createdAt: 'desc' }, take: 8, select: { id: true, number: true, status: true, createdAt: true, customer: { select: { name: true } } } }),
+    ]);
+    return { ...check, agentOn: process.env.SALES_AGENT !== '0', stats: { orders, chats, handoffs }, recent };
+  }
 
   @Get()
   async get(@Session() s: SessionClaims) {
@@ -21,7 +31,7 @@ export class AdminDashboardController {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
     const days30 = new Date(Date.now() - 30 * 864e5);
     const week = new Date(Date.now() + 7 * 864e5);
-    const unanswered = await p.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Conversation" c WHERE c."isOpen" AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
+    const unanswered = await p.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Conversation" c WHERE c."isOpen" AND c."handoffAt" IS NOT NULL AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
     const [byStatus, today, month, newCustomers, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
       p.order.groupBy({ by: ['status'], _count: true }),
       p.order.count({ where: { createdAt: { gte: startOfDay } } }),

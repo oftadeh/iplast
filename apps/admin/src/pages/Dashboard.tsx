@@ -11,7 +11,7 @@ interface Dash {
   daily: { d: string; n: number }[];
   recent: { id: string; number: number; status: string; createdAt: string; customer: { name: string }; _count: { items: number } }[];
 }
-const STATUS_FA: Record<string, string> = {
+export const STATUS_FA: Record<string, string> = {
   SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', SALES_APPROVED: 'منتظر تأیید نهایی مدیر', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور صادر شد',
   PROFORMA_EXPIRED: 'پیش‌فاکتور منقضی شد', CONFIRMED: 'تأیید نهایی؛ ارسال به انبار', PREPARING: 'در حال آماده‌سازی', SHIPPED: 'ارسال شد', DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
@@ -26,11 +26,11 @@ export function DashboardPage() {
   const role = me.staffRole!;
   const q = data.queue;
   const tasks = [
-    { n: q.unansweredChats, t: 'گفتگوی منتظر پاسخ', s: 'chats', show: role !== 'WAREHOUSE' },
-    { n: q.salesReview, t: 'پیش‌فاکتور منتظر کارشناس', s: 'approvals', show: role !== 'WAREHOUSE' },
-    { n: q.finalApproval, t: 'منتظر تأیید نهایی مدیر', s: 'approvals', show: role === 'ADMIN' },
-    { n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'approvals', show: role !== 'WAREHOUSE' },
-    { n: q.reportedPayments, t: 'رسید پرداخت برای بررسی', s: 'approvals', show: role !== 'WAREHOUSE' },
+    { n: q.unansweredChats, t: 'گفتگوی سپرده‌شده به کارشناس', s: 'chats/human', show: role !== 'WAREHOUSE' },
+    { n: q.salesReview, t: 'پیش‌فاکتور منتظر تأیید کارشناس', s: 'orders/agent', show: role !== 'WAREHOUSE' },
+    { n: q.finalApproval, t: 'منتظر تأیید نهایی مدیر', s: 'orders/final', show: role === 'ADMIN' },
+    { n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'customers/new', show: role !== 'WAREHOUSE' },
+    { n: q.reportedPayments, t: 'رسید پرداخت برای بررسی', s: 'customers/receipts', show: role !== 'WAREHOUSE' },
     { n: q.warehouse, t: 'سفارش برای آماده‌سازی و ارسال', s: 'warehouse', show: role !== 'SALES' },
     { n: q.needsFix, t: 'برگشت‌خورده برای اصلاح', s: 'approvals', show: role !== 'WAREHOUSE' },
   ].filter(x => x.show);
@@ -80,7 +80,7 @@ export function DashboardPage() {
       </div>
 
       <section className="card">
-        <div className="cardhead"><h2>آخرین سفارش‌ها</h2>{role !== 'WAREHOUSE' && <button type="button" className="btn sm" onClick={() => open('approvals')}>همه</button>}</div>
+        <div className="cardhead"><h2>آخرین سفارش‌ها</h2>{role !== 'WAREHOUSE' && <button type="button" className="btn sm" onClick={() => open('orders/history')}>همه</button>}</div>
         {data.recent.length === 0 ? <div className="empty small" style={{ margin: 12 }}>سفارشی نیست.</div> : (
           <div className="tablewrap"><table>
             <thead><tr><th>شماره</th><th>مشتری</th><th>اقلام</th><th>وضعیت</th><th>زمان</th></tr></thead>

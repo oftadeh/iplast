@@ -21,11 +21,12 @@ import { AdminBroadcastController } from './admin/admin-broadcast.controller';
 import { AdminProxyController } from './admin/admin-proxy.controller';
 import { AdminDashboardController } from './admin/admin-dashboard.controller';
 import { MeChatController } from './me/me-chat.controller';
-import { AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController } from './assistant/assistant.controller';
+import { AssistantController, InternalAgentController, InternalAssistantController, InternalOrdersController, InternalPaymentsController } from './assistant/assistant.controller';
 import { AssistantService } from './assistant/assistant.service';
+import { SalesAgentService } from './assistant/sales-agent.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController],
-  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController],
+  providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService],
 })
 export class AppModule {}
