@@ -4,6 +4,7 @@ import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
   ApiError, Category, Family, FamilyCard, Order, PayMode, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, mainAccount, payModeFa, pctFor, personName, photoUrl, salePrices, short, useApi,
+  faDigits,
 } from './lib';
 import { BOT_USERNAME, haptic } from './telegram';
 
@@ -34,7 +35,7 @@ function Failed({ msg, retry }: { msg: string; retry: () => void }) {
   return <div className="empty">{msg}<br /><br /><button type="button" className="cta ghost" onClick={retry}>تلاش دوباره</button></div>;
 }
 function LoginNeeded({ what }: { what: string }) {
-  return <div className="notice">برای {what}، مینی‌اپ را از داخل ربات <bdi>@{BOT_USERNAME}</bdi> در تلگرام باز کنید.</div>;
+  return <div className="notice">برای {what}، پنل کاربری را از داخل ربات <bdi>@{BOT_USERNAME}</bdi> در تلگرام باز کنید.</div>;
 }
 
 // ───────── home ─────────
@@ -325,7 +326,7 @@ export function CartScreen() {
 }
 
 // ───────── orders ─────────
-const STEPS: [string, string][] = [['پیش‌فاکتور ثبت شد', 'از مینی‌اپ یا ربات'], ['تأیید کارشناس فروش', 'کارشناس شما قیمت‌ها را نهایی می‌کند'], ['تأیید نهایی مدیر', 'منتظر تأیید نهایی مدیریت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
+const STEPS: [string, string][] = [['پیش‌فاکتور ثبت شد', 'از پنل کاربری یا ربات'], ['تأیید کارشناس فروش', 'کارشناس شما قیمت‌ها را نهایی می‌کند'], ['تأیید نهایی مدیر', 'منتظر تأیید نهایی مدیریت'], ['آماده‌سازی', 'انبار و بسته‌بندی'], ['ارسال', 'باربری و شماره بارنامه'], ['تحویل', 'تأیید دریافت']];
 const STEP_OF: Record<string, number> = { SUBMITTED: 1, SALES_REVIEW: 1, NEEDS_FIX: 1, PROFORMA_SENT: 1, PROFORMA_EXPIRED: 1, SALES_APPROVED: 2, CONFIRMED: 3, PREPARING: 3, SHIPPED: 4, DELIVERED: 6 };
 const stClass = (s: string) => (s === 'REJECTED' || s === 'CANCELLED' ? 'no' : s === 'NEEDS_FIX' || s === 'PROFORMA_EXPIRED' || s === 'PROFORMA_SENT' ? 'ask' : s === 'DELIVERED' ? 'ok' : 'info');
 const dateFa = (d: string) => new Date(d).toLocaleDateString('fa-IR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -434,9 +435,9 @@ export function OrderScreen({ id }: { id: string }) {
           {d.shipments.map(sh => (
             <div key={sh.id} className="notice ship">
               <b>🚚 {dateFa(sh.shippedAt)}{sh.carrier ? ` · ${sh.carrier}` : ''}</b>
-              {sh.waybillNo && <span className="num">شماره بارنامه: {fa(sh.waybillNo)}</span>}
-              {(sh.driverName || sh.driverPhone) && <span className="num">راننده: {sh.driverName ?? ''} {sh.driverPhone ? <a href={`tel:${sh.driverPhone}`}>{fa(sh.driverPhone)}</a> : null}</span>}
-              {sh.plate && <span className="num">پلاک: {fa(sh.plate)}</span>}
+              {sh.waybillNo && <span className="num">شماره بارنامه: {faDigits(sh.waybillNo)}</span>}
+              {(sh.driverName || sh.driverPhone) && <span className="num">راننده: {sh.driverName ?? ''} {sh.driverPhone ? <a href={`tel:${sh.driverPhone}`}>{faDigits(sh.driverPhone)}</a> : null}</span>}
+              {sh.plate && <span className="num">پلاک: {faDigits(sh.plate)}</span>}
               {sh.freight && <span className="num">کرایه: {fa(sh.freight)} ریال{sh.freightBy === 'customer' ? ' (پس‌کرایه، با شما)' : sh.freightBy === 'company' ? ' (با کارخانه)' : ''}</span>}
               {sh.note && <span>{sh.note}</span>}
             </div>

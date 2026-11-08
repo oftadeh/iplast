@@ -3,7 +3,12 @@ import { tg } from './telegram';
 
 // ───────── formatting ─────────
 const nf = new Intl.NumberFormat('fa-IR');
-export const fa = (n: number | bigint | string) => nf.format(typeof n === 'string' ? BigInt(n) : n);
+export const faDigits = (s: string) => s.replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[+d]);
+/** A number with Persian digits and grouping; a string that is not a whole number is shown with Persian digits as it is. */
+export const fa = (n: number | bigint | string) => {
+  if (typeof n !== 'string') return nf.format(n);
+  try { return nf.format(BigInt(n)); } catch { return faDigits(n); }
+};
 export const toBig = (s: string | null | undefined) => (s === null || s === undefined ? null : BigInt(s));
 export function short(n: bigint) {
   const x = Number(n);

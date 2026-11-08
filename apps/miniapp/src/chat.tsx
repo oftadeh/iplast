@@ -67,7 +67,7 @@ export function ChatScreen() {
     setCart(next); haptic('success'); go({ name: 'cart' });
   };
 
-  if (authed === false) return <div className="pad"><div className="notice">برای گفتگو، مینی‌اپ را از داخل ربات تلگرام باز کنید.</div></div>;
+  if (authed === false) return <div className="pad"><div className="notice">برای گفتگو، پنل کاربری را از داخل ربات تلگرام باز کنید.</div></div>;
   if (data?.staff) return (
     <div className="pad" style={{ paddingTop: 24 }}>
       <div className="notice">شما جزو کارکنان هستید. پیام مشتری‌ها را در <b>پنل مدیریت ← گفتگوها</b> ببینید و پاسخ دهید.</div>
