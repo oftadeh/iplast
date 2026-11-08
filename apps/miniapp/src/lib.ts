@@ -60,6 +60,7 @@ export function login(): Promise<boolean> {
   return loginPromise;
 }
 export const isLoggedIn = () => !!token;
+export const getToken = () => token;
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 

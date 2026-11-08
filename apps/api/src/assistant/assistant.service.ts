@@ -112,6 +112,22 @@ export class AssistantService {
     });
   }
 
+  /** Health check for the admin panel: one tiny request to OpenAI through the server's proxy. */
+  async check(): Promise<{ enabled: boolean; ok: boolean; model: string | null; error?: string; ms?: number }> {
+    const model = process.env.OPENAI_MODEL || null;
+    if (!this.enabled) return { enabled: false, ok: false, model, error: 'کلید OPENAI_API_KEY روی سرور تنظیم نشده است' };
+    const t = Date.now();
+    try {
+      await this.client!.models.list();
+      return { enabled: true, ok: true, model, ms: Date.now() - t };
+    } catch (e) {
+      const err = e as { status?: number; message?: string };
+      const why = err.status === 401 ? 'کلید OpenAI نامعتبر است' : err.status === 403 ? 'OpenAI دسترسی را رد کرد (کشور یا پروژه)' : err.status === 429 ? 'اعتبار یا سقف استفاده‌ی OpenAI تمام شده است' : `اتصال به OpenAI برقرار نشد: ${err.message ?? 'خطای نامشخص'}`;
+      this.log.warn(`check failed: ${err.status ?? ''} ${err.message ?? ''}`);
+      return { enabled: true, ok: false, model, error: why };
+    }
+  }
+
   /** Persian speech to text for voice notes. */
   async transcribe(audio: Buffer, filename = 'voice.ogg'): Promise<string> {
     this.ensure();

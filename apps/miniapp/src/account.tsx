@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useApp } from './App';
 import { Icon } from './icons';
 import { ApiError, apiForm, fa, jalaliToIso, jalaliToday, shrinkPhoto, toEnDigits, useApi } from './lib';
-import { openSupportChat } from './telegram';
 
 interface Invoice { id: string; number: number; status: 'ISSUED' | 'CANCELLED'; issuedAt: string; total: string; itemCount: number; order: { number: number } | null }
 interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; invoice: { number: number } | null }
@@ -82,7 +81,7 @@ export function AccountScreen() {
                 <small className="num">{p.methodFa}{p.chequeNumber ? ` ${p.chequeNumber}` : ''}{p.bank ? ` · ${p.bank}` : ''}{p.dueDate ? ` · سررسید ${day(p.dueDate)}` : ''}{p.invoice ? ` · فاکتور ${fa(p.invoice.number)}` : ''} · {day(p.receivedAt)}</small>
               </div>
             )))}
-            <div className="pad"><button type="button" className="cta ghost" onClick={openSupportChat}><Icon n="chat" s={18} />&nbsp; سؤال درباره‌ی حساب</button></div>
+            <div className="pad"><button type="button" className="cta ghost" onClick={() => go({ name: 'chat' })}><Icon n="chat" s={18} />&nbsp; سؤال درباره‌ی حساب</button></div>
           </>
         );
       })()}

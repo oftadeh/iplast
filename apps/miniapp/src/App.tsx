@@ -1,14 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
 import { CartLine, Family, Me, api, loadCart, login, saveCart } from './lib';
-import { haptic, openSupportChat, tg } from './telegram';
+import { haptic, setupTelegram, tg } from './telegram';
+import { ChatScreen } from './chat';
 import { Picker } from './Picker';
 import { AccountScreen, InvoiceScreen } from './account';
 import { AssistantScreen, CartScreen, CatalogScreen, DraftView, HomeScreen, OrderScreen, OrdersScreen, ProductScreen } from './screens';
 
 export type Route =
   | { name: 'home' } | { name: 'catalog'; cat?: string; q?: string } | { name: 'product'; slug: string }
-  | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'assistant' }
+  | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'assistant' } | { name: 'chat' }
   | { name: 'account' } | { name: 'invoice'; id: string };
 
 interface Ctx {
@@ -49,7 +50,7 @@ export function App() {
   const reloadMe = useCallback(() => { api<Me>('/me').then(setMe, () => setMe(null)); }, []);
   useEffect(() => {
     const app = tg();
-    app?.ready(); app?.expand();
+    setupTelegram();
     const apply = () => { document.documentElement.dataset.theme = app?.colorScheme ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); };
     apply(); app?.onEvent?.('themeChanged', apply);
     api<{ enabled: boolean }>('/assistant/status').then(r => setAiEnabled(r.enabled), () => {});
@@ -101,7 +102,7 @@ export function App() {
     <AppCtx.Provider value={ctx}>
       <div className="app">
         <div className="scroll" ref={scroller}>
-          <div className="view">
+          <div className={route.name === 'chat' ? 'view chatview' : 'view'}>
             {route.name === 'home' && <HomeScreen />}
             {route.name === 'catalog' && <CatalogScreen cat={route.cat} q={route.q} />}
             {route.name === 'product' && <ProductScreen slug={route.slug} />}
@@ -109,18 +110,19 @@ export function App() {
             {route.name === 'orders' && <OrdersScreen />}
             {route.name === 'order' && <OrderScreen id={route.id} />}
             {route.name === 'assistant' && <AssistantScreen />}
+            {route.name === 'chat' && <ChatScreen />}
             {route.name === 'account' && <AccountScreen />}
             {route.name === 'invoice' && <InvoiceScreen id={route.id} />}
           </div>
         </div>
 
-        <nav className="nav" aria-label="بخش‌ها" hidden={route.name === 'cart' || route.name === 'assistant'}>
+        <nav className="nav" aria-label="بخش‌ها" hidden={route.name === 'cart' || route.name === 'assistant' || route.name === 'chat'}>
           {navItems.map(([r, i, l]) => <button key={l} type="button" aria-current={isTab(r.name) ? 'page' : undefined} onClick={() => tab(r)}><Icon n={i} /><span className="lb">{l}</span></button>)}
           <button type="button" className="orb" aria-label={`سبد سفارش، ${count} قلم`} onClick={() => tab({ name: 'cart' })}>
             <Icon n="cart" s={22} />{count > 0 && <span className="cnt num">{count.toLocaleString('fa-IR')}</span>}
           </button>
           {navItems2.map(([r, i, l]) => <button key={l} type="button" aria-current={isTab(r.name) ? 'page' : undefined} onClick={() => tab(r)}><Icon n={i} /><span className="lb">{l}</span></button>)}
-          <button type="button" onClick={openSupportChat}><Icon n="chat" /><span className="lb">پشتیبانی</span></button>
+          <button type="button" aria-current={route.name === 'chat' ? 'page' : undefined} onClick={() => tab({ name: 'chat' })}><Icon n="chat" /><span className="lb">گفتگو</span></button>
         </nav>
 
         <div className={`scrim ${sheet ? 'on' : ''}`} onClick={() => setSheet(null)} />

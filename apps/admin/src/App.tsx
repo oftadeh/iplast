@@ -9,6 +9,7 @@ import { WarehousePage } from './pages/Warehouse';
 import { MessagesPage } from './pages/Messages';
 import { ProxyPage } from './pages/Proxy';
 import { DashboardPage } from './pages/Dashboard';
+import { ChatsPage } from './pages/Chats';
 import { Icon } from './icons';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
@@ -21,6 +22,7 @@ type Role = NonNullable<Me['staffRole']>;
 const SECTIONS: { id: string; title: string; icon: string; group: string; roles: Role[] }[] = [
   { id: 'dashboard', title: 'پیشخوان', icon: 'home', group: '', roles: ['ADMIN', 'SALES', 'WAREHOUSE'] },
   { id: 'approvals', title: 'تأییدها', icon: 'check', group: 'عملیات فروش', roles: ['ADMIN', 'SALES'] },
+  { id: 'chats', title: 'گفتگوها', icon: 'chat', group: 'عملیات فروش', roles: ['ADMIN', 'SALES'] },
   { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', group: 'عملیات فروش', roles: ['ADMIN', 'WAREHOUSE'] },
   { id: 'accounts', title: 'حساب مشتریان', icon: 'wallet', group: 'مالی', roles: ['ADMIN', 'SALES'] },
   { id: 'products', title: 'کالاها', icon: 'box', group: 'کاتالوگ', roles: ['ADMIN', 'SALES'] },
@@ -30,7 +32,7 @@ const SECTIONS: { id: string; title: string; icon: string; group: string; roles:
   { id: 'proxy', title: 'پراکسی سرور', icon: 'shield', group: 'مدیریت سیستم', roles: ['ADMIN'] },
 ];
 
-interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
+interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; platform?: string; isVersionAtLeast?(v: string): boolean; requestFullscreen?(): void; disableVerticalSwipes?(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
 /** Opened inside Telegram (from the mini app or the bot's /admin): signs in with the user's own Telegram account. */
 const tgApp = (): TgApp | undefined => { const w = (window as unknown as { Telegram?: { WebApp?: TgApp } }).Telegram?.WebApp; return w?.initData ? w : undefined; };
 
@@ -53,6 +55,9 @@ export function App() {
     const app = tgApp();
     if (app) {
       app.ready(); app.expand();
+      const at = (v: string) => { try { return !!app.isVersionAtLeast?.(v); } catch { return false; } };
+      try { if (at('7.7')) app.disableVerticalSwipes?.(); } catch { /* old client */ }
+      try { if (at('8.0') && ['ios', 'android', 'android_x'].includes(app.platform ?? '')) app.requestFullscreen?.(); } catch { /* old client */ }
       const theme = () => { if (app.colorScheme) document.documentElement.dataset.theme = app.colorScheme; };
       theme(); app.onEvent?.('themeChanged', theme);
       // roles always come fresh from the database, so sign in again on every open
@@ -99,6 +104,7 @@ export function App() {
         <main>
           {current === 'dashboard' && <DashboardPage />}
           {current === 'approvals' && <ApprovalsPage />}
+          {current === 'chats' && <ChatsPage focus={focus} onFocus={setFocus} />}
           {current === 'warehouse' && <WarehousePage />}
           {current === 'messages' && <MessagesPage />}
           {current === 'products' && <ProductsPage focus={focus} onFocus={setFocus} />}

@@ -22,6 +22,41 @@ export class TelegramService {
     }
   }
 
+  /** Like send(), but returns the sent message id (so a Reply to it in Telegram can be traced back), or null. */
+  async sendForId(chatId: bigint | number | string, text: string): Promise<number | null> {
+    const token = process.env.BOT_TOKEN;
+    if (!token) return null;
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(chatId), text }),
+      });
+      const j = await r.json().catch(() => null) as { ok?: boolean; result?: { message_id?: number } } | null;
+      return j?.ok ? j.result?.message_id ?? null : null;
+    } catch (e) {
+      this.log.warn(`sendMessage failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Downloads a file (voice, photo, PDF) that was sent to the bot. Telegram serves files up to 20 MB. */
+  async download(fileId: string): Promise<{ body: Buffer; type: string } | null> {
+    const token = process.env.BOT_TOKEN;
+    if (!token) return null;
+    try {
+      const info = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`).then(r => r.json()) as { ok?: boolean; result?: { file_path?: string } };
+      if (!info?.ok || !info.result?.file_path) return null;
+      const r = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
+      if (!r.ok) return null;
+      const ext = info.result.file_path.split('.').pop()?.toLowerCase() ?? '';
+      const type = ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', oga: 'audio/ogg', ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', pdf: 'application/pdf' } as Record<string, string>)[ext] ?? 'application/octet-stream';
+      return { body: Buffer.from(await r.arrayBuffer()), type };
+    } catch (e) {
+      this.log.warn(`download failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   /** Photo with a caption (receipts, cheques). */
   async sendPhoto(chatId: bigint | number | string, photo: Buffer, filename: string, caption: string, replyMarkup?: object): Promise<boolean> {
     const token = process.env.BOT_TOKEN;

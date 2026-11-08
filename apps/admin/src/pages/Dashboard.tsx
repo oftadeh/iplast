@@ -3,7 +3,7 @@ import { useAdmin } from '../App';
 import { Icon } from '../icons';
 
 interface Dash {
-  queue: { salesReview: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number };
+  queue: { unansweredChats: number; salesReview: number; finalApproval: number; needsFix: number; warehouse: number; newCustomers: number; reportedPayments: number };
   orders: { today: number; last30: number; open: number; delivered: number };
   money: { receivable: string; invoiced: string; chequesDue7: string; chequesDue7Count: number };
   catalog: { variants: number; inquiry: number; activeList: { title: string; publishedAt: string | null } | null };
@@ -20,11 +20,13 @@ const STATUS_FA: Record<string, string> = {
 export function DashboardPage() {
   const { me, open } = useAdmin();
   const { data, error } = useApi<Dash>('/admin/dashboard');
+  const ai = useApi<{ enabled: boolean; ok: boolean; model: string | null; error?: string; ms?: number }>('/admin/dashboard/ai');
   if (error) return <div className="err">{error}</div>;
   if (!data) return <div className="empty">در حال بارگذاری…</div>;
   const role = me.staffRole!;
   const q = data.queue;
   const tasks = [
+    { n: q.unansweredChats, t: 'گفتگوی منتظر پاسخ', s: 'chats', show: role !== 'WAREHOUSE' },
     { n: q.salesReview, t: 'پیش‌فاکتور منتظر کارشناس', s: 'approvals', show: role !== 'WAREHOUSE' },
     { n: q.finalApproval, t: 'منتظر تأیید نهایی مدیر', s: 'approvals', show: role === 'ADMIN' },
     { n: q.newCustomers, t: 'مشتری جدید منتظر تأیید', s: 'approvals', show: role !== 'WAREHOUSE' },
@@ -68,6 +70,12 @@ export function DashboardPage() {
             <dt>کالاها (سایز)</dt><dd className="num">{fa(data.catalog.variants)} · {fa(data.catalog.inquiry)} استعلامی</dd>
             <dt>مشتریان تأییدشده</dt><dd className="num">{fa(data.customers)}</dd>
           </dl>
+          <div className="aistat">
+            <Icon n="spark" s={18} /><b>دستیار هوشمند</b>
+            {!ai.data ? <span className="muted">در حال بررسی…</span> : ai.data.ok
+              ? <><span className="st ok">وصل است</span><span className="muted small num">{ai.data.model ?? ''} · {fa(ai.data.ms ?? 0)} میلی‌ثانیه</span></>
+              : <><span className="st no">قطع</span><span className="small">{ai.data.error}</span></>}
+          </div>
         </section>
       </div>
 

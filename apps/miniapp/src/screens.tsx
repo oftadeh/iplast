@@ -5,7 +5,7 @@ import { Picker } from './Picker';
 import {
   ApiError, Category, Family, FamilyCard, Order, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, personName, photoUrl, short, useApi,
 } from './lib';
-import { BOT_USERNAME, haptic, openSupportChat } from './telegram';
+import { BOT_USERNAME, haptic } from './telegram';
 
 const cardPhoto = (f: FamilyCard) => photoUrl(f.media[0]?.key);
 const badgeCls = (b: string) => (b === 'جدید' ? 'new' : b === 'پرفروش' ? 'hot' : 'pick');
@@ -59,7 +59,7 @@ export function HomeScreen() {
         {hero && <img className="photo hero-photo" src={photoUrl(hero.media[0].key)!} alt="" />}
         <div className="row">
           <button type="button" className="pill white" onClick={() => go({ name: 'catalog' })}>مشاهده محصولات</button>
-          <button type="button" className="pill glass" onClick={() => (aiEnabled ? go({ name: 'assistant' }) : openSupportChat())}><Icon n="mic" s={16} /> سفارش سریع</button>
+          <button type="button" className="pill glass" onClick={() => go({ name: aiEnabled ? 'assistant' : 'chat' })}><Icon n="mic" s={16} /> سفارش سریع</button>
         </div>
         {hasList && <span className="stamp"><i />لیست قیمت فعال است</span>}
       </section>
@@ -70,7 +70,7 @@ export function HomeScreen() {
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
         <button type="button" onClick={() => go({ name: 'account' })}><span className="i"><Icon n="file" s={15} /></span>حساب و فاکتورها</button>
         <button type="button" onClick={() => go({ name: 'cart' })}><span className="i"><Icon n="cart" s={15} /></span>سبد سفارش</button>
-        <button type="button" onClick={openSupportChat}><span className="i"><Icon n="chat" s={15} /></span>پیام به کارشناس فروش</button>
+        <button type="button" onClick={() => go({ name: 'chat' })}><span className="i"><Icon n="chat" s={15} /></span>پیام به کارشناس فروش</button>
       </div>
 
       <div className="sec"><h2>دسته‌بندی‌ها</h2><button type="button" onClick={() => go({ name: 'catalog' })}>همه</button></div>
@@ -92,9 +92,9 @@ export function HomeScreen() {
       </>}
 
       <section className="factory">
-        <h3>سفارش بدون باز کردن مینی‌اپ</h3>
-        <p>در همین ربات متن، پیام صوتی، عکس یا فایل PDF سفارش را بفرستید؛ مستقیم به کارشناس فروش شما می‌رسد و پاسخ همان‌جا می‌آید.</p>
-        <button type="button" className="pill white" style={{ position: 'relative' }} onClick={openSupportChat}><Icon n="chat" s={16} /> رفتن به گفتگو</button>
+        <h3>گفتگو با کارشناس فروش</h3>
+        <p>همین‌جا سؤال یا سفارشتان را بنویسید؛ کارشناس فروش جواب می‌دهد و دستیار هوشمند سفارش را فوراً به پیش‌نویس سبد تبدیل می‌کند. در ربات هم می‌توانید ویس، عکس یا PDF بفرستید.</p>
+        <button type="button" className="pill white" style={{ position: 'relative' }} onClick={() => go({ name: 'chat' })}><Icon n="chat" s={16} /> رفتن به گفتگو</button>
       </section>
     </>
   );
@@ -359,13 +359,13 @@ export function OrderScreen({ id }: { id: string }) {
 
 /** Who the customer's sales agent is, and a button to talk to them (messages go through the bot to the agent). */
 function AgentCard({ customerId }: { customerId: string }) {
-  const { me } = useApp();
+  const { me, go } = useApp();
   const sup = me?.accounts.find(a => a.customerId === customerId)?.support;
   return (
     <div className="agent">
       <span className="av"><Icon n="chat" s={18} /></span>
       <span><small>کارشناس فروش شما</small><b>{sup ? personName(sup) : 'واحد فروش اصفهان پلاست'}</b></span>
-      <button type="button" className="cta" onClick={openSupportChat}>گفتگو</button>
+      <button type="button" className="cta" onClick={() => go({ name: 'chat' })}>گفتگو</button>
     </div>
   );
 }

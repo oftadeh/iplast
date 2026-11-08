@@ -2,13 +2,18 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AssistantService } from '../assistant/assistant.service';
 
 /** Overview for the admin panel home: work waiting for staff, sales and money at a glance. */
 @Controller('admin/dashboard')
 @UseGuards(SessionGuard)
 @Staff('ADMIN', 'SALES', 'WAREHOUSE')
 export class AdminDashboardController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly ai: AssistantService) {}
+
+  /** Is the order assistant actually reachable from this server? */
+  @Get('ai')
+  ai_() { return this.ai.check(); }
 
   @Get()
   async get(@Session() s: SessionClaims) {
@@ -16,6 +21,7 @@ export class AdminDashboardController {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
     const days30 = new Date(Date.now() - 30 * 864e5);
     const week = new Date(Date.now() + 7 * 864e5);
+    const unanswered = await p.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Conversation" c WHERE c."isOpen" AND (SELECT m."direction" FROM "Message" m WHERE m."conversationId" = c.id AND (m."text" IS NULL OR m."text" NOT LIKE '[دستیار]%') ORDER BY m."createdAt" DESC LIMIT 1) = 'IN'`;
     const [byStatus, today, month, newCustomers, customers, reported, chequesDue, invoiced, paid, list, variants, recent, daily] = await Promise.all([
       p.order.groupBy({ by: ['status'], _count: true }),
       p.order.count({ where: { createdAt: { gte: startOfDay } } }),
@@ -41,7 +47,7 @@ export class AdminDashboardController {
         finalApproval: n('SALES_APPROVED'),
         needsFix: n('NEEDS_FIX'),
         warehouse: n('CONFIRMED', 'PREPARING'),
-        newCustomers, reportedPayments: reported,
+        newCustomers, reportedPayments: reported, unansweredChats: Number(unanswered[0]?.n ?? 0),
       },
       orders: { today, last30: month, open: n('SUBMITTED', 'SALES_REVIEW', 'SALES_APPROVED', 'NEEDS_FIX', 'PROFORMA_SENT', 'CONFIRMED', 'PREPARING', 'SHIPPED'), delivered: n('DELIVERED'), byStatus: c },
       money: { receivable: inv - pd, invoiced: inv, chequesDue7: chequesDue._sum.amount ?? 0n, chequesDue7Count: chequesDue._count },
