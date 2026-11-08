@@ -4,7 +4,7 @@ import { useAdmin } from '../App';
 import { ApiError, api, fa, toEnDigits, useApi } from '../lib';
 
 export interface Growth {
-  bot: string; botLink: string; appBonusPct: number; intro: boolean;
+  bot: string; botLink: string; appBonusPct: number; intro: 'custom' | 'default' | 'off';
   staff: { id: string; name: string; role: string; link: string; joined: number; customers: number; me: boolean }[];
 }
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'ذخیره نشد');
@@ -86,9 +86,13 @@ export function GrowthPage() {
           </section>
           <section className="card pad stack">
             <h2>ویدیوی آموزشی</h2>
-            <p className="small muted" style={{ margin: 0 }}>یک ویدیوی کوتاه (۳۰ ثانیه) از ثبت سفارش در پنل کاربری بسازید و در ربات برای خودتان بفرستید، با کپشن <b>#آموزش</b>. از آن به بعد هر مشتری که /start بزند، ویدیو را می‌گیرد.</p>
-            <span className="small">{d.intro ? <><span className="st ok">فعال</span> ویدیو تنظیم شده است.</> : <><span className="st gray">تنظیم نشده</span></>}</span>
-            {d.intro && <button type="button" className="btn sm danger" style={{ justifySelf: 'start' }} onClick={() => confirm('ویدیوی آموزشی حذف شود؟') && save({ clearIntro: true }, 'ویدیو حذف شد')}>حذف ویدیو</button>}
+            <p className="small muted" style={{ margin: 0 }}>هر مشتری بار اول که /start بزند، بعد از پیام خوش‌آمد این ویدیو را می‌گیرد؛ با /video هم هر وقت بخواهد. در صفحه‌ی اول پنل کاربری هم کارت «آموزش» دارد. برای ویدیوی دیگر، آن را در ربات برای خودتان بفرستید با کپشن <b>#آموزش</b>.</p>
+            <span className="small">{d.intro === 'custom' ? <><span className="st ok">فعال</span> ویدیویی که خودتان فرستادید</> : d.intro === 'default' ? <><span className="st ok">فعال</span> ویدیوی معرفی اصفهان پلاست (پیش‌فرض)</> : <span className="st gray">خاموش</span>}</span>
+            <div className="row">
+              {d.intro !== 'off' && <button type="button" className="btn sm danger" onClick={() => confirm('ارسال ویدیو به مشتری‌های جدید خاموش شود؟') && save({ clearIntro: true }, 'ویدیو خاموش شد')}>خاموش کردن</button>}
+              {d.intro !== 'default' && <button type="button" className="btn sm" onClick={() => save({ introDefault: true }, 'ویدیوی پیش‌فرض فعال شد')}>استفاده از ویدیوی پیش‌فرض</button>}
+              <a className="btn sm" href="/intro.mp4" target="_blank" rel="noreferrer">دیدن ویدیوی پیش‌فرض</a>
+            </div>
           </section>
         </div>
       )}

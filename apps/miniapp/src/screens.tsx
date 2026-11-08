@@ -59,7 +59,7 @@ export function HomeScreen() {
       <section className="hero">
         <p className="hi">{me?.firstName ? `سلام ${me.firstName}، خوش آمدید` : 'سلام، خوش آمدید'}</p>
         <h1>اصفهان پلاست</h1>
-        <p className="sub">لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری · فروش عمده</p>
+        <p className="sub">تولیدکننده‌ی لوله، اتصالات و تجهیزات آبیاری · فروش مستقیم از کارخانه</p>
         {hero && <img className="photo hero-photo" src={photoUrl(hero.media[0].key)!} alt="" />}
         <div className="row">
           <button type="button" className="pill white" onClick={() => go({ name: 'catalog' })}>مشاهده محصولات</button>
@@ -71,7 +71,8 @@ export function HomeScreen() {
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
       {!!me?.appBonusPct && <div className="appbonus">🎁 سفارش از همین پنل <b className="num">{fa(me.appBonusPct)}٪</b> تخفیف بیشتر دارد.</div>}
-      <LastOrder />
+      <IntroCard />
+      <MyOrders />
       <MyTerms />
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
@@ -199,8 +200,13 @@ export function CartScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [idem] = useState(() => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()));
+  const [edit, setEdit] = useState<EditOrder | null>(getEdit);
+  const stopEdit = (clear: boolean) => { setEditOrder(null); setEdit(null); if (clear) setCart([]); };
 
-  useEffect(() => { if (!acct && accounts[0]) setAcct(accounts[0].customerId); }, [accounts, acct]);
+  useEffect(() => { if (edit && accounts.some(a => a.customerId === edit.customerId)) { if (acct !== edit.customerId) setAcct(edit.customerId); } else if (!acct && accounts[0]) setAcct(accounts[0].customerId); }, [accounts, acct, edit]);
+  useEffect(() => { if (edit?.payMode && !payMode) setPayMode(edit.payMode); }, [edit, payMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!cart.length && edit) stopEdit(false); }, [cart.length]);
   const account = accounts.find(a => a.customerId === acct);
   const idsKey = cart.map(c => c.variantId).join(',');
   // personal prices of this customer (falls back to the list price on the server)
@@ -236,10 +242,10 @@ export function CartScreen() {
         body: {
           ...(accounts.length ? { customerId: acct } : { newCustomer: { name: newName.trim(), city: newCity.trim() || undefined } }),
           items: cart.map(l => ({ variantId: l.variantId, quantity: lineUnits(l), ...(l.mode === 'pack' && l.perPack ? { packs: l.n } : {}) })),
-          note: note.trim() || undefined, idempotencyKey: idem, payMode: mode,
+          note: note.trim() || undefined, idempotencyKey: idem, payMode: mode, ...(edit ? { replaces: edit.id } : {}),
         },
       });
-      haptic('success'); setCart([]); reloadMe(); toast(`سفارش #${fa(o.number)} ثبت شد`);
+      haptic('success'); setCart([]); reloadMe(); toast(edit ? `سفارش #${fa(edit.number)} اصلاح شد؛ نسخه‌ی جدید #${fa(o.number)}` : `سفارش #${fa(o.number)} ثبت شد`); stopEdit(false);
       go({ name: 'order', id: o.id }, true);
     } catch (e) {
       haptic('error'); setErr(e instanceof ApiError ? e.message : 'ثبت نشد؛ اتصال را بررسی کنید.');
@@ -248,7 +254,8 @@ export function CartScreen() {
 
   return (
     <>
-      <div className="top"><h1>سبد سفارش</h1></div>
+      <div className="top"><h1>{edit ? `اصلاح سفارش #${fa(edit.number)}` : 'سبد سفارش'}</h1></div>
+      {edit && <div className="editbar"><span>✏️ اقلام را کم و زیاد کنید یا از محصولات اضافه کنید. با ثبت، سفارش #{fa(edit.number)} با این نسخه جایگزین می‌شود.</span><button type="button" onClick={() => stopEdit(true)}>انصراف از اصلاح</button></div>}
       {lines.map((l, i) => (
         <div className="ci" key={l.variantId + l.mode}>
           <div className="pimg"><Photo src={l.photo} /></div>
@@ -299,7 +306,7 @@ export function CartScreen() {
         </div>
       </> : <>
         <div className="sec"><h2 style={{ fontSize: 16 }}>اولین سفارش شما</h2></div>
-        <div className="notice">حساب مشتری شما با همین سفارش ساخته می‌شود و پس از تأیید واحد فروش، شرایط تسویه و پشتیبان اختصاصی برایتان تعیین می‌شود.</div>
+        <div className="notice">حساب مشتری شما با همین سفارش ساخته می‌شود و پس از تأیید واحد فروش، شرایط تسویه و پشتیبان اختصاصی برایتان تعیین می‌شود.<br /><button type="button" className="linkbtn" onClick={() => go({ name: 'account' })}>فروشگاه شما قبلاً حساب دارد؟ با «کد مشتری» عضو همان مجموعه شوید ←</button></div>
         <label className="field"><span>نام فروشگاه یا شرکت</span><input value={newName} onChange={e => setNewName(e.target.value)} maxLength={120} /></label>
         <label className="field"><span>شهر</span><input value={newCity} onChange={e => setNewCity(e.target.value)} maxLength={60} /></label>
       </>)}
@@ -318,7 +325,7 @@ export function CartScreen() {
       <div className="actionbar">
         <button type="button" className="back" aria-label="بازگشت" onClick={() => go({ name: 'catalog' })}><Icon n="back" /></button>
         <button type="button" className={`go ${total === 0n ? 'inq' : ''}`} disabled={busy || !authed} onClick={submit}>
-          <span>{busy ? 'در حال ثبت…' : total === 0n ? 'ارسال درخواست استعلام' : 'ثبت سفارش'}</span><small className="num">{total ? `${short(total)} ریال` : `${fa(lines.length)} قلم`}</small>
+          <span>{busy ? 'در حال ثبت…' : edit ? 'ثبت اصلاح سفارش' : total === 0n ? 'ارسال درخواست استعلام' : 'ثبت سفارش'}</span><small className="num">{total ? `${short(total)} ریال` : `${fa(lines.length)} قلم`}</small>
         </button>
       </div>
     </>
@@ -343,11 +350,12 @@ export function OrdersScreen() {
       {authed && (list.error ? <Failed msg={list.error} retry={list.reload} /> : !list.data ? <Loading h={200} /> : !list.data.length ? (
         <div className="empty">هنوز سفارشی ثبت نکرده‌اید.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div>
       ) : list.data.map(o => (
-        <button key={o.id} type="button" className="oc" onClick={() => go({ name: 'order', id: o.id })}>
+        <div key={o.id} className="oc" role="button" tabIndex={0} onClick={() => go({ name: 'order', id: o.id })} onKeyDown={e => { if (e.key === 'Enter') go({ name: 'order', id: o.id }); }}>
           <div className="r"><b className="num">{['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'SALES_APPROVED', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'].includes(o.status) ? 'پیش‌فاکتور' : 'سفارش'} #{fa(o.number)}</b><span className={`st ${stClass(o.status)}`}>{o.statusFa}</span></div>
           <div className="r"><small className="num">{o.customer.name} · {fa(o.items.length)} قلم · {dateFa(o.createdAt)}</small><b className="num" style={{ fontSize: 13 }}>{BigInt(o.total) ? `${short(BigInt(o.total))} ریال` : 'استعلامی'}</b></div>
           {o.placedBy && <small>ثبت‌کننده: {personName(o.placedBy)}</small>}
-        </button>
+          <OrderActions o={o} compact />
+        </div>
       )))}
     </>
   );
@@ -375,25 +383,78 @@ function useReorder() {
   return { run, busy };
 }
 
-/** Home: the last order, to order the same items again with one tap. */
-function LastOrder() {
-  const { authed } = useApp();
-  const o = useApi<Order[]>(authed ? '/orders' : null, [authed]);
-  const re = useReorder();
-  const last = o.data?.[0];
-  if (!last) return null;
+// ───────── editing an order («اصلاح سفارش») ─────────
+const EDITABLE = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'];
+export type EditOrder = { id: string; number: number; customerId: string; payMode?: PayMode };
+export const getEdit = (): EditOrder | null => { try { return JSON.parse(localStorage.getItem('editOrder') ?? 'null'); } catch { return null; } };
+export const setEditOrder = (e: EditOrder | null) => { try { if (e) localStorage.setItem('editOrder', JSON.stringify(e)); else localStorage.removeItem('editOrder'); } catch { /* private mode */ } };
+const canEdit = (o: Order, accounts: { customerId: string; role: string }[]) => EDITABLE.includes(o.status) && accounts.some(a => a.customerId === o.customer.id && a.role !== 'VIEWER');
+
+/** Loads an order's items into the cart to change them; placing it replaces the old order. */
+function useEditOrder() {
+  const { cart, setCart, go, toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const run = async (o: Order) => {
+    const cur = getEdit();
+    if (cart.length && cur?.id !== o.id && !confirm('سبد فعلی با اقلام این سفارش جایگزین شود؟')) return;
+    setBusy(true);
+    try {
+      const r = await api<ReorderView>(`/orders/${encodeURIComponent(o.id)}/reorder`);
+      setCart(r.lines as typeof cart); setEditOrder({ id: o.id, number: o.number, customerId: o.customer.id, payMode: o.payMode });
+      haptic('success'); toast(`سفارش #${fa(o.number)} در سبد است؛ تغییر دهید و دوباره ثبت کنید`);
+      go({ name: 'cart' });
+    } catch (e) { haptic('error'); toast(e instanceof ApiError ? e.message : 'بارگذاری نشد'); } finally { setBusy(false); }
+  };
+  return { run, busy };
+}
+
+/** «اصلاح» (while not yet finally approved) and «سفارش مجدد» for one order. */
+function OrderActions({ o, compact, onChange }: { o: Order; compact?: boolean; onChange?: () => void }) {
+  const { me, toast } = useApp();
+  const re = useReorder(), ed = useEditOrder();
+  const editable = canEdit(o, me?.accounts ?? []);
+  const [busy, setBusy] = useState(false);
+  const cancel = async () => {
+    if (!window.confirm(`سفارش #${fa(o.number)} لغو شود؟`)) return;
+    setBusy(true);
+    try { await api(`/orders/${encodeURIComponent(o.id)}/cancel`, { method: 'POST', body: {} }); haptic('success'); toast(`سفارش #${fa(o.number)} لغو شد`); onChange?.(); }
+    catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
   return (
-    <div className="lastorder">
-      <span className="i"><Icon n="box" s={18} /></span>
-      <span><small className="num">آخرین سفارش: #{fa(last.number)}، {fa(last.items.length)} قلم</small><b>همان اقلام را دوباره سفارش دهید</b></span>
-      <button type="button" className="cta" disabled={re.busy} onClick={() => re.run(last.id)}>🔁 تکرار</button>
-    </div>
+    <>
+      <div className={`oactions ${compact ? 'compact' : ''}`} onClick={e => e.stopPropagation()}>
+        {editable && <button type="button" className="cta ghost" disabled={ed.busy} onClick={() => ed.run(o)}>✏️ اصلاح</button>}
+        <button type="button" className="cta ghost" disabled={re.busy} onClick={() => re.run(o.id)}>🔁 سفارش مجدد</button>
+      </div>
+      {editable && !compact && <button type="button" className="linkbtn danger" disabled={busy} onClick={cancel}>لغو این سفارش</button>}
+    </>
+  );
+}
+
+/** Home: «سفارش‌های من», the latest orders with their status, to follow, change or order again. */
+function MyOrders() {
+  const { authed, go } = useApp();
+  const o = useApi<Order[]>(authed ? '/orders' : null, [authed]);
+  const list = (o.data ?? []).slice(0, 4);
+  if (!list.length) return null;
+  return (
+    <>
+      <div className="sec"><h2>سفارش‌های من</h2><button type="button" onClick={() => go({ name: 'orders' })}>همه</button></div>
+      <div className="myorders">
+        {list.map(x => (
+          <div key={x.id} className="mo" role="button" tabIndex={0} onClick={() => go({ name: 'order', id: x.id })} onKeyDown={e => { if (e.key === 'Enter') go({ name: 'order', id: x.id }); }}>
+            <div className="r"><b className="num">#{fa(x.number)} <small>{x.customer.name}</small></b><span className={`st ${stClass(x.status)}`}>{x.statusFa}</span></div>
+            <div className="r"><small className="num">{fa(x.items.length)} قلم · {dateFa(x.createdAt)}</small><b className="num" style={{ fontSize: 13 }}>{BigInt(x.total) ? `${short(BigInt(x.total))} ریال` : 'استعلامی'}</b></div>
+            <OrderActions o={x} compact />
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
 export function OrderScreen({ id }: { id: string }) {
   const { go } = useApp();
-  const re = useReorder();
   const o = useApi<Order>(`/orders/${encodeURIComponent(id)}`);
   if (o.error) return <Failed msg={o.error} retry={o.reload} />;
   if (!o.data) return <Loading h={300} />;
@@ -424,10 +485,8 @@ export function OrderScreen({ id }: { id: string }) {
         ))}
       </div>
       <MoneySummary d={d} />
-      <div className="pf-open two">
-        <button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 پیش‌فاکتور رسمی</button>
-        <button type="button" className="cta ghost" disabled={re.busy} onClick={() => re.run(d.id)}>🔁 سفارش دوباره</button>
-      </div>
+      <div className="pf-open"><button type="button" className="cta ghost" onClick={() => go({ name: 'proforma', id: d.id })}>📄 پیش‌فاکتور رسمی</button></div>
+      <OrderActions o={d} onChange={o.reload} />
       {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>
@@ -606,6 +665,25 @@ export function AssistantScreen() {
         {typeof MediaRecorder !== 'undefined' && <button type="button" className="icb" aria-label={rec ? 'پایان ضبط' : 'پیام صوتی'} disabled={!authed || busy} onClick={record} style={rec ? { background: 'var(--bad)', color: '#fff' } : undefined}><Icon n="mic" s={18} /></button>}
         <button type="button" className="icb send" aria-label="ارسال" disabled={!authed || busy || !text.trim()} onClick={send}><Icon n="send" s={18} /></button>
       </div>
+    </>
+  );
+}
+
+/** «آموزش در ۵۰ ثانیه»: the how-to video (ordering by voice with the smart assistant), played over the page. */
+function IntroCard() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="introcard" onClick={() => setOpen(true)}>
+        <span className="play"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z" /></svg></span>
+        <span><b>آموزش در ۵۰ ثانیه</b><small>سفارش با ویس و دستیار هوشمند، پیش‌فاکتور و پیگیری بار</small></span>
+      </button>
+      {open && (
+        <div className="videosheet" role="dialog" aria-label="ویدیوی آموزش" onClick={() => setOpen(false)}>
+          <video src={`${import.meta.env.BASE_URL}intro.mp4`} controls autoPlay playsInline onClick={e => e.stopPropagation()} />
+          <button type="button" className="close" aria-label="بستن" onClick={() => setOpen(false)}>✕</button>
+        </div>
+      )}
     </>
   );
 }

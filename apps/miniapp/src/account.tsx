@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from './App';
 import { Icon } from './icons';
-import { ApiError, apiForm, fa, jalaliToIso, payModeFa, jalaliToday, shrinkPhoto, toEnDigits, useApi } from './lib';
+import { ApiError, ROLE_FA, api, apiForm, fa, jalaliToIso, payModeFa, jalaliToday, shrinkPhoto, toEnDigits, useApi } from './lib';
 
 interface Invoice { id: string; number: number; status: 'ISSUED' | 'CANCELLED'; issuedAt: string; total: string; itemCount: number; order: { number: number } | null }
 interface Payment { id: string; amount: string; method: string; methodFa: string; status: string; chequeNumber: string | null; bank: string | null; dueDate: string | null; receivedAt: string; invoice: { number: number } | null }
@@ -32,6 +32,7 @@ export function AccountScreen() {
   return (
     <>
       <div className="top"><h1>حساب من</h1></div>
+      {authed && <MyCompanies />}
       {authed === false && <div className="empty">برای دیدن حساب، پنل کاربری را از داخل ربات تلگرام باز کنید.</div>}
       {a.error && <div className="empty">{a.error}</div>}
       {a.error && authed && sendBtn}
@@ -193,5 +194,52 @@ function PayForm({ invoices, onClose }: { invoices: Invoice[]; onClose: (sent: b
         <button type="button" className="cta ghost" style={{ justifyContent: 'center' }} onClick={() => onClose(false)}>انصراف</button>
       </div>
     </>
+  );
+}
+
+/**
+ * «مجموعه‌های من»: the customer accounts the user belongs to, with their «کد مشتری», and a form to ask to join
+ * another one (a shop can have several buyers). A manager approves the request.
+ */
+function MyCompanies() {
+  const { me, toast } = useApp();
+  const joins = useApi<{ id: string; status: string; role: string; createdAt: string; customer: { name: string; code: number } }[]>('/me/joins');
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const accounts = me?.accounts ?? [];
+  const pending = (joins.data ?? []).filter(j => j.status === 'PENDING');
+  const send = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ customer: { name: string } }>('/me/join', { method: 'POST', body: { code: toEnDigits(code).trim(), note: note.trim() || undefined } });
+      toast(`درخواست عضویت در «${r.customer.name}» فرستاده شد`); setCode(''); setNote(''); setOpen(false); joins.reload();
+    } catch (e) { toast(e instanceof ApiError ? e.message : 'فرستاده نشد'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="pad companies">
+      {accounts.map(a => (
+        <div key={a.customerId} className="company">
+          <span className="av">{a.name.slice(0, 1)}</span>
+          <span><b>{a.name}</b><small>{ROLE_FA[a.role]}{a.code ? <> · کد مشتری <b className="num">{String(a.code).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[+d])}</b></> : null}</small></span>
+        </div>
+      ))}
+      {accounts.some(a => a.role === 'OWNER' && a.code) && <p className="muted small" style={{ margin: 0 }}>همکاران شما (مسئولان خرید دیگر همین مجموعه) با این کد از همین صفحه درخواست عضویت می‌دهند؛ بعد از تأیید مدیریت، برای همین مجموعه سفارش ثبت می‌کنند.</p>}
+      {pending.map(j => <div key={j.id} className="notice">⏳ درخواست عضویت در «{j.customer.name}» منتظر تأیید مدیریت است.</div>)}
+      {!open ? (
+        <button type="button" className="cta ghost" style={{ justifyContent: 'center' }} onClick={() => setOpen(true)}>➕ عضویت در یک مجموعه با «کد مشتری»</button>
+      ) : (
+        <div className="joinform">
+          <p className="small" style={{ margin: 0 }}>اگر برای فروشگاه یا شرکتی خرید می‌کنید که قبلاً در اصفهان پلاست حساب دارد، کد مشتری آن را از مدیر حساب یا کارشناس فروش بگیرید.</p>
+          <label className="field"><span>کد مشتری</span><input className="num" inputMode="numeric" dir="ltr" value={code} onChange={e => setCode(e.target.value)} placeholder="مثلاً ۱۰۲۴" /></label>
+          <label className="field"><span>توضیح (اختیاری)</span><input value={note} onChange={e => setNote(e.target.value)} maxLength={300} placeholder="مثلاً: مسئول خرید شعبه‌ی دوم" /></label>
+          <div className="pf-open two" style={{ margin: 0 }}>
+            <button type="button" className="cta" disabled={busy || !code.trim()} onClick={send}>{busy ? 'در حال ارسال…' : 'ارسال درخواست'}</button>
+            <button type="button" className="cta ghost" onClick={() => setOpen(false)}>انصراف</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

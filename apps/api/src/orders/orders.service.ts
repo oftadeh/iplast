@@ -14,7 +14,12 @@ export interface OrderInput {
   idempotencyKey?: string;
   /** CASH (نقدی) or TERM (مدت‌دار); defaults to the customer's first allowed mode. */
   payMode?: string;
+  /** The customer's own earlier order this one replaces («اصلاح سفارش»); it is cancelled when this one is placed. */
+  replaces?: string;
 }
+
+/** Orders the customer may still change themselves: not yet confirmed by the manager. */
+export const EDITABLE: OrderStatus[] = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'];
 
 export const STATUS_FA: Record<OrderStatus, string> = {
   SUBMITTED: 'پیش‌فاکتور ثبت شد', SALES_REVIEW: 'در بررسی کارشناس فروش', SALES_APPROVED: 'تأیید کارشناس؛ منتظر تأیید نهایی مدیر', NEEDS_FIX: 'نیاز به اصلاح', PROFORMA_SENT: 'پیش‌فاکتور نهایی؛ منتظر تأیید مشتری',
@@ -124,6 +129,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (dup) return this.get(userId, dup.id);
     }
     const byStaff = channel === 'admin';
+    let old: { id: string; number: number; customerId: string } | null = null;
+    if (input.replaces && !byStaff) {
+      const o = await this.prisma.order.findUnique({ where: { id: String(input.replaces) } });
+      if (!o) throw new BadRequestException('سفارشی که اصلاح می‌کنید پیدا نشد');
+      const m = await this.prisma.customerMember.findUnique({ where: { customerId_userId: { customerId: o.customerId, userId } } });
+      if (!m || m.role === 'VIEWER' || (m.role === 'BUYER' && o.placedById !== userId)) throw new ForbiddenException('اجازه‌ی اصلاح این سفارش را ندارید');
+      if (!EDITABLE.includes(o.status)) throw new BadRequestException('این سفارش تأیید نهایی شده و دیگر اصلاح نمی‌شود؛ به کارشناس فروش پیام بدهید.');
+      old = o; input.customerId = o.customerId;
+    }
     let customerId = byStaff ? (await this.prisma.customer.findUnique({ where: { id: req(input.customerId, 'مشتری را انتخاب کنید') } }))?.id ?? null : await this.orderableCustomer(userId, input.customerId);
     if (byStaff && !customerId) throw new BadRequestException('مشتری پیدا نشد');
     if (!customerId) {
@@ -151,10 +165,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         priceListId: list?.id,
         termsSnapshot: terms as object, payMode, termMonths: payMode === 'TERM' ? terms.termMonths : 0,
         items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, listPrice: x.listPrice, salePct: x.own || x.listPrice === null ? null : x.pct, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
-        events: { create: { status: 'SUBMITTED', byUserId: userId, comment: bonus > 0n ? `تخفیف سفارش از اپ: ${bonusPct}٪` : byStaff ? 'ثبت‌شده توسط کارشناس (سفارش تلفنی)' : undefined } },
+        events: { create: { status: 'SUBMITTED', byUserId: userId, comment: [old ? `اصلاح سفارش #${old.number}` : '', bonus > 0n ? `تخفیف سفارش از اپ: ${bonusPct}٪` : '', byStaff ? 'ثبت‌شده توسط کارشناس (سفارش تلفنی)' : ''].filter(Boolean).join(' · ') || undefined } },
       },
       include: { items: true, customer: { include: { support: true } }, placedBy: true },
     });
+    if (old) {
+      await this.prisma.order.update({ where: { id: old.id }, data: { status: 'CANCELLED', events: { create: { status: 'CANCELLED', byUserId: userId, comment: `مشتری اصلاح کرد؛ نسخه‌ی جدید: سفارش #${order.number}` } } } });
+      for (const a of await this.salesAgentsOf(order.customerId)) await this.tg.send(a.telegramId, `✏️ ${order.customer.name} سفارش #${old.number} را اصلاح کرد.\n#${old.number} لغو شد و نسخه‌ی جدید، سفارش #${order.number}، در پیام بعد می‌آید.`);
+    }
     await this.notifyNewOrder(order.id);
     if (byStaff) {
       const kb = process.env.MINIAPP_URL ? { inline_keyboard: [[{ text: '📱 پیگیری در پنل کاربری', web_app: { url: process.env.MINIAPP_URL } }]] } : undefined;
@@ -416,6 +434,20 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     for (const a of agents) await this.tg.send(a.telegramId, `👍 مشتری «${o.customer.name}» پیش‌فاکتور #${o.number} را تأیید کرد؛ برای تأیید نهایی مدیر رفت.`);
     await this.toManagers(orderId, '✅ تأیید کارشناس و مشتری — منتظر تأیید نهایی', undefined);
     return { status: 'SALES_APPROVED' as OrderStatus, statusFa: STATUS_FA.SALES_APPROVED, number: o.number };
+  }
+
+  /** The customer withdraws an order that is not finally approved yet (mini app button or the AI agent). */
+  async customerCancel(userId: string, orderId: string, reason?: string) {
+    const o = await this.prisma.order.findUnique({ where: { id: orderId }, include: { customer: true } });
+    if (!o) throw new NotFoundException('سفارش پیدا نشد');
+    const m = await this.prisma.customerMember.findUnique({ where: { customerId_userId: { customerId: o.customerId, userId } } });
+    if (!m || m.role === 'VIEWER' || (m.role === 'BUYER' && o.placedById !== userId)) throw new ForbiddenException('اجازه‌ی لغو این سفارش را ندارید');
+    if (o.status === 'CANCELLED') return { status: o.status, statusFa: STATUS_FA.CANCELLED, number: o.number, already: true };
+    if (!EDITABLE.includes(o.status)) throw new BadRequestException(`این سفارش «${STATUS_FA[o.status]}» است و دیگر از اپ لغو نمی‌شود؛ به کارشناس فروش پیام بدهید.`);
+    const note = reason?.trim().slice(0, 300);
+    await this.setStatus(userId, orderId, 'CANCELLED', note ? `لغو توسط مشتری: ${note}` : 'لغو توسط مشتری');
+    for (const a of await this.salesAgentsOf(o.customerId)) await this.tg.send(a.telegramId, `🚫 مشتری «${o.customer.name}» سفارش #${o.number} را لغو کرد.${note ? `\n💬 ${note}` : ''}`);
+    return { status: 'CANCELLED' as OrderStatus, statusFa: STATUS_FA.CANCELLED, number: o.number };
   }
 
   private async expire(orderId: string) {

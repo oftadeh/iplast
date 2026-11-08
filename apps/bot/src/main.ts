@@ -1,4 +1,6 @@
-import { Bot, InlineKeyboard, Context } from 'grammy';
+import { Bot, InlineKeyboard, Context, InputFile } from 'grammy';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { PrismaClient, MessageKind } from '@iplast/db';
 import { Agent } from 'node:https';
 import { request } from 'node:http';
@@ -145,12 +147,13 @@ const faNum = (n: number | string) => String(n).replace(/\d/g, d => '۰۱۲۳۴�
 function welcomeText(firstName: string | undefined, agent: string | null, bonus: number) {
   return [
     `👋 ${firstName ? `${firstName} عزیز، ` : ''}به اصفهان پلاست خوش آمدید.`,
-    'تأمین لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری؛ فروش عمده.',
+    '🏭 تولیدکننده‌ی لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری؛ فروش مستقیم از کارخانه به همکاران و فروشگاه‌ها.',
     ...(agent ? ['', `👤 کارشناس فروش شما: ${agent}`] : []),
     '',
     'در این ربات:',
     '🏷 قیمت روز هر کالا را با تخفیف و شرایط خودتان (نقدی یا مدت‌دار) می‌بینید',
-    '🛒 سفارش را در پنل کاربری ثبت می‌کنید، یا همین‌جا می‌نویسید و ویس می‌دهید',
+    '🎤 سفارش را همین‌جا بنویسید یا ویس بدهید؛ دستیار هوشمند پیش‌نویسش را آماده می‌کند',
+    '🛒 یا در پنل کاربری، کاتالوگ کامل با عکس، سفارش ثبت کنید',
     '📄 پیش‌فاکتور رسمی را با یک دکمه تأیید می‌کنید',
     '🚚 ارسال بار، فاکتورها و سررسید چک‌ها را دنبال می‌کنید',
     ...(bonus ? ['', `🎁 سفارش از پنل کاربری ${faNum(bonus)}٪ تخفیف بیشتر دارد.`] : []),
@@ -158,23 +161,25 @@ function welcomeText(firstName: string | undefined, agent: string | null, bonus:
     MINIAPP_URL ? 'برای شروع «ورود به پنل کاربری» را بزنید.' : 'برای شروع سفارش‌تان را بنویسید.',
     'یا همین حالا بنویسید، مثلاً: «۲ کارتن نری ۶۳ در ۲ و یک کارتن سه‌راه ۵۰»',
     '',
-    'راهنما: /help',
+    'راهنما: /help · ویدیوی آموزش: /video',
   ].join('\n');
 }
 
 /** What people see on the bot's profile before they start, and the command menu. */
 async function setupProfile() {
   await bot.api.setMyDescription(
-    'اصفهان پلاست | فروش عمده‌ی لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری\n\n' +
+    'اصفهان پلاست | تولیدکننده‌ی لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری؛ فروش مستقیم از کارخانه\n\n' +
     '🏷 قیمت روز با تخفیف اختصاصی شما (نقدی و مدت‌دار)\n' +
-    '🛒 ثبت سفارش در پنل کاربری، یا با متن، ویس و عکس لیست خرید\n' +
+    '🎤 سفارش با ویس یا پیام؛ دستیار هوشمند پیش‌نویس را آماده می‌کند\n' +
+    '🛒 کاتالوگ کامل با عکس در پنل کاربری\n' +
     '📄 پیش‌فاکتور رسمی، پیگیری ارسال بار و حساب مالی\n\n' +
     'برای شروع «Start» را بزنید.',
   ).catch(e => console.error('description', e));
-  await bot.api.setMyShortDescription('سفارش عمده‌ی لوله و اتصالات اصفهان پلاست: قیمت روز با تخفیف شما، پیش‌فاکتور و پیگیری بار').catch(e => console.error('short description', e));
+  await bot.api.setMyShortDescription('اصفهان پلاست، تولیدکننده‌ی لوله و اتصالات پلی‌اتیلن و تجهیزات آبیاری؛ سفارش مستقیم از کارخانه با ویس یا پیام').catch(e => console.error('short description', e));
   await bot.api.setMyCommands([
     { command: 'start', description: 'شروع و ورود به پنل' },
     { command: 'help', description: 'راهنمای ثبت سفارش' },
+    { command: 'video', description: 'ویدیوی آموزش سفارش' },
     { command: 'id', description: 'آیدی عددی من' },
   ]).catch(e => console.error('commands', e));
 }
@@ -207,10 +212,37 @@ bot.command('start', async ctx => {
     } catch (e) { console.error('referral', e); }
   }
   await ctx.reply(welcomeText(ctx.from?.first_name, agent, await appBonus()), { reply_markup: openAppKeyboard() });
-  // the short how-to video the manager set (sent to the bot with the caption «#آموزش»)
-  const intro = await prisma.setting.findUnique({ where: { key: 'bot.introVideo' } }).catch(() => null);
-  if (intro && typeof intro.value === 'string') await ctx.replyWithVideo(intro.value, { caption: '🎬 آموزش کوتاه ثبت سفارش در پنل کاربری' }).catch(e => console.error('intro video', e));
+  // the how-to video, once: on a customer's first /start (or whenever they ask with /video)
+  if (ctx.from && await firstStart(ctx.from.id)) await sendIntro(ctx);
 });
+
+/** True the first time this Telegram user starts the bot. */
+async function firstStart(id: number) {
+  const key = `bot.started.${id}`;
+  const had = await prisma.setting.findUnique({ where: { key } }).catch(() => null);
+  if (had) return false;
+  await prisma.setting.create({ data: { key, value: new Date().toISOString() } }).catch(() => {});
+  return true;
+}
+
+/** The how-to video: the one the manager sent with «#آموزش», else the built-in one (uploaded once, then sent by file id). */
+const INTRO_FILE = [join(__dirname, '../intro.mp4'), join(__dirname, '../../miniapp/public/intro.mp4')].find(f => existsSync(f));
+async function sendIntro(ctx: Context) {
+  const caption = '🎬 در ۵۰ ثانیه: سفارش با ویس، دستیار هوشمند، پیش‌فاکتور و پیگیری بار';
+  try {
+    const custom = await prisma.setting.findUnique({ where: { key: 'bot.introVideo' } });
+    if (custom?.value === 'off') return;
+    if (typeof custom?.value === 'string' && custom.value) { await ctx.replyWithVideo(custom.value, { caption }); return; }
+    const cached = await prisma.setting.findUnique({ where: { key: 'bot.introVideo.default' } });
+    if (typeof cached?.value === 'string' && cached.value) { await ctx.replyWithVideo(cached.value, { caption }); return; }
+    if (!INTRO_FILE) return;
+    const m = await ctx.replyWithVideo(new InputFile(INTRO_FILE, 'iplast.mp4'), { caption, width: 1080, height: 1920, supports_streaming: true });
+    const id = m.video?.file_id;
+    if (id) await prisma.setting.upsert({ where: { key: 'bot.introVideo.default' }, update: { value: id }, create: { key: 'bot.introVideo.default', value: id } });
+  } catch (e) { console.error('intro video', e); }
+}
+
+bot.command('video', ctx => sendIntro(ctx));
 
 bot.command('id', ctx => ctx.reply(`🆔 آیدی عددی تلگرام شما: ${ctx.from?.id}\nبرای عضویت در حساب شرکت، این عدد را برای کارشناس فروش یا مدیر حساب‌تان بفرستید.`));
 
@@ -218,7 +250,7 @@ bot.command('help', async ctx => {
   const isStaff = !!ctx.from && (await staff()).panel.has(ctx.from.id);
   await ctx.reply(isStaff
     ? '📘 راهنمای کارکنان\n\n• پیش‌فاکتور تازه: با «تأیید کارشناس» یا «رد» زیر پیام تصمیم بگیرید؛ برای قیمت‌گذاری و تغییر اقلام، پنل مدیریت ← سفارش‌ها.\n• پیام مشتری: روی پیام کپی‌شده‌ی مشتری Reply بزنید تا جواب برایش برود.\n• سفارش تلفنی: پنل مدیریت ← سفارش‌ها ← ثبت سفارش تلفنی.\n• لینک دعوت شما: پنل مدیریت ← جذب مشتری.\n\n/admin باز کردن پنل مدیریت · /id آیدی عددی شما'
-    : '📘 راهنمای ثبت سفارش\n\n1️⃣ «ورود به پنل کاربری» را بزنید؛ محصولات با قیمت و تخفیف خودتان آنجاست.\n2️⃣ کالا و تعداد را به سبد اضافه کنید، نوع خرید (نقدی یا مدت‌دار) را انتخاب و ثبت کنید.\n3️⃣ کارشناس فروش پیش‌فاکتور نهایی را می‌فرستد؛ با یک دکمه تأیید کنید.\n4️⃣ ارسال بار، فاکتور و سررسید چک‌ها همین‌جا اطلاع داده می‌شود.\n\n⚡️ راه سریع‌تر: سفارش را همین‌جا بنویسید یا ویس بدهید، مثل «۲ کارتن نری ۶۳ در ۲»؛ پیش‌نویس با قیمت روز آماده می‌شود.\n📎 عکس یا PDF لیست خرید هم قبول است.\n💬 هر سؤالی دارید همین‌جا بنویسید؛ کارشناس فروش جواب می‌دهد.',
+    : '📘 راهنمای ثبت سفارش\n\n1️⃣ «ورود به پنل کاربری» را بزنید؛ محصولات با قیمت و تخفیف خودتان آنجاست.\n2️⃣ کالا و تعداد را به سبد اضافه کنید، نوع خرید (نقدی یا مدت‌دار) را انتخاب و ثبت کنید.\n3️⃣ کارشناس فروش پیش‌فاکتور نهایی را می‌فرستد؛ با یک دکمه تأیید کنید.\n4️⃣ ارسال بار، فاکتور و سررسید چک‌ها همین‌جا اطلاع داده می‌شود.\n\n⚡️ راه سریع‌تر: سفارش را همین‌جا بنویسید یا ویس بدهید، مثل «۲ کارتن نری ۶۳ در ۲»؛ پیش‌نویس با قیمت روز آماده می‌شود.\n📎 عکس یا PDF لیست خرید هم قبول است.\n💬 هر سؤالی دارید همین‌جا بنویسید؛ کارشناس فروش جواب می‌دهد.\n🎬 ویدیوی آموزش: /video',
     { reply_markup: isStaff ? undefined : openAppKeyboard() });
 });
 
