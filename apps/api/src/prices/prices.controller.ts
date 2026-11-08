@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
@@ -17,6 +19,9 @@ const MAX_PDF = 25 * 1024 * 1024;
  * Price-list updates: upload the PDF(s) → a DRAFT list with every parsed row matched to a size →
  * review the changes → an admin publishes it, and it becomes the active list for customers.
  */
+/** Price list PDFs as uploaded (private; sent by the bot on request). */
+export const PRICELISTS = join(process.env.UPLOAD_DIR ?? '/data/uploads', 'pricelists');
+
 @Controller('admin/prices')
 @UseGuards(SessionGuard)
 @Staff()
@@ -29,7 +34,7 @@ export class PricesController {
   @Get('lists')
   async lists() {
     const lists = await this.prisma.priceList.findMany({ orderBy: { createdAt: 'desc' }, take: 30, include: { _count: { select: { prices: true, importRows: true } } } });
-    return lists;
+    return lists.map(l => ({ ...l, hasFile: existsSync(join(PRICELISTS, l.id)) && readdirSync(join(PRICELISTS, l.id)).some(f => f.endsWith('.pdf')) }));
   }
 
   /** Upload one PDF. With listId it is added to that draft (the month's list may come as several files). */
@@ -57,6 +62,8 @@ export class PricesController {
     } else {
       await this.prisma.priceList.update({ where: { id: list.id }, data: { sourceFile: [list.sourceFile, file.originalname].filter(Boolean).join(' + ').slice(0, 400) } });
     }
+    // keep the PDF: the AI agent sends the published list to customers who ask for it
+    try { const dir = join(PRICELISTS, list.id); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, `${Date.now()}.pdf`), file.buffer); } catch { /* the import still works */ }
     const matched = await this.match(rows, list.id);
     await this.prisma.priceImportRow.createMany({ data: matched });
     const aiResult = ai ? await this.ai.matchDraft(list.id) : null;
@@ -104,6 +111,20 @@ export class PricesController {
   }
 
   /** Makes the draft the active list. Sizes missing from the files keep their current price, or become «استعلامی» if asked. */
+  /** The PDF the AI agent sends to customers who ask for the price list (no import, just the file). */
+  @Post('lists/:id/file')
+  @Staff('ADMIN')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PDF } }))
+  async attachFile(@Param('id') id: string, @UploadedFile() file?: UploadedPdf) {
+    if (!file || file.buffer.subarray(0, 5).toString() !== '%PDF-') throw new BadRequestException('یک فایل PDF بفرستید');
+    if (!(await this.prisma.priceList.findUnique({ where: { id } }))) throw new NotFoundException();
+    const dir = join(PRICELISTS, id);
+    mkdirSync(dir, { recursive: true });
+    for (const f of readdirSync(dir)) rmSync(join(dir, f));
+    writeFileSync(join(dir, `${Date.now()}.pdf`), file.buffer);
+    return { ok: true };
+  }
+
   @Post('lists/:id/publish')
   @Staff('ADMIN')
   async publish(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { missing?: 'keep' | 'inquiry'; validFrom?: string }) {

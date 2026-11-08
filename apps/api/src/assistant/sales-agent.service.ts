@@ -1,4 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PRICELISTS } from '../prices/prices.controller';
 import { Agent, run, tool } from '@openai/agents';
 import { z } from 'zod';
 import { allowedModes, formatRial, payModeFa } from '@iplast/shared';
@@ -10,6 +13,7 @@ import { AssistantService, DraftLine } from './assistant.service';
 import { AccountingService, METHOD_FA, PAY_STATUS_FA } from '../accounting/accounting';
 
 const AI_PREFIX = '[دستیار]\n';
+const HUMAN_WINDOW = 30 * 60e3;
 
 const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هستی؛ تولیدکننده‌ی لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری. مشتری‌ها عمده‌فروش و پیمانکارند.
 تو کار فروش را از اول تا ثبت پیش‌فاکتور پیش می‌بری؛ کارشناس فروش انسانی فقط پیش‌فاکتوری را که تو ثبت می‌کنی تأیید می‌کند و بعد مدیر ارشد تأیید نهایی می‌دهد.
@@ -27,7 +31,9 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 10. اصلاح: برای تغییر سفارشی که هنوز تأیید نهایی نشده، load_order را صدا بزن تا اقلامش در پیش‌نویس بیاید، تغییرات را با set_draft (فهرست کامل) اعمال کن، جمع جدید را بگو و با تأیید صریح submit_order را با replacesOrder = شماره‌ی سفارش قدیم صدا بزن. سفارش قدیم خودکار لغو می‌شود و شماره‌ی جدید می‌گیرد؛ هر دو شماره را بگو.
 11. سفارش مجدد: load_order و بعد مثل سفارش جدید (submit_order بدون replacesOrder). قیمت‌ها قیمت امروز است.
 12. اگر مشتری فقط پیش‌نویس (سفارشی که هنوز ثبت نشده) را نمی‌خواهد، set_draft با فهرست خالی.
-13. در این موارد handoff را صدا بزن و به مشتری بگو کارشناس فروش به‌زودی جواب می‌دهد: مشتری آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه؛ سؤالی که با ابزارها جوابش را نداری.
+13. لیست قیمت: اگر مشتری لیست قیمت خواست، send_price_list. قیمت یک کالا را با search_catalog بگو.
+14. تو خودت کار را تمام می‌کنی؛ ارجاع به کارشناس آخرین راه است. فقط در این موارد handoff کن: مشتری صریحاً آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه بیش از شرایط فعلی‌اش. حتی بعد از handoff هم به سؤال‌ها و کارهای بعدی مشتری خودت جواب بده و کارها را انجام بده.
+15. درخواست مبهم مثل «فیلتر می‌خواهم» را با search_catalog پیدا کن و گزینه‌ها و سایزها را بگو و بپرس کدام و چند عدد؛ ارجاع نده.
 
 قواعد:
 - هرگز نگو کاری انجام شد (ثبت، لغو، اصلاح، تأیید، پاک کردن) مگر این‌که در همین نوبت ابزار مربوطش را صدا زده باشی و نتیجه‌اش موفق («ثبت شد»، «لغو شد») بوده باشد. اگر نتیجه «نشد» بود، همان دلیل را بگو. اگر برای کاری ابزار نداری، بگو از دست تو برنمی‌آید و handoff کن.
@@ -72,7 +78,10 @@ export class SalesAgentService {
     await this.prisma.conversation.update({ where: { id: conv.id }, data: { isOpen: true } });
     const base = { conversationId: conv.id, messageId: msg.id };
 
-    if (!this.enabled || conv.handoffAt) return { mode: 'human', ...base };
+    // the AI steps back only while a person is actually talking in this chat (a staff reply in the last 30 minutes);
+    // a handoff alone never silences it, so the customer is never left with «sent to the agent» on every message
+    const lastStaff = await this.prisma.message.findFirst({ where: { conversationId: conv.id, direction: 'OUT', NOT: { text: { startsWith: AI_PREFIX } } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+    if (!this.enabled || (lastStaff && Date.now() - lastStaff.createdAt.getTime() < HUMAN_WINDOW)) return { mode: 'human', ...base };
     if (input.kind === 'PHOTO' || input.kind === 'DOCUMENT') {
       await this.handoff(conv.id, 'مشتری عکس یا فایل فرستاد');
       return this.say(base, 'فایل شما رسید و برای کارشناس فروش فرستاده شد؛ به‌زودی جواب می‌دهد.', { handoff: 'مشتری عکس یا فایل فرستاد' });
@@ -247,6 +256,20 @@ export class SalesAgentService {
         });
       },
     });
+    const priceList = tool({
+      name: 'send_price_list', description: 'فایل PDF آخرین لیست قیمت رسمی فعال را همین حالا در تلگرام برای مشتری می‌فرستد.',
+      parameters: z.object({}),
+      execute: async () => {
+        const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
+        if (!list) return 'لیست قیمت فعالی نیست.';
+        const dir = join(PRICELISTS, list.id);
+        const files = existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.pdf')).sort() : [];
+        if (!files.length) return `فایل PDF «${list.title}» روی سرور نیست؛ بگو قیمت هر کالا را از تو بپرسد یا در پنل کاربری ببیند. (کاتالوگ و قیمت‌ها در پنل کاربری هست.)`;
+        let sent = 0;
+        for (const f of files) if (await this.tg.sendFile(user.telegramId, readFileSync(join(dir, f)), `${list.title}${files.length > 1 ? `-${sent + 1}` : ''}.pdf`, 'application/pdf', `📄 ${list.title}`)) sent++;
+        return sent ? `فرستاده شد: ${sent} فایل «${list.title}»` : 'فرستاده نشد (خطای تلگرام)؛ بگو در پنل کاربری قیمت‌ها را ببیند.';
+      },
+    });
     const toHuman = tool({
       name: 'handoff', description: 'گفتگو را به کارشناس فروش انسانی می‌سپارد؛ از این به بعد کارشناس جواب می‌دهد.',
       parameters: z.object({ reason: z.string() }),
@@ -266,7 +289,7 @@ export class SalesAgentService {
 
     let reply: string;
     try {
-      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, orderDetail, answerProforma, myAccount, submit, cancel, loadOrder, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
+      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, orderDetail, answerProforma, myAccount, submit, cancel, loadOrder, priceList, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
       const r = await run(agent, context, { maxTurns: 12 });
       reply = (r.finalOutput as { reply: string }).reply.trim();
     } catch (e) {
@@ -286,10 +309,13 @@ export class SalesAgentService {
 
   /** Hands the chat to a person: the customer's agent (or a sales agent) gets a summary in Telegram. */
   async handoff(conversationId: string, reason: string) {
+    const prev = await this.prisma.conversation.findUnique({ where: { id: conversationId }, select: { handoffAt: true } });
+    const recent = !!prev?.handoffAt && Date.now() - prev.handoffAt.getTime() < 2 * 3600e3;
     const conv = await this.prisma.conversation.update({ where: { id: conversationId }, data: { handoffAt: new Date(), handoffReason: reason }, include: { customer: { select: { name: true, support: { select: { id: true, telegramId: true, isActive: true } } } }, messages: { orderBy: { createdAt: 'desc' }, take: 6 } } });
     const user = await this.prisma.user.findUnique({ where: { telegramId: conv.userTelegramId } });
     const agent = await this.agentFor(conv.assigneeId, conv.customer?.support?.isActive ? conv.customer.support : null);
     if (!agent) return;
+    if (recent && conv.assigneeId) { await this.tg.send(agent.telegramId, `🔔 ${conv.customer?.name ?? 'مشتری'}: ${reason}`); return; }
     if (!conv.assigneeId) await this.prisma.conversation.update({ where: { id: conversationId }, data: { assigneeId: agent.id } });
     const who = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || 'مشتری';
     const last = conv.messages.reverse().map(m => `${m.direction === 'IN' ? '👤' : m.text?.startsWith(AI_PREFIX) ? '🤖' : '🧑‍💼'} ${(m.text ?? `[${m.kind}]`).replace(AI_PREFIX, '').slice(0, 300)}`).join('\n');
