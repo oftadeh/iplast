@@ -8,6 +8,8 @@ import { AccountsPage } from './pages/Accounts';
 import { WarehousePage } from './pages/Warehouse';
 import { MessagesPage } from './pages/Messages';
 import { ProxyPage } from './pages/Proxy';
+import { DashboardPage } from './pages/Dashboard';
+import { Icon } from './icons';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
 const AdminCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -16,15 +18,16 @@ export const useAdmin = () => useContext(AdminCtx);
 // Focused on decisions and the catalog: approve orders and customers, define products, keep prices current.
 // Conversations stay in the bot chat itself (staff reply there).
 type Role = NonNullable<Me['staffRole']>;
-const SECTIONS: { id: string; title: string; roles: Role[] }[] = [
-  { id: 'approvals', title: 'تأییدها', roles: ['ADMIN', 'SALES'] },
-  { id: 'warehouse', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'] },
-  { id: 'messages', title: 'پیام و اعلان', roles: ['ADMIN'] },
-  { id: 'products', title: 'کالاها', roles: ['ADMIN', 'SALES'] },
-  { id: 'prices', title: 'به‌روزرسانی قیمت', roles: ['ADMIN', 'SALES'] },
-  { id: 'accounts', title: 'حساب مشتریان', roles: ['ADMIN', 'SALES'] },
-  { id: 'staff', title: 'کارکنان', roles: ['ADMIN'] },
-  { id: 'proxy', title: 'پراکسی سرور', roles: ['ADMIN'] },
+const SECTIONS: { id: string; title: string; icon: string; group: string; roles: Role[] }[] = [
+  { id: 'dashboard', title: 'پیشخوان', icon: 'home', group: '', roles: ['ADMIN', 'SALES', 'WAREHOUSE'] },
+  { id: 'approvals', title: 'تأییدها', icon: 'check', group: 'عملیات فروش', roles: ['ADMIN', 'SALES'] },
+  { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', group: 'عملیات فروش', roles: ['ADMIN', 'WAREHOUSE'] },
+  { id: 'accounts', title: 'حساب مشتریان', icon: 'wallet', group: 'مالی', roles: ['ADMIN', 'SALES'] },
+  { id: 'products', title: 'کالاها', icon: 'box', group: 'کاتالوگ', roles: ['ADMIN', 'SALES'] },
+  { id: 'prices', title: 'به‌روزرسانی قیمت', icon: 'tag', group: 'کاتالوگ', roles: ['ADMIN', 'SALES'] },
+  { id: 'messages', title: 'پیام و اعلان', icon: 'bell', group: 'مدیریت سیستم', roles: ['ADMIN'] },
+  { id: 'staff', title: 'کارکنان', icon: 'users', group: 'مدیریت سیستم', roles: ['ADMIN'] },
+  { id: 'proxy', title: 'پراکسی سرور', icon: 'shield', group: 'مدیریت سیستم', roles: ['ADMIN'] },
 ];
 
 interface TgApp { initData: string; colorScheme?: 'light' | 'dark'; ready(): void; expand(): void; onEvent?(e: string, cb: () => void): void; BackButton?: { show(): void; onClick(cb: () => void): void } }
@@ -35,7 +38,8 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(!!getToken() || !!tgApp());
   const [denied, setDenied] = useState(false);
-  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return SECTIONS.some(s => s.id === h) ? h : 'approvals'; });
+  const [section, setSection] = useState<string>(() => { const h = location.hash.slice(1).split('/')[0]; return SECTIONS.some(s => s.id === h) ? h : 'dashboard'; });
+  const [navOpen, setNavOpen] = useState(false);
   const [focus, setFocus] = useState<string | undefined>(() => location.hash.split('/')[1]);
   const [toastText, setToastText] = useState('');
   const t = useRef<number>();
@@ -51,7 +55,6 @@ export function App() {
       app.ready(); app.expand();
       const theme = () => { if (app.colorScheme) document.documentElement.dataset.theme = app.colorScheme; };
       theme(); app.onEvent?.('themeChanged', theme);
-      app.BackButton?.show(); app.BackButton?.onClick(() => { location.href = '/'; });
       // roles always come fresh from the database, so sign in again on every open
       api<{ token: string }>('/auth/telegram', { method: 'POST', body: { initData: app.initData } })
         .then(r => { setToken(r.token); loadMe(); }, () => { setChecking(false); setDenied(true); });
@@ -64,23 +67,37 @@ export function App() {
     <div className="login"><div className="card">
       <h1>{denied ? 'دسترسی ندارید' : 'ورود ناموفق بود'}</h1>
       <p className="muted small" style={{ margin: 0 }}>{denied ? 'این بخش فقط برای کارکنان اصفهان پلاست است. اگر باید دسترسی داشته باشید، از مدیر بخواهید آیدی تلگرام شما را در بخش «کارکنان» اضافه کند.' : 'دوباره از داخل ربات باز کنید.'}</p>
-      <a className="btn" href="/">بازگشت به فروشگاه</a>
     </div></div>
   );
   if (!me) return <Login onDone={loadMe} />;
 
-  const open = (s: string, id?: string) => { setSection(s); setFocus(id); };
+  const open = (s: string, id?: string) => { setSection(s); setFocus(id); setNavOpen(false); window.scrollTo(0, 0); };
   const visible = SECTIONS.filter(s => s.roles.includes(me.staffRole!));
   const current = visible.some(s => s.id === section) ? section : visible[0].id;
   return (
     <AdminCtx.Provider value={{ me, toast, open }}>
-      <div className="shell">
+      <div className={navOpen ? 'shell nav-open' : 'shell'}>
         <aside className="side">
-          <div className="logo">اصفهان پلاست <small>پنل مدیریت iPlast</small></div>
-          <nav>{visible.map(s => <button key={s.id} type="button" aria-current={s.id === current ? 'page' : undefined} onClick={() => open(s.id)}>{s.title}</button>)}</nav>
-          <div className="who"><span>{personName(me)} · {ROLE_FA[me.staffRole!]}</span>{tgApp() ? <a href="/" style={{ color: 'inherit' }}>بازگشت به فروشگاه</a> : <button type="button" onClick={() => { setToken(null); setMe(null); }}>خروج</button>}</div>
+          <div className="brand"><span className="mark">iP</span><div>اصفهان پلاست<small>پنل مدیریت</small></div></div>
+          <nav>{visible.map((s, i) => (
+            <div key={s.id} style={{ display: 'contents' }}>
+              {s.group && s.group !== visible[i - 1]?.group && <div className="navgroup">{s.group}</div>}
+              <button type="button" aria-current={s.id === current ? 'page' : undefined} onClick={() => open(s.id)}><Icon n={s.icon} />{s.title}</button>
+            </div>
+          ))}</nav>
+          <div className="who">
+            <span className="avatar">{personName(me).slice(0, 1)}</span>
+            <div><b>{personName(me)}</b><small>{ROLE_FA[me.staffRole!]}</small></div>
+            {!tgApp() && <button type="button" title="خروج" aria-label="خروج" onClick={() => { setToken(null); setMe(null); }}><Icon n="logout" /></button>}
+          </div>
         </aside>
+        <div className="scrim" onClick={() => setNavOpen(false)} />
+        <header className="top">
+          <button type="button" className="burger" aria-label="منو" onClick={() => setNavOpen(o => !o)}><Icon n="menu" s={20} /></button>
+          <div className="crumb"><span className="muted">پنل مدیریت</span><span className="sep">/</span><b>{visible.find(s => s.id === current)?.title}</b></div>
+        </header>
         <main>
+          {current === 'dashboard' && <DashboardPage />}
           {current === 'approvals' && <ApprovalsPage />}
           {current === 'warehouse' && <WarehousePage />}
           {current === 'messages' && <MessagesPage />}

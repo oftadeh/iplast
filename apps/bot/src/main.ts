@@ -126,7 +126,12 @@ bot.command('id', ctx => ctx.reply(`آیدی عددی شما: ${ctx.from?.id}`))
 bot.command('admin', async ctx => {
   if (!ctx.from || !(await staff()).panel.has(ctx.from.id)) return ctx.reply('این بخش فقط برای کارکنان اصفهان پلاست است.');
   if (!MINIAPP_URL) return ctx.reply('پنل مدیریت هنوز روی سرور فعال نشده است.');
-  await ctx.reply('پنل مدیریت اصفهان پلاست:', { reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', `${MINIAPP_URL.replace(/\/+$/, '')}/admin/`) });
+  // the admin panel is its own app, separate from the store: open it here in Telegram, or in a browser on a computer
+  const adminUrl = `${MINIAPP_URL.replace(/\/+$/, '')}/admin/`;
+  await ctx.reply(`پنل مدیریت اصفهان پلاست\nروی کامپیوتر: ${adminUrl}\n(ورود با آیدی عددی تلگرام و کدی که همین ربات می‌فرستد)`, {
+    link_preview_options: { is_disabled: true },
+    reply_markup: new InlineKeyboard().webApp('⚙️ باز کردن پنل مدیریت', adminUrl),
+  });
 });
 
 function kindOf(ctx: Context): MessageKind | null {

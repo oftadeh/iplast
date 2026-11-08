@@ -66,11 +66,6 @@ export function HomeScreen() {
       <form className="searchwrap" onSubmit={e => { e.preventDefault(); if (q.trim()) go({ name: 'catalog', q: q.trim() }); }}>
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
-      {me?.staffRole && (
-        <a className="staff-entry" href="/admin/">
-          <Icon n="grid" s={18} /><span><b>پنل مدیریت</b><small>سفارش‌ها، مشتریان، لیست قیمت{me.staffRole === 'ADMIN' ? '، کارشناسان' : ''}</small></span><Icon n="arrow" s={16} />
-        </a>
-      )}
       <div className="quick">
         <button type="button" onClick={() => go({ name: 'orders' })}><span className="i"><Icon n="truck" s={15} /></span>پیگیری سفارش</button>
         <button type="button" onClick={() => go({ name: 'account' })}><span className="i"><Icon n="file" s={15} /></span>حساب و فاکتورها</button>
