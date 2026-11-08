@@ -190,7 +190,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
                     return (
                       <div key={i.id} className={`pfrow ${l?.remove ? 'gone' : ''} ${i.unitPrice === null && !l?.price ? 'need' : ''}`}>
                         <span>{i.title}{i.packs ? <small className="muted num"> · {fa(i.packs)} بسته</small> : null}</span>
-                        <input className="in num" inputMode="numeric" aria-label="تعداد" value={l?.qty ?? ''} placeholder={fa(i.quantity)} onChange={e => setLine(i.id, { qty: e.target.value })} disabled={l?.remove} />
+                        <input className="in num" inputMode="numeric" aria-label="تعداد" value={l?.qty ? grp(l.qty) : ''} placeholder={fa(i.quantity)} onChange={e => setLine(i.id, { qty: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
                         <input className="in num" inputMode="numeric" aria-label="قیمت واحد" value={l?.price ? grp(l.price) : ''} placeholder={i.unitPrice === null ? 'استعلامی — قیمت بگذارید' : fa(i.unitPrice)} onChange={e => setLine(i.id, { price: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
                         <button type="button" className="btn sm" title={l?.remove ? 'برگرداندن' : 'حذف این قلم'} onClick={() => setLine(i.id, { remove: !l?.remove })}>{l?.remove ? '↺' : '✕'}</button>
                       </div>

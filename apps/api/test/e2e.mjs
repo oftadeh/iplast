@@ -79,13 +79,37 @@ await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'sales_ok' }, 
 await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'fix' }, sales, 400);
 const fx = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'fix', comment: 'تعداد را به کارتن کامل برسانید' }, sales);
 assert.equal(fx.status, 'NEEDS_FIX'); step('agent sends the proforma back for a fix (note required)');
-const s1 = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'sales_ok' }, sales);
-assert.equal(s1.status, 'SALES_APPROVED'); step('agent approves → waiting for the manager');
+await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'sales_ok' }, sales, 400); step('agent cannot approve while an inquiry line has no price');
+const inqLine = o1.items.find(i => i.variantId === inquiry.id);
+const pricedLine = o1.items.find(i => i.variantId === priced.id);
+const s1 = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'sales_ok', comment: 'ارسال پنجشنبه', edit: { items: [{ id: inqLine.id, unitPrice: '۱۲٬۵۰۰٬۰۰۰' }, { id: pricedLine.id, quantity: 340 }], discount: '1000000', shipping: '2000000' } }, sales);
+assert.equal(s1.status, 'PROFORMA_SENT');
+const wantSub = BigInt(priced.price) * 340n + 12_500_000n * 5n;
+assert.equal(s1.breakdown.subtotal, String(wantSub)); assert.equal(s1.payable, String(wantSub - 1_000_000n + 2_000_000n));
+assert.equal(s1.proformas[0].version, 1); assert.equal(s1.proformas[0].changed, true); step('agent prices the inquiry line, changes a quantity, adds discount and freight → final proforma to the customer');
+await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'final_ok' }, admin, 400); step('manager cannot final-approve before the customer accepts');
+await call('POST', `/api/orders/${o1.id}/accept`, { ok: true }, buyer, [403, 404]);
+await call('POST', `/api/orders/${o1.id}/accept`, { ok: true }, stranger, [403, 404]); step('only who placed it or the account owner can accept');
+const acc = await call('POST', `/api/orders/${o1.id}/accept`, { ok: true }, owner);
+assert.equal(acc.status, 'SALES_APPROVED'); step('customer accepts the proforma → waiting for the manager');
 await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'final_ok' }, sales, 403); step('agent cannot give the final approval');
 const queue = await call('GET', '/api/admin/orders?status=SALES_APPROVED', null, admin);
 assert.ok(queue.rows.some(r => r.id === o1.id) && queue.rows[0].customer.support); step('manager queue lists it with the agent name');
 const fin = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'final_ok' }, admin);
-assert.equal(fin.status, 'CONFIRMED'); assert.deepEqual(fin.events.map(e => e.status), ['SUBMITTED', 'NEEDS_FIX', 'SALES_APPROVED', 'CONFIRMED']); step('manager final approval → confirmed, full history');
+assert.equal(fin.status, 'CONFIRMED'); assert.deepEqual(fin.events.map(e => e.status), ['SUBMITTED', 'NEEDS_FIX', 'PROFORMA_SENT', 'SALES_APPROVED', 'CONFIRMED']); step('manager final approval → confirmed, full history');
+const accAfter = await call('GET', `/api/admin/accounts/customers/${cust.customerId}`, null, admin);
+const inv1 = accAfter.invoices.find(i => i.order?.number === o1.number);
+assert.ok(inv1); assert.equal(inv1.total, fin.payable); step('final approval issues the invoice with the proforma amount');
+
+// customer terms: cash discount and cheque markup apply to the money
+await call('PUT', `/api/admin/customers/${cust.customerId}/terms`, { cashPercent: 30, chequeDueDays: [60, 90], cashDiscountPct: 2, chequeMarkupPct: 3 }, admin);
+const o3 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 100 }] }, buyer);
+const sub3 = BigInt(priced.price) * 100n, cashB = sub3 * 30n / 100n, chqB = sub3 - cashB;
+const want3 = cashB - cashB * 200n / 10000n + chqB + chqB * 300n / 10000n;
+assert.equal(o3.payable, String(want3)); assert.equal(o3.breakdown.cheques.length, 2); step('cash discount and cheque markup applied; cheque share split into 60/90-day cheques');
+const s3 = await call('POST', `/api/admin/orders/${o3.id}/decide`, { action: 'sales_ok' }, sales);
+assert.equal(s3.status, 'SALES_APPROVED'); step('nothing changed by the agent → straight to the manager, no customer step');
+await call('POST', `/api/admin/orders/${o3.id}/decide`, { action: 'reject', comment: 'آزمایشی' }, admin);
 await call('POST', `/api/admin/orders/${o2.id}/decide`, { action: 'reject', comment: 'ناموجود' }, sales);
 await call('POST', `/api/admin/orders/${o2.id}/decide`, { action: 'sales_ok' }, sales, 400); step('agent rejects; a closed proforma cannot be approved');
 await call('PATCH', `/api/admin/orders/${o1.id}/status`, { status: 'PREPARING' }, sales, 403);
@@ -101,8 +125,19 @@ const whq = await call('GET', '/api/admin/orders?status=CONFIRMED,PREPARING', nu
 assert.ok(whq.rows.some(r => r.id === o1.id)); step('warehouse sees approved orders');
 await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'ship' }, sales, 403); step('sales agent cannot mark shipping');
 await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'delivered' }, wh, 400);
-const sh = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'ship', comment: 'باربری ایران‌پیما، بارنامه ۱۲۳۴۵' }, wh);
-assert.equal(sh.status, 'SHIPPED'); assert.equal(sh.events.at(-1).comment, 'باربری ایران‌پیما، بارنامه ۱۲۳۴۵'); step('warehouse ships with the waybill note');
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+const form = async (path, token, fields, file, expect = 200) => {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  if (file) fd.append('file', new Blob([file.buf], { type: file.type }), file.name);
+  const r = await fetch(API + path, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${token}` } });
+  const j = await r.json(); assert.ok(r.status === expect || (expect === 200 && r.status === 201), `${path} → ${r.status} ${JSON.stringify(j)}`); return j;
+};
+await form(`/api/admin/orders/${o1.id}/shipments`, sales, { waybillNo: '1' }, null, 403); step('sales agent cannot record a load');
+await form(`/api/admin/orders/${o1.id}/shipments`, wh, { carrier: 'ایران‌پیما', waybillNo: '۱۲۳۴۵', driverName: 'رضایی', driverPhone: '09120000000', plate: '۱۲ع۳۴۵', freight: '۳٬۵۰۰٬۰۰۰', freightBy: 'customer' }, { buf: PDF, type: 'application/pdf', name: 'w.pdf' });
+const sh = await call('GET', `/api/orders/${o1.id}`, null, owner);
+assert.equal(sh.status, 'SHIPPED'); assert.equal(sh.shipments[0].waybillNo, '۱۲۳۴۵'); assert.equal(sh.shipments[0].freight, '3500000');
+assert.equal(sh.documents[0].kind, 'WAYBILL'); step('warehouse records the load with a waybill PDF; customer sees it on the order');
 const dl = await call('POST', `/api/admin/orders/${o1.id}/decide`, { action: 'delivered' }, wh);
 assert.equal(dl.status, 'DELIVERED'); step('warehouse marks delivery');
 
@@ -150,6 +185,22 @@ assert.equal(r2.status, 'PENDING'); step('transfer accepted in the panel; cheque
 await call('POST', `/api/admin/accounts/payments/${p1.id}/review`, { ok: false }, admin, 400); step('a reviewed receipt cannot be reviewed again');
 const acc1 = await call('GET', '/api/me/account', null, owner);
 assert.equal(acc1.summary.paid, '50000000'); assert.equal(acc1.summary.pendingCheques, '80000000'); assert.equal(acc1.summary.reported, '0'); step('account: transfer counted, cheque pending until cleared');
+
+// financial documents on the customer's file
+await form(`/api/admin/customers/${cust.customerId}/documents`, admin, { kind: 'CONTRACT', title: 'قرارداد ۱۴۰۵' }, { buf: Buffer.from('x'), type: 'text/plain', name: 'a.txt' }, 400); step('only photos and PDFs are accepted');
+const doc = await form(`/api/admin/customers/${cust.customerId}/documents`, admin, { kind: 'CONTRACT', title: 'قرارداد ۱۴۰۵' }, { buf: PDF, type: 'application/pdf', name: 'c.pdf' });
+const mine = await form('/api/me/documents', owner, { kind: 'RECEIPT', title: 'فیش' }, { buf: PNG, type: 'image/png', name: 'f.png' });
+assert.equal(mine.byCustomer, true);
+const docs = await call('GET', `/api/admin/customers/${cust.customerId}/documents`, null, sales);
+assert.ok(docs.some(d => d.id === doc.id) && docs.some(d => d.id === mine.id) && docs.some(d => d.kind === 'WAYBILL')); step('staff and customer attach documents; all on the customer file');
+const df = await fetch(`${API}/api/admin/documents/${doc.id}/file`, { headers: { Authorization: `Bearer ${sales}` } });
+assert.equal(df.status, 200); assert.equal(df.headers.get('content-type'), 'application/pdf');
+assert.equal((await fetch(`${API}/api/me/documents/${doc.id}/file`, { headers: { Authorization: `Bearer ${stranger}` } })).status, 404);
+assert.equal((await fetch(`${API}/api/me/documents/${doc.id}/file`, { headers: { Authorization: `Bearer ${owner}` } })).status, 200); step('documents open for staff and the customer, not for strangers');
+const pdfPay = await form('/api/me/account/payments', owner, { method: 'TRANSFER', amount: '1000000' }, { buf: PDF, type: 'application/pdf', name: 'r.pdf' });
+assert.equal(pdfPay.status, 'REPORTED'); step('customer can send a PDF receipt');
+const bounced = await call('PATCH', `/api/admin/accounts/payments/${p2.id}`, { status: 'BOUNCED' }, admin);
+assert.equal(bounced.status, 'BOUNCED'); step('a bounced cheque is recorded (customer, agent and managers are told)');
 
 await call('POST', '/api/auth/code/request', { telegramId: '7001' }); await call('POST', '/api/auth/code/verify', { telegramId: '7001', code: '000000' }, null, 401); step('admin code login refuses non-staff');
 console.log(`\nall ${n} checks passed`);

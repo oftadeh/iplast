@@ -339,8 +339,8 @@ export function OrderScreen({ id }: { id: string }) {
             <b className="num">{i.unitPrice !== null ? `${fa(BigInt(i.unitPrice) * BigInt(i.quantity))}` : <span className="tag warn">استعلامی</span>}</b></div>
         ))}
       </div>
-      {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       <MoneySummary d={d} cashPct={cashPct} />
+      {d.status === 'PROFORMA_SENT' && <ProformaDecision o={d} onDone={o.reload} />}
       {!!d.shipments?.length && (
         <>
           <div className="sec"><h2 style={{ fontSize: 16 }}>ارسال بار</h2></div>

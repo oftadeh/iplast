@@ -7,6 +7,7 @@ import { OrdersService, STATUS_FA } from '../orders/orders.service';
 import { TelegramService } from '../common/telegram.service';
 import { quote } from '../orders/pricing';
 import { AssistantService, DraftLine } from './assistant.service';
+import { AccountingService, METHOD_FA, PAY_STATUS_FA } from '../accounting/accounting';
 
 const AI_PREFIX = '[دستیار]\n';
 
@@ -19,8 +20,10 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 3. وقتی پیش‌نویس کامل شد، فهرست کوتاه و جمع را بگو و بپرس «ثبت کنم؟».
 4. فقط وقتی مشتری صریحاً تأیید کرد (مثلاً «بله»، «ثبت کن»، «اوکی»)، submit_order را صدا بزن. اگر نام فروشگاه/شرکت لازم بود، اول بپرس و بعد با companyName صدا بزن.
 5. بعد از ثبت بگو: «پیش‌فاکتور شماره‌ی X ثبت شد و برای تأیید کارشناس فروش رفت.» تأیید، تخفیف، زمان ارسال و قیمت استعلامی با کارشناس است؛ قول نده.
-6. برای پیگیری سفارش از my_orders استفاده کن.
-7. در این موارد handoff را صدا بزن و به مشتری بگو کارشناس فروش به‌زودی جواب می‌دهد: مشتری آدم/کارشناس خواست؛ شکایت یا مشکل ارسال و پرداخت؛ درخواست تخفیف یا شرایط ویژه؛ سؤالی که با ابزارها جوابش را نداری.
+6. برای پیگیری سفارش از my_orders و برای جزئیات یک سفارش (اقلام، مبلغ نقد و چک، بارنامه، راننده) از order_detail استفاده کن.
+7. وقتی کارشناس قیمت‌ها را نهایی کرد، سفارش «پیش‌فاکتور نهایی؛ منتظر تأیید مشتری» است. مبلغ و مهلت را بگو و بپرس تأیید می‌کند یا نه. فقط با تأیید صریح مشتری answer_proforma با ok=true، و اگر تغییر خواست با ok=false و توضیح او صدا بزن.
+8. برای مانده‌ی حساب، فاکتورها، چک‌های در جریان و سررسیدها از my_account استفاده کن. برای ثبت پرداخت بگو عکس یا PDF فیش یا چک را از مینی‌اپ ← سفارش‌ها ← حساب من بفرستد.
+9. در این موارد handoff را صدا بزن و به مشتری بگو کارشناس فروش به‌زودی جواب می‌دهد: مشتری آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه؛ سؤالی که با ابزارها جوابش را نداری.
 
 قواعد:
 - فقط از نتیجه‌ی ابزارها استفاده کن. هرگز کالا، سایز، قیمت، موجودی یا زمان ارسال از خودت نساز. «استعلامی» یعنی قیمت را کارشناس اعلام می‌کند.
@@ -46,7 +49,7 @@ export interface AgentTurn {
 @Injectable()
 export class SalesAgentService {
   private readonly log = new Logger('SalesAgent');
-  constructor(private readonly prisma: PrismaService, private readonly ai: AssistantService, private readonly orders: OrdersService, private readonly tg: TelegramService) {}
+  constructor(private readonly prisma: PrismaService, private readonly ai: AssistantService, private readonly orders: OrdersService, private readonly tg: TelegramService, private readonly acc: AccountingService) {}
 
   get enabled() { return this.ai.enabled && process.env.SALES_AGENT !== '0'; }
 
@@ -115,12 +118,61 @@ export class SalesAgentService {
         return JSON.stringify({ lines: v.lines.map(l => ({ name: `${l.name} ${l.label}`, quantity: l.quantity, unit: l.unitName, packs: l.mode === 'pack' ? l.n : null, price: l.price ? formatRial(BigInt(l.price) * BigInt(l.quantity)) : 'استعلامی' })), total: formatRial(BigInt(v.total)), invalidIds: missing });
       },
     });
+    const owned = user.memberships.filter(m => m.role === 'OWNER' || m.role === 'VIEWER').map(m => m.customerId);
+    const visible = { OR: [{ placedById: userId }, { customerId: { in: owned } }] };
     const myOrders = tool({
-      name: 'my_orders', description: 'آخرین سفارش‌ها و پیش‌فاکتورهای این مشتری با وضعیت.',
+      name: 'my_orders', description: 'آخرین سفارش‌ها و پیش‌فاکتورهای این مشتری با وضعیت و مبلغ قابل پرداخت.',
       parameters: z.object({}),
       execute: async () => {
-        const os = await this.prisma.order.findMany({ where: { placedById: userId }, orderBy: { createdAt: 'desc' }, take: 5, include: { items: true } });
-        return JSON.stringify(os.map(o => ({ number: o.number, status: STATUS_FA[o.status], items: o.items.length, total: formatRial(this.orders.orderTotal(o.items)), date: o.createdAt.toISOString().slice(0, 10) })));
+        const os = await this.prisma.order.findMany({ where: visible, orderBy: { createdAt: 'desc' }, take: 8, include: { items: true, proformas: { orderBy: { version: 'desc' }, take: 1 } } });
+        return JSON.stringify(os.map(o => ({
+          number: o.number, status: STATUS_FA[o.status], items: o.items.length, payable: formatRial(this.orders.breakdown(o).total),
+          inquiry: o.items.filter(i => i.unitPrice === null).length, date: o.createdAt.toISOString().slice(0, 10),
+          proformaExpires: o.status === 'PROFORMA_SENT' && o.proformas[0] ? o.proformas[0].expiresAt.toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' }) : null,
+        })));
+      },
+    });
+    const orderDetail = tool({
+      name: 'order_detail', description: 'جزئیات یک سفارش با شماره: اقلام، تخفیف، سهم نقد و چک، چک‌ها، و اطلاعات ارسال (باربری، بارنامه، راننده، پلاک).',
+      parameters: z.object({ number: z.number().int() }),
+      execute: async ({ number }) => {
+        const o = await this.prisma.order.findFirst({ where: { number, ...visible }, include: { items: true, shipments: true, proformas: { orderBy: { version: 'desc' }, take: 1 } } });
+        if (!o) return 'سفارشی با این شماره برای این مشتری نیست.';
+        const b = this.orders.breakdown(o);
+        return JSON.stringify({
+          number: o.number, status: STATUS_FA[o.status],
+          items: o.items.map(i => ({ name: i.title, quantity: i.quantity, packs: i.packs, unitPrice: formatRial(i.unitPrice) })),
+          subtotal: formatRial(b.subtotal), discount: b.discount ? formatRial(b.discount) : null, freight: b.shipping ? formatRial(b.shipping) : null,
+          cash: `${b.cashPercent}٪: ${formatRial(b.cash)}${b.cashDiscount ? ` (تخفیف نقدی ${b.cashDiscountPct}٪)` : ''}`,
+          cheque: b.cheque ? `${100 - b.cashPercent}٪: ${formatRial(b.cheque)}${b.chequeMarkup ? ` (افزایش چکی ${b.chequeMarkupPct}٪)` : ''}` : null,
+          cheques: b.cheques.map(c => ({ amount: formatRial(c.amount), days: c.days })), payable: formatRial(b.total),
+          proformaExpires: o.status === 'PROFORMA_SENT' && o.proformas[0] ? o.proformas[0].expiresAt.toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' }) : null,
+          shipments: o.shipments.map(sh => ({ date: sh.shippedAt.toLocaleDateString('fa-IR'), carrier: sh.carrier, waybillNo: sh.waybillNo, driver: sh.driverName, driverPhone: sh.driverPhone, plate: sh.plate, freight: sh.freight !== null ? formatRial(sh.freight) : null })),
+        });
+      },
+    });
+    const answerProforma = tool({
+      name: 'answer_proforma', description: 'پاسخ مشتری به پیش‌فاکتور نهایی: ok=true تأیید (فقط با تأیید صریح مشتری)، ok=false یعنی تغییر می‌خواهد (comment = تغییر موردنظر).',
+      parameters: z.object({ number: z.number().int(), ok: z.boolean(), comment: z.string().nullable() }),
+      execute: async ({ number, ok, comment }) => {
+        const o = await this.prisma.order.findFirst({ where: { number, ...visible }, select: { id: true } });
+        if (!o) return 'سفارشی با این شماره برای این مشتری نیست.';
+        try { const r = await this.orders.customerDecide(userId, o.id, ok, comment ?? undefined); return `ثبت شد؛ وضعیت: ${r.statusFa}`; } catch (e) { return `ثبت نشد: ${(e as Error).message}`; }
+      },
+    });
+    const myAccount = tool({
+      name: 'my_account', description: 'حساب مالی مشتری: مانده‌ی بدهی، جمع فاکتورها و دریافتی‌ها، چک‌های در جریان با سررسید، آخرین فاکتورها.',
+      parameters: z.object({}),
+      execute: async () => {
+        if (!owned.length) return 'حساب مالی فقط برای مدیر حساب یا کاربر مشاهده قابل دیدن است؛ بگو از مدیر حسابشان بپرسد یا handoff کن.';
+        const a = await this.acc.account(owned[0]);
+        return JSON.stringify({
+          customer: a.customer.name, balance: formatRial(a.summary.balance), invoiced: formatRial(a.summary.invoiced), paid: formatRial(a.summary.paid),
+          pendingCheques: formatRial(a.summary.pendingCheques), balanceAfterCheques: formatRial(a.summary.balanceAfterCheques), waitingReview: a.summary.reported ? formatRial(a.summary.reported) : null,
+          cheques: a.payments.filter(p => p.method === 'CHEQUE' && ['PENDING', 'BOUNCED', 'REPORTED'].includes(p.status)).slice(0, 10).map(p => ({ amount: formatRial(p.amount), due: p.dueDate?.toLocaleDateString('fa-IR') ?? null, number: p.chequeNumber, status: PAY_STATUS_FA[p.status] })),
+          lastPayments: a.payments.filter(p => p.status === 'CLEARED').slice(0, 5).map(p => ({ amount: formatRial(p.amount), method: METHOD_FA[p.method], date: p.receivedAt.toLocaleDateString('fa-IR') })),
+          lastInvoices: a.invoices.filter(i => i.status === 'ISSUED').slice(0, 5).map(i => ({ number: i.number, total: formatRial(i.total), date: i.issuedAt.toLocaleDateString('fa-IR'), order: i.order?.number ?? null })),
+        });
       },
     });
     const submit = tool({
@@ -157,7 +209,7 @@ export class SalesAgentService {
     const current = draftId ? await this.ai.view(draftId, userId, customerId).catch(() => null) : null;
     const context = [
       `مشتری: ${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'بی‌نام'}${account ? ` · ${account.name}${account.isApproved ? '' : ' (حساب هنوز تأیید نشده)'}` : ' · هنوز حساب مشتری ندارد (برای اولین سفارش نام فروشگاه لازم است)'}`,
-      account?.terms ? `شرایط پرداخت: ${account.terms.cashPercent}٪ نقد` : '',
+      account?.terms ? `شرایط پرداخت: ${account.terms.cashPercent}٪ نقد${Number(account.terms.cashDiscountPct) ? ` با ${account.terms.cashDiscountPct}٪ تخفیف نقدی` : ''}${account.terms.cashPercent < 100 ? `، ${100 - account.terms.cashPercent}٪ چک${account.terms.chequeDueDays.length ? ` ${account.terms.chequeDueDays.join('/')} روزه` : ''}${Number(account.terms.chequeMarkupPct) ? ` با ${account.terms.chequeMarkupPct}٪ افزایش` : ''}` : ''}` : '',
       current?.lines.length ? `پیش‌نویس فعلی: ${current.lines.map(l => `${l.name} ${l.label} × ${l.quantity}`).join('، ')}` : 'پیش‌نویس فعلی: خالی',
       transcript ? `گفتگوی قبلی:\n${transcript}` : '',
       `پیام جدید مشتری: ${text}`,
@@ -165,7 +217,7 @@ export class SalesAgentService {
 
     let reply: string;
     try {
-      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, submit, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
+      const agent = new Agent({ name: 'iPlast sales agent', instructions: INSTRUCTIONS, tools: [search, setDraft, myOrders, orderDetail, answerProforma, myAccount, submit, toHuman], outputType: z.object({ reply: z.string() }), ...(process.env.OPENAI_MODEL ? { model: process.env.OPENAI_MODEL } : {}) });
       const r = await run(agent, context, { maxTurns: 12 });
       reply = (r.finalOutput as { reply: string }).reply.trim();
     } catch (e) {
