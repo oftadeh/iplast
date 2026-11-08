@@ -7,7 +7,7 @@ type Terms = { cashDiscountPct: string; termDiscountPct: string; termMonths: num
 interface Row { id: string; name: string; city: string | null; type: string; isApproved: boolean; createdAt: string; terms: Terms | null; support: { firstName: string | null; lastName: string | null } | null; _count: { members: number; orders: number } }
 interface Member { role: string; addedAt: string; user: { id: string; telegramId: string; firstName: string | null; lastName: string | null; username: string | null; phone: string | null; lastSeenAt: string | null } }
 interface Detail {
-  id: string; name: string; city: string | null; address: string | null; type: string; isApproved: boolean; createdAt: string;
+  id: string; name: string; city: string | null; address: string | null; type: string; isApproved: boolean; createdAt: string; creditLimit: string | null;
   terms: Terms | null;
   support: { id: string; firstName: string | null; lastName: string | null; username: string | null } | null;
   members: Member[];
@@ -103,16 +103,17 @@ function CustomerPage({ id, tab, onTab, onBack }: { id: string; tab: Tab; onTab:
 function Profile({ c, onDone }: { c: Detail; onDone: () => void }) {
   const { toast, me } = useAdmin();
   const staff = useApi<Staff[]>(me.staffRole === 'ADMIN' ? '/admin/staff' : null);
-  const init = () => ({ name: c.name, city: c.city ?? '', address: c.address ?? '', type: c.type, supportId: c.support?.id ?? '' });
+  const init = () => ({ name: c.name, city: c.city ?? '', address: c.address ?? '', type: c.type, supportId: c.support?.id ?? '', creditLimit: c.creditLimit ? fa(c.creditLimit) : '' });
   const [f, setF] = useState(init);
   const [edit, setEdit] = useState(false);
   const save = async (extra?: object) => {
-    try { await api(`/admin/customers/${c.id}`, { method: 'PATCH', body: extra ?? { ...f, supportId: f.supportId || null } }); toast('ذخیره شد'); setEdit(false); onDone(); } catch (e) { toast(err(e)); }
+    try { await api(`/admin/customers/${c.id}`, { method: 'PATCH', body: extra ?? { ...f, supportId: f.supportId || null, ...(me.staffRole === 'ADMIN' ? { creditLimit: f.creditLimit.trim() ? toEnDigits(f.creditLimit).replace(/[^\d]/g, '') : null } : { creditLimit: undefined }) } }); toast('ذخیره شد'); setEdit(false); onDone(); } catch (e) { toast(err(e)); }
   };
   if (!edit) return (
     <div className="card pad stack">
       <div className="between"><h1 style={{ fontSize: 19, margin: 0 }}>{c.name}</h1><button type="button" className="btn sm" onClick={() => { setF(init()); setEdit(true); }}>ویرایش مشخصات</button></div>
       <span className="muted small num">{TYPE_FA[c.type]}{c.city ? ` · ${c.city}` : ''}{c.address ? ` · ${c.address}` : ''} · عضویت از {dayFa(c.createdAt)}</span>
+      <span className="small">سقف اعتبار: <b className="num">{c.creditLimit ? `${fa(c.creditLimit)} ریال` : 'تعیین نشده'}</b>{c.creditLimit && <span className="muted"> (بالاتر از آن، موقع تأیید نهایی هشدار می‌گیرید)</span>}</span>
       <span className="small">کارشناس فروش: <b>{c.support ? personName(c.support) : 'تعیین نشده'}</b>{!c.support && <span className="muted"> (پیش‌فاکتورهای این مشتری برای همه‌ی کارشناسان می‌رود)</span>}</span>
       {!c.isApproved && <div className="decide" style={{ padding: 0 }}><span className="st new">هنوز تأیید نشده</span><button type="button" className="btn ok-fill sm" onClick={() => save({ isApproved: true })}>✓ تأیید مشتری</button></div>}
     </div>
@@ -128,6 +129,9 @@ function Profile({ c, onDone }: { c: Detail; onDone: () => void }) {
         <label className="stack small">شهر<input className="in" value={f.city} onChange={e => setF({ ...f, city: e.target.value })} maxLength={60} /></label>
         <label className="stack small">آدرس تحویل<input className="in" value={f.address} onChange={e => setF({ ...f, address: e.target.value })} maxLength={300} /></label>
       </div>
+      {me.staffRole === 'ADMIN' && (
+        <label className="stack small">سقف اعتبار (ریال)<input className="in num" inputMode="numeric" value={f.creditLimit} onChange={e => setF({ ...f, creditLimit: e.target.value })} placeholder="خالی = بدون سقف" /><span className="muted">اگر بدهی مشتری با سفارش جدید از این مبلغ بگذرد، موقع تأیید نهایی به شما هشدار داده می‌شود.</span></label>
+      )}
       {me.staffRole === 'ADMIN' && (
         <label className="stack small">کارشناس فروش این مشتری
           <select className="in" value={f.supportId} onChange={e => setF({ ...f, supportId: e.target.value })}>

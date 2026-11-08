@@ -10,6 +10,7 @@ interface Row {
 interface List { rows: Row[]; counts: Record<string, number> }
 interface Snapshot { cashPct?: number; termPct?: number; termMonths?: number; allowCash?: boolean; allowTerm?: boolean; categories?: Record<string, { cash?: number | null; term?: number | null }> }
 interface Detail {
+  credit?: { limit: string | null; balance: string; after: string; over: boolean };
   id: string; status: string; note: string | null; total: string; payable: string;
   discount: string; shipping: string; payMode: PayMode; termMonths: number;
   termsSnapshot: Snapshot | null; customer: { name: string; city: string | null };
@@ -272,6 +273,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
       ) : atAgent ? <div className="decide muted small">منتظر کارشناس فروش</div>
       : isAdmin ? (
         <div className="decide">
+          {dd?.credit?.over && <div className="creditwarn">⚠️ با این سفارش بدهی مشتری به <b className="num">{fa(dd.credit.after)}</b> ریال می‌رسد؛ سقف اعتبار <b className="num">{fa(dd.credit.limit!)}</b> ریال است (بدهی فعلی <span className="num">{fa(dd.credit.balance)}</span>).</div>}
           <button type="button" className="btn ok-fill" disabled={busy} onClick={() => decide('final_ok')}>✓ تأیید نهایی و صدور فاکتور</button>
           <button type="button" className="btn danger" disabled={busy} onClick={() => setMode('reject')}>✕ رد</button>
         </div>

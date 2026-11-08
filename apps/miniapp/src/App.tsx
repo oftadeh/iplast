@@ -61,6 +61,12 @@ export function App() {
       reloadMe();
       // opened from the bot's «بررسی و ثبت در سبد» button: load the assistant's draft into the cart
       // opened from the bot's «مشاهده پیش‌فاکتور» button
+      const oid = new URLSearchParams(location.search).get('o');
+      if (oid && /^[a-z0-9]{10,40}$/.test(oid)) {
+        history.replaceState(null, '', location.pathname);
+        setStack([{ name: 'home' }, { name: 'orders' }, { name: 'order', id: oid }]);
+        return;
+      }
       const pf = new URLSearchParams(location.search).get('pf');
       if (pf && /^[a-z0-9]{10,40}$/.test(pf)) {
         history.replaceState(null, '', location.pathname);

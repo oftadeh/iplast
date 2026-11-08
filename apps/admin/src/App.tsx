@@ -12,6 +12,8 @@ import { ProxyPage } from './pages/Proxy';
 import { DashboardPage } from './pages/Dashboard';
 import { ChatsPage } from './pages/Chats';
 import { AiPage } from './pages/Ai';
+import { GrowthPage } from './pages/Growth';
+import { NewOrderPage } from './pages/NewOrder';
 import { Icon } from './icons';
 
 interface Ctx { me: Me; toast: (t: string) => void; open: (section: string, id?: string) => void }
@@ -30,6 +32,7 @@ const AREAS: Area[] = [
     { id: 'orders/agent', title: 'منتظر کارشناس', roles: AS, badge: 'salesReview' },
     { id: 'orders/final', title: 'منتظر تأیید نهایی', roles: A, badge: 'finalApproval' },
     { id: 'orders/history', title: 'همه‌ی سفارش‌ها', roles: AS },
+    { id: 'orders/new', title: 'ثبت سفارش تلفنی', roles: AS },
   ] },
   { id: 'chats', title: 'گفتگوها', icon: 'chat', roles: AS, pages: [
     { id: 'chats/human', title: 'نیاز به کارشناس', roles: AS, badge: 'unansweredChats' },
@@ -44,6 +47,7 @@ const AREAS: Area[] = [
     { id: 'customers/accounts', title: 'مانده‌ی حساب‌ها', roles: AS },
     { id: 'customers/receipts', title: 'رسیدهای پرداخت', roles: AS, badge: 'reportedPayments' },
   ] },
+  { id: 'growth', title: 'جذب مشتری', icon: 'spark', roles: AS, pages: [{ id: 'growth/invite', title: 'جذب مشتری', roles: AS }] },
   { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', roles: ['ADMIN', 'WAREHOUSE'], pages: [{ id: 'warehouse/queue', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'], badge: 'warehouse' }] },
   { id: 'catalog', title: 'کاتالوگ', icon: 'box', roles: AS, pages: [
     { id: 'catalog/products', title: 'کالاها', roles: AS },
@@ -171,6 +175,8 @@ export function App() {
           {id === 'orders/agent' && <ApprovalsPage view="agent" />}
           {id === 'orders/final' && <ApprovalsPage view="final" />}
           {id === 'orders/history' && <ApprovalsPage view="hist" />}
+          {id === 'orders/new' && <NewOrderPage />}
+          {id === 'growth/invite' && <GrowthPage />}
           {id.startsWith('chats/') && <ChatsPage key={id} mode={id.slice(6) as 'human' | 'ai' | 'all'} focus={focus} onFocus={setFocus} />}
           {id === 'customers/new' && <ApprovalsPage view="customers" />}
           {id === 'customers/settings' && <CustomersPage focus={focus} onFocus={setFocus} />}

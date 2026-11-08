@@ -7,6 +7,8 @@ interface Customer { id: string; name: string; city: string | null; isApproved: 
 
 const AUD = [
   { id: 'customers', title: 'همه‌ی مشتریان', help: 'هر کس فروشگاه را در ربات باز کرده' },
+  { id: 'city', title: 'مشتریان یک شهر', help: 'پیام یا تخفیف مخصوص یک شهر' },
+  { id: 'category', title: 'خریداران یک دسته', help: 'کسانی که از آن دسته خریده‌اند' },
   { id: 'customer', title: 'یک مشتری', help: 'همه‌ی کاربرانِ یک شرکت' },
   { id: 'sales', title: 'کارشناسان فروش', help: 'همه‌ی کارشناسان فعال' },
   { id: 'staff', title: 'همه‌ی کارکنان', help: 'مدیران، کارشناسان و انبار' },
@@ -20,11 +22,14 @@ export function MessagesPage() {
   const [text, setText] = useState('');
   const [btn, setBtn] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [target, setTarget] = useState('');
   const customers = useApi<Customer[]>(aud === 'customer' ? '/admin/customers' : null);
-  const ready = aud !== 'customer' || !!cust;
-  const count = useApi<{ count: number }>(ready ? `/admin/broadcasts/count?audience=${aud}${aud === 'customer' ? `&customerId=${cust}` : ''}` : null);
+  const targets = useApi<{ cities: { city: string; n: number }[]; categories: { id: string; name: string }[] }>(aud === 'city' || aud === 'category' ? '/admin/broadcasts/targets' : null);
+  const targeted = aud === 'city' || aud === 'category';
+  const ready = (aud !== 'customer' || !!cust) && (!targeted || !!target);
+  const count = useApi<{ count: number }>(ready ? `/admin/broadcasts/count?audience=${aud}${aud === 'customer' ? `&customerId=${cust}` : ''}${targeted ? `&target=${encodeURIComponent(target)}` : ''}` : null);
   const history = useApi<Sent[]>('/admin/broadcasts');
-  const forCustomers = aud === 'customers' || aud === 'customer';
+  const forCustomers = aud !== 'sales' && aud !== 'staff';
   // counts of a message still going out are refreshed until it finishes
   const going = (history.data ?? []).some(h => h.sent + h.failed < h.recipients);
   useEffect(() => { if (!going) return; const t = setInterval(history.reload, 2500); return () => clearInterval(t); }, [going]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -34,7 +39,7 @@ export function MessagesPage() {
     if (!confirm(`این پیام برای ${fa(n)} نفر در ربات فرستاده شود؟`)) return;
     setBusy(true);
     try {
-      const r = await api<{ recipients: number }>('/admin/broadcasts', { method: 'POST', body: { audience: aud, customerId: aud === 'customer' ? cust : undefined, text, withButton: forCustomers && btn } });
+      const r = await api<{ recipients: number }>('/admin/broadcasts', { method: 'POST', body: { audience: aud, customerId: aud === 'customer' ? cust : undefined, target: targeted ? target : undefined, text, withButton: forCustomers && btn } });
       toast(`در حال ارسال برای ${fa(r.recipients)} نفر`); setText(''); history.reload();
     } catch (e) { toast(e instanceof ApiError ? e.message : 'ارسال نشد'); } finally { setBusy(false); }
   };
@@ -44,8 +49,24 @@ export function MessagesPage() {
       <div className="head"><h1>پیام و اعلان</h1></div>
       <section className="card pad stack">
         <div className="f"><span className="muted small">گیرنده</span>
-          <div className="seg2">{AUD.map(a => <button key={a.id} type="button" aria-pressed={aud === a.id} onClick={() => setAud(a.id)}><b>{a.title}</b><small>{a.help}</small></button>)}</div>
+          <div className="seg2">{AUD.map(a => <button key={a.id} type="button" aria-pressed={aud === a.id} onClick={() => { setAud(a.id); setTarget(''); }}><b>{a.title}</b><small>{a.help}</small></button>)}</div>
         </div>
+        {aud === 'city' && (
+          <label className="f"><span>شهر</span>
+            <select className="in" value={target} onChange={e => setTarget(e.target.value)}>
+              <option value="">انتخاب کنید…</option>
+              {(targets.data?.cities ?? []).map(c => <option key={c.city} value={c.city}>{c.city} ({fa(c.n)} مشتری)</option>)}
+            </select>
+          </label>
+        )}
+        {aud === 'category' && (
+          <label className="f"><span>دسته‌ی کالا</span>
+            <select className="in" value={target} onChange={e => setTarget(e.target.value)}>
+              <option value="">انتخاب کنید…</option>
+              {(targets.data?.categories ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+        )}
         {aud === 'customer' && (
           <label className="f"><span>مشتری</span>
             <select className="in" value={cust} onChange={e => setCust(e.target.value)}>
@@ -55,11 +76,11 @@ export function MessagesPage() {
           </label>
         )}
         <label className="f"><span>متن پیام</span><textarea className="in" rows={6} value={text} onChange={e => setText(e.target.value)} maxLength={3500} placeholder={forCustomers ? 'مثلاً: لیست قیمت آذر ۱۴۰۵ منتشر شد. قیمت‌های جدید در فروشگاه است.' : 'مثلاً: جلسه‌ی فروش شنبه ساعت ۱۰'} /></label>
-        {forCustomers && <label className="row small"><input type="checkbox" checked={btn} onChange={e => setBtn(e.target.checked)} /> دکمه‌ی «باز کردن فروشگاه» زیر پیام</label>}
+        {forCustomers && <label className="row small"><input type="checkbox" checked={btn} onChange={e => setBtn(e.target.checked)} /> دکمه‌ی «ورود به پنل کاربری» زیر پیام</label>}
         <div className="preview">
           <span className="muted small">پیش‌نمایش در ربات</span>
           <div className="bubble"><b>{forCustomers ? '📢 پیام اصفهان پلاست' : '📢 پیام مدیریت'}</b>{'\n\n'}{text || '…'}</div>
-          {forCustomers && btn && <div className="bubble-btn">🛒 باز کردن فروشگاه</div>}
+          {forCustomers && btn && <div className="bubble-btn">📱 ورود به پنل کاربری</div>}
         </div>
         <button type="button" className="btn primary" disabled={busy || text.trim().length < 2 || !ready || !count.data?.count} onClick={send}>
           {busy ? 'در حال ارسال…' : `ارسال برای ${count.data ? fa(count.data.count) : '…'} نفر`}

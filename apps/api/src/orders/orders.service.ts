@@ -22,6 +22,21 @@ export const STATUS_FA: Record<OrderStatus, string> = {
   DELIVERED: 'تحویل شد', REJECTED: 'رد شد', CANCELLED: 'لغو شد',
 };
 
+const STATUS_ICON: Record<OrderStatus, string> = {
+  SUBMITTED: '🧾', SALES_REVIEW: '🔎', SALES_APPROVED: '✅', NEEDS_FIX: '✏️', PROFORMA_SENT: '📄', PROFORMA_EXPIRED: '⌛',
+  CONFIRMED: '✅', PREPARING: '📦', SHIPPED: '🚚', DELIVERED: '🎉', REJECTED: '❌', CANCELLED: '⛔',
+};
+/** What happens next, told to the customer with each status change. */
+const STATUS_NEXT: Partial<Record<OrderStatus, string>> = {
+  SALES_APPROVED: 'مرحله‌ی بعد: تأیید نهایی مدیر فروش.',
+  NEEDS_FIX: 'لطفاً سفارش را اصلاح کنید یا همین‌جا به کارشناس فروش پیام بدهید.',
+  CONFIRMED: 'سفارش شما تأیید نهایی شد و برای آماده‌سازی به انبار رفت. فاکتور هم برایتان صادر می‌شود.',
+  PREPARING: 'بار شما در حال آماده‌سازی است؛ زمان ارسال را خبر می‌دهیم.',
+  SHIPPED: 'مشخصات بارنامه و راننده در صفحه‌ی سفارش است.',
+  DELIVERED: 'از خرید شما سپاسگزاریم. برای سفارش دوباره، در پنل کاربری «تکرار» را بزنید.',
+  PROFORMA_EXPIRED: 'برای تمدید، به کارشناس فروش پیام بدهید.',
+};
+
 /** Statuses in which the sales agent can still price, change, approve, send back or reject a proforma. */
 export const AGENT_OPEN: OrderStatus[] = ['SUBMITTED', 'SALES_REVIEW', 'NEEDS_FIX', 'PROFORMA_SENT', 'PROFORMA_EXPIRED'];
 
@@ -87,7 +102,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   /** Everyone on the customer's side who should hear about a proforma: who placed it and the account owners. */
   private async customerChats(orderId: string) {
     const o = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId }, include: { placedBy: true, customer: { include: { members: { where: { role: 'OWNER' }, include: { user: true } } } } } });
-    return [...new Set([String(o.placedBy.telegramId), ...o.customer.members.map(m => String(m.user.telegramId))])];
+    // an order a sales agent entered for the customer (a phone order) goes to the customer's own users, not the agent
+    return [...new Set([...(o.placedBy.staffRole ? [] : [String(o.placedBy.telegramId)]), ...o.customer.members.map(m => String(m.user.telegramId))])];
   }
 
   /** Customer accounts the user may order for (OWNER or BUYER). */
@@ -107,13 +123,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const dup = await this.prisma.order.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (dup) return this.get(userId, dup.id);
     }
-    let customerId = await this.orderableCustomer(userId, input.customerId);
+    const byStaff = channel === 'admin';
+    let customerId = byStaff ? (await this.prisma.customer.findUnique({ where: { id: req(input.customerId, 'مشتری را انتخاب کنید') } }))?.id ?? null : await this.orderableCustomer(userId, input.customerId);
+    if (byStaff && !customerId) throw new BadRequestException('مشتری پیدا نشد');
     if (!customerId) {
       const existing = await this.prisma.customerMember.count({ where: { userId } });
       if (existing) throw new BadRequestException('حساب مشتری را انتخاب کنید');
       const name = req(input.newCustomer?.name, 'نام فروشگاه یا شرکت را وارد کنید').trim().slice(0, 120);
       const c = await this.prisma.customer.create({
-        data: { name, city: input.newCustomer?.city?.slice(0, 60), members: { create: { userId, role: 'OWNER' } } },
+        data: { name, city: input.newCustomer?.city?.slice(0, 60), supportId: await this.referrerOf(userId), members: { create: { userId, role: 'OWNER' } } },
       });
       customerId = c.id;
     }
@@ -123,18 +141,41 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const q = await quote(this.prisma, lines.map(l => l.variantId), customerId, payMode, terms);
     for (const l of lines) if (!q.has(l.variantId)) throw new BadRequestException('یکی از کالاها موجود نیست');
     const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
+    // ordering from the app earns the bonus the manager set (a reason to use the app); the agent can still change it
+    const bonusPct = channel === 'miniapp' ? await this.appBonusPct() : 0;
+    const priced = lines.reduce((a, l) => a + (q.get(l.variantId)!.unitPrice ?? 0n) * BigInt(l.quantity), 0n);
+    const bonus = bonusPct > 0 ? (priced * BigInt(Math.round(bonusPct * 100))) / 10000n : 0n;
     const order = await this.prisma.order.create({
       data: {
-        customerId, placedById: userId, channel, note: input.note?.slice(0, 1000), idempotencyKey: input.idempotencyKey,
+        customerId, placedById: userId, channel, discount: bonus, note: input.note?.slice(0, 1000), idempotencyKey: input.idempotencyKey,
         priceListId: list?.id,
         termsSnapshot: terms as object, payMode, termMonths: payMode === 'TERM' ? terms.termMonths : 0,
         items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, listPrice: x.listPrice, salePct: x.own || x.listPrice === null ? null : x.pct, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
-        events: { create: { status: 'SUBMITTED', byUserId: userId } },
+        events: { create: { status: 'SUBMITTED', byUserId: userId, comment: bonus > 0n ? `تخفیف سفارش از اپ: ${bonusPct}٪` : byStaff ? 'ثبت‌شده توسط کارشناس (سفارش تلفنی)' : undefined } },
       },
       include: { items: true, customer: { include: { support: true } }, placedBy: true },
     });
     await this.notifyNewOrder(order.id);
+    if (byStaff) {
+      const kb = process.env.MINIAPP_URL ? { inline_keyboard: [[{ text: '📱 پیگیری در پنل کاربری', web_app: { url: process.env.MINIAPP_URL } }]] } : undefined;
+      for (const t of await this.customerChats(order.id))
+        await this.tg.send(t, `📝 سفارش #${order.number} شما را کارشناس فروش (${[order.placedBy.firstName, order.placedBy.lastName].filter(Boolean).join(' ') || 'اصفهان پلاست'}) ثبت کرد.\nپیش‌فاکتور قیمت‌گذاری‌شده به‌زودی برای تأیید شما می‌آید. از این به بعد می‌توانید خودتان هم از پنل کاربری سفارش دهید${(await this.appBonusPct()) > 0 ? ` و ${await this.appBonusPct()}٪ تخفیف بیشتر بگیرید` : ''}.`, kb);
+      return this.get(userId, order.id, true);
+    }
     return this.get(userId, order.id);
+  }
+
+  /** The extra discount (percent) for orders placed in the app, set by the manager; 0 when off. */
+  async appBonusPct() {
+    const v = (await this.prisma.setting.findUnique({ where: { key: 'sale.appBonusPct' } }))?.value;
+    const n = Number(v ?? 0);
+    return Number.isFinite(n) && n > 0 && n <= 20 ? n : 0;
+  }
+
+  /** The active sales agent whose invite link brought this user in, to become the new customer's agent. */
+  private async referrerOf(userId: string) {
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { referredBy: { select: { id: true, isActive: true, staffRole: true } } } });
+    return u?.referredBy?.isActive && u.referredBy.staffRole ? u.referredBy.id : null;
   }
 
   orderTotal(items: { quantity: number; unitPrice: bigint | null }[]) {
@@ -151,14 +192,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
   private admins() { return this.prisma.user.findMany({ where: { staffRole: 'ADMIN', isActive: true } }); }
 
-  private async orderText(orderId: string, head: string) {
+  private async orderText(orderId: string, head: string, forCustomer = false) {
     const o = await this.prisma.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true, customer: true, placedBy: true } });
     const b = this.breakdown(o);
     const inq = o.items.filter(i => i.unitPrice === null).length;
     const who = [o.placedBy.firstName, o.placedBy.lastName].filter(Boolean).join(' ') || `کاربر ${o.placedBy.telegramId}`;
     const lines = o.items.slice(0, 40).map((i, n) => `${n + 1}. ${i.title} — ${i.packs ? `${i.packs} بسته (${i.quantity})` : i.quantity}${i.unitPrice === null ? ' — استعلامی' : ` × ${formatRial(i.unitPrice)}`}`);
     if (o.items.length > 40) lines.push(`… و ${o.items.length - 40} قلم دیگر`);
-    return { o, b, text: `${head} #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی، قیمت را کارشناس می‌گذارد)` : ''}\n${breakdownText(b)}${o.note ? `\nتوضیح: ${o.note}` : ''}` };
+    const top = forCustomer ? `${head} #${o.number}\n${o.customer.name}` : `${head} #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}`;
+    return { o, b, text: `${top}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی، قیمت را کارشناس می‌گذارد)` : ''}\n${breakdownText(b)}${o.note ? `\nتوضیح: ${o.note}` : ''}` };
   }
 
   /** Step 1: the customer's sales agent gets the proforma with approve / reject buttons (handled by the bot). */
@@ -230,13 +272,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       });
       if (askCustomer) {
         await this.prisma.order.update({ where: { id: orderId }, data: { status: 'PROFORMA_SENT', events: { create: { status: 'PROFORMA_SENT', byUserId, comment: note } } } });
-        const { text } = await this.orderText(orderId, `🧾 پیش‌فاکتور نهایی (نسخه ${pf.version})`);
+        const { text } = await this.orderText(orderId, `📄 پیش‌فاکتور نهایی (نسخه ${pf.version})`, true);
         const kb = { inline_keyboard: [
           ...(process.env.MINIAPP_URL ? [[{ text: '📄 مشاهده پیش‌فاکتور', web_app: { url: `${process.env.MINIAPP_URL}?pf=${orderId}` } }]] : []),
           [{ text: '✅ تأیید پیش‌فاکتور', callback_data: `pf:${orderId}:ok` }, { text: '✏️ تغییر می‌خواهم', callback_data: `pf:${orderId}:no` }],
         ] };
         const until = expiresAt.toLocaleString('fa-IR', { dateStyle: 'short', timeStyle: 'short' });
-        for (const t of await this.customerChats(orderId)) await this.tg.send(t, `${text}${note ? `\nتوضیح کارشناس: ${note}` : ''}\n\nکارشناس فروش قیمت‌ها را نهایی کرده است. لطفاً تا ${until} تأیید کنید؛ بعد از آن پیش‌فاکتور منقضی می‌شود.`, kb);
+        for (const t of await this.customerChats(orderId)) await this.tg.send(t, `${text}${note ? `\n💬 توضیح کارشناس: ${note}` : ''}\n\n✅ کارشناس فروش قیمت‌ها را نهایی کرد. لطفاً تا ${until} تأیید کنید یا تغییر بخواهید؛ بعد از آن پیش‌فاکتور منقضی می‌شود.`, kb);
         return { status: 'PROFORMA_SENT' as OrderStatus };
       }
       await this.setStatus(byUserId, orderId, 'SALES_APPROVED', note);
@@ -334,8 +376,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private async toManagers(orderId: string, head: string, note: string | undefined, exceptUserId?: string) {
     const { o, text } = await this.orderText(orderId, head);
     const kb = { inline_keyboard: [[{ text: '✅ تأیید نهایی', callback_data: `os:${o.id}:final_ok` }, { text: '❌ رد', callback_data: `os:${o.id}:reject` }]] };
-    for (const a of await this.admins()) if (a.id !== exceptUserId) await this.tg.send(a.telegramId, `${text}${note ? `\nتوضیح: ${note}` : ''}`, kb);
+    const c = await this.credit(o.customerId, this.breakdown(o).total);
+    const warn = c.over ? `\n\n⚠️ بالاتر از سقف اعتبار: بدهی فعلی ${formatRial(c.balance)}، با این سفارش ${formatRial(c.after)}؛ سقف ${formatRial(c.limit!)}` : '';
+    for (const a of await this.admins()) if (a.id !== exceptUserId) await this.tg.send(a.telegramId, `${text}${note ? `\nتوضیح: ${note}` : ''}${warn}`, kb);
     await this.tg.sms(`اصفهان پلاست: پیش‌فاکتور ${o.number} (${o.customer.name}) منتظر تأیید نهایی شماست.`);
+  }
+
+  /** What the customer owes (issued invoices − cleared payments), their credit limit, and whether this order goes over it. */
+  async credit(customerId: string, orderTotal = 0n) {
+    const [c, inv, paid] = await Promise.all([
+      this.prisma.customer.findUnique({ where: { id: customerId }, select: { creditLimit: true } }),
+      this.prisma.invoice.aggregate({ where: { customerId, status: 'ISSUED' }, _sum: { total: true } }),
+      this.prisma.payment.aggregate({ where: { customerId, status: 'CLEARED' }, _sum: { amount: true } }),
+    ]);
+    const balance = (inv._sum.total ?? 0n) - (paid._sum.amount ?? 0n);
+    const limit = c?.creditLimit ?? null;
+    return { limit, balance, after: balance + orderTotal, over: limit !== null && balance + orderTotal > limit };
   }
 
   /** The customer accepts the final proforma (mini app or bot button), or asks for a change. */
@@ -380,8 +436,33 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const o = await this.prisma.order.findUnique({ where: { id }, include: { placedBy: true } });
     if (!o) throw new NotFoundException();
     await this.prisma.order.update({ where: { id }, data: { status, events: { create: { status, byUserId, comment } } } });
-    await this.tg.send(o.placedBy.telegramId, `وضعیت سفارش #${o.number}: ${STATUS_FA[status]}${comment ? `\nتوضیح: ${comment}` : ''}`);
+    const msg = `${STATUS_ICON[status]} سفارش #${o.number}\n${STATUS_FA[status]}${comment ? `\n💬 ${comment}` : ''}${STATUS_NEXT[status] ? `\n\n${STATUS_NEXT[status]}` : ''}`;
+    const kb = process.env.MINIAPP_URL ? { inline_keyboard: [[{ text: '📱 مشاهده سفارش', web_app: { url: `${process.env.MINIAPP_URL}?o=${id}` } }]] } : undefined;
+    // a phone order entered by an agent: tell the customer, not the agent
+    if (o.placedBy.staffRole) for (const t of await this.customerChats(id)) await this.tg.send(t, msg, kb);
+    else await this.tg.send(o.placedBy.telegramId, msg, kb);
     return { before: o.status, number: o.number };
+  }
+
+  /** «سفارش دوباره»: the lines of an earlier order, at today's prices, ready to put in the mini app cart. */
+  async reorder(userId: string, id: string) {
+    const o = await this.get(userId, id);
+    const ids = [...new Set(o.items.map(i => i.variantId))];
+    const q = await quote(this.prisma, ids, o.customerId, o.payMode);
+    const vs = await this.prisma.variant.findMany({
+      where: { id: { in: ids }, isActive: true, family: { isActive: true } },
+      include: { options: true, family: { include: { axes: { orderBy: { sortOrder: 'asc' } }, media: { where: { isPrimary: true }, take: 1 } } } },
+    });
+    const lines = o.items.flatMap(i => {
+      const v = vs.find(x => x.id === i.variantId);
+      if (!v) return [];
+      const f = v.family;
+      const label = f.axes.length ? f.axes.map(a => v.options.find(x => x.axisId === a.id)?.value ?? '').filter(Boolean).join(' × ') : v.title;
+      const price = q.get(v.id)?.unitPrice ?? null;
+      const byPack = !!i.packs && !!v.perPack && i.quantity === i.packs * v.perPack;
+      return [{ variantId: v.id, slug: f.slug, name: f.name, label, photo: f.media[0] ? '/' + f.media[0].key : null, perPack: v.perPack, packName: f.packName, unitName: f.unitName, price: price === null ? null : price.toString(), n: byPack ? i.packs! : i.quantity, mode: byPack ? 'pack' : 'unit' }];
+    });
+    return { number: o.number, lines, missing: o.items.length - lines.length };
   }
 
   /** OWNER sees every order of the company, BUYER only their own. Staff see all. */

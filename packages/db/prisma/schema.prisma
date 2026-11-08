@@ -220,6 +220,10 @@ model User {
   ordersPlaced Order[]          @relation("PlacedBy")
   createdAt    DateTime         @default(now())
   lastSeenAt   DateTime?
+  refCode      String?          @unique // a staff member's invite code: t.me/<bot>?start=ref_<code>
+  referredById String? // the staff member whose invite link brought this user in
+  referredBy   User?            @relation("Referral", fields: [referredById], references: [id])
+  referrals    User[]           @relation("Referral")
 }
 
 enum CustomerType {
@@ -249,6 +253,7 @@ model Customer {
   payments          Payment[]
   documents         Document[]
   categoryDiscounts CustomerCategoryDiscount[]
+  creditLimit       BigInt? // most the customer may owe (Rial); the manager is warned at final approval above it
   createdAt         DateTime                   @default(now())
 }
 

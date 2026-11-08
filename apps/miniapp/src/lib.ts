@@ -3,7 +3,12 @@ import { tg } from './telegram';
 
 // ───────── formatting ─────────
 const nf = new Intl.NumberFormat('fa-IR');
-export const fa = (n: number | bigint | string) => nf.format(typeof n === 'string' ? BigInt(n) : n);
+export const faDigits = (s: string) => s.replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[+d]);
+/** A number with Persian digits and grouping; a string that is not a whole number is shown with Persian digits as it is. */
+export const fa = (n: number | bigint | string) => {
+  if (typeof n !== 'string') return nf.format(n);
+  try { return nf.format(BigInt(n)); } catch { return faDigits(n); }
+};
 export const toBig = (s: string | null | undefined) => (s === null || s === undefined ? null : BigInt(s));
 export function short(n: bigint) {
   const x = Number(n);
@@ -33,7 +38,7 @@ export interface Account {
 }
 export type PayMode = 'CASH' | 'TERM';
 export interface Sale { modes: PayMode[]; cashPct: number; termPct: number; termMonths: number; categories: Record<string, { name: string; cash: number; term: number }> }
-export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; accounts: Account[] }
+export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; appBonusPct?: number; accounts: Account[] }
 export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice?: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
 export interface Order {
   id: string; number: number; status: string; statusFa: string; createdAt: string; note: string | null; total: string;

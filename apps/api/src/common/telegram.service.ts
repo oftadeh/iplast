@@ -4,6 +4,18 @@ import { Injectable, Logger } from '@nestjs/common';
 @Injectable()
 export class TelegramService {
   private readonly log = new Logger('Telegram');
+  private botName: string | null = process.env.BOT_USERNAME || null;
+
+  /** The bot's @username (for t.me links), from BOT_USERNAME or Telegram's getMe. */
+  async username(): Promise<string> {
+    if (this.botName) return this.botName;
+    const token = process.env.BOT_TOKEN;
+    try {
+      const j = await fetch(`https://api.telegram.org/bot${token}/getMe`).then(r => r.json()) as { ok?: boolean; result?: { username?: string } };
+      if (j?.ok && j.result?.username) this.botName = j.result.username;
+    } catch { /* offline: fall back below */ }
+    return this.botName ?? 'iplast_sellerbot';
+  }
 
   async send(chatId: bigint | number | string, text: string, replyMarkup?: object): Promise<boolean> {
     const token = process.env.BOT_TOKEN;

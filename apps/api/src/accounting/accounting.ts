@@ -217,7 +217,7 @@ export class AccountingService {
     });
     await audit(this.prisma, byUserId, 'invoice.issue', 'Invoice', inv.id, null, { orderId: o.id, total: inv.total.toString() });
     const to = new Set([String(o.placedBy.telegramId), ...o.customer.members.map(m => String(m.user.telegramId))]);
-    for (const t of to) await this.tg.send(t, `🧾 فاکتور ${inv.number} برای سفارش #${o.number} صادر شد.\nمبلغ: ${formatRial(inv.total)}\nجزئیات و مانده‌ی حساب: مینی‌اپ ← حساب من`);
+    for (const t of to) await this.tg.send(t, `🧾 فاکتور ${inv.number} برای سفارش #${o.number} صادر شد.\nمبلغ: ${formatRial(inv.total)}\nجزئیات و مانده‌ی حساب: پنل کاربری ← حساب و فاکتورها`);
     return this.invoice(inv.id);
   }
 

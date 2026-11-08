@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useApp } from './App';
 import { Icon } from './icons';
 import { ApiError, Order, api, fa, payModeFa, personName, useApi } from './lib';
-import { haptic } from './telegram';
+import { haptic, tg } from './telegram';
 
 const ONES = ['', 'یک', 'دو', 'سه', 'چهار', 'پنج', 'شش', 'هفت', 'هشت', 'نه'];
 const TEENS = ['ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'شانزده', 'هفده', 'هجده', 'نوزده'];
@@ -41,9 +41,12 @@ type Doc = Order & {
  * The customer's proforma as a document: letterhead, number and dates, buyer, lines with list price, discount and
  * net price, totals with the amount in words, payment terms and validity. The customer accepts it here.
  */
-export function ProformaScreen({ id }: { id: string }) {
-  const { toast } = useApp();
-  const o = useApi<Doc>(`/orders/${encodeURIComponent(id)}`);
+export function ProformaScreen({ id, token }: { id?: string; token?: string }) {
+  const app = useApp() as ReturnType<typeof useApp> | null;
+  const toast = app?.toast ?? ((t: string) => alert(t));
+  const pub = !!token;
+  const o = useApi<Doc>(pub ? `/public/proforma/${encodeURIComponent(token!)}` : `/orders/${encodeURIComponent(id!)}`);
+  const [sharing, setSharing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
   const [text, setText] = useState('');
@@ -60,6 +63,22 @@ export function ProformaScreen({ id }: { id: string }) {
   const final = !!pf && ['PROFORMA_SENT', 'SALES_APPROVED', 'CONFIRMED', 'PREPARING', 'SHIPPED', 'DELIVERED'].includes(d.status);
   const due = new Date(new Date(issued).getTime() + months * 30 * 86400000);
   const support = d.customer.support ? personName(d.customer.support) : null;
+  const inTelegram = !!tg()?.initData;
+  /** A read-only link to this proforma, for the customer's accountant or to print as PDF in a browser. */
+  const share = async (how: 'send' | 'open') => {
+    setSharing(true);
+    try {
+      const { url } = await api<{ url: string }>(`/orders/${d.id}/share`, { method: 'POST' });
+      const w = tg() as unknown as { openTelegramLink?: (u: string) => void; openLink?: (u: string) => void } | null;
+      if (how === 'send') {
+        const msg = `پیش‌فاکتور شماره ${d.number} اصفهان پلاست`;
+        if (w?.openTelegramLink) w.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(msg)}`);
+        else if (navigator.share) await navigator.share({ title: msg, url }).catch(() => {});
+        else { await navigator.clipboard?.writeText(url); toast('لینک کپی شد'); }
+      } else if (w?.openLink) w.openLink(url);
+      else window.open(url, '_blank');
+    } catch (e) { toast(e instanceof ApiError ? e.message : 'لینک ساخته نشد'); } finally { setSharing(false); }
+  };
   const send = async (ok: boolean) => {
     setBusy(true);
     try {
@@ -142,7 +161,7 @@ export function ProformaScreen({ id }: { id: string }) {
         </footer>
       </article>
 
-      {d.status === 'PROFORMA_SENT' && (
+      {!pub && d.status === 'PROFORMA_SENT' && (
         <div className="pf-act">
           {asking ? (
             <>
@@ -157,7 +176,16 @@ export function ProformaScreen({ id }: { id: string }) {
           )}
         </div>
       )}
-      {!(window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData && <div className="pf-act"><button type="button" className="cta ghost" onClick={() => print()}>چاپ / ذخیره PDF</button></div>}
+      <div className="pf-act">
+        {!pub && <div className="btns">
+          <button type="button" className="cta ghost" disabled={sharing} onClick={() => share('send')}>📤 ارسال برای حسابدار</button>
+          {inTelegram
+            ? <button type="button" className="cta ghost" disabled={sharing} onClick={() => share('open')}>🖨 PDF و چاپ</button>
+            : <button type="button" className="cta ghost" onClick={() => print()}>🖨 چاپ / ذخیره PDF</button>}
+        </div>}
+        {pub && <button type="button" className="cta" onClick={() => print()}>🖨 چاپ / ذخیره PDF</button>}
+        {!pub && <small className="pf-hint">لینک پیش‌فاکتور فقط‌خواندنی است و ۱۴ روز اعتبار دارد.</small>}
+      </div>
     </>
   );
 }
