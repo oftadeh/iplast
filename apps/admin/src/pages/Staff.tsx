@@ -97,6 +97,17 @@ export function StaffPage() {
           <button type="button" className="btn primary" disabled={!/^\d{4,}$/.test(toEnDigits(oTg.trim()))} onClick={transfer}>انتقال مدیریت</button>
         </section>
       )}
+      {iAmOwner && (
+        <section className="card pad stack">
+          <h2 style={{ margin: 0 }}>پاک کردن همه‌ی گفتگوها</h2>
+          <p className="muted small" style={{ margin: 0 }}>همه‌ی چت‌های ربات و پنل از پنل مدیریت پاک می‌شود (پیام‌های داخل تلگرام مشتری‌ها می‌ماند). یک گفتگو را هم می‌توانید از خود صفحه‌ی گفتگوها پاک کنید.</p>
+          <button type="button" className="btn ghost" style={{ color: '#b42318' }} onClick={() => {
+            const c = window.prompt('همه‌ی گفتگوها برای همیشه پاک می‌شود. برای تأیید بنویسید: پاک کن');
+            if (c === null) return;
+            run(() => api('/admin/staff/reset', { method: 'POST', body: { scope: 'chats', confirm: c } }), 'همه‌ی گفتگوها پاک شد');
+          }}>پاک کردن همه‌ی گفتگوها</button>
+        </section>
+      )}
       <p className="muted small">مشتریِ هر کارشناس را در «حساب مشتریان» ← کارت «شرایط پرداخت و کارشناس» تعیین کنید. پیام‌های مشتری در ربات به کارشناس خودش می‌رسد.</p>
     </>
   );

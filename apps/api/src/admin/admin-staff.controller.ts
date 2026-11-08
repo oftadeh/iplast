@@ -52,6 +52,39 @@ export class AdminStaffController {
     return { ok: true, owner: u.id, keepOld: !!b.keepOld };
   }
 
+  /**
+   * Clears test data before going live. scope 'chats': every conversation. scope 'all': also every customer with their
+   * orders, invoices, payments, documents and join requests, the users who are not staff, and restarts the numbering.
+   * Catalog, prices, staff and settings stay. Senior manager only, with a typed confirmation.
+   */
+  @Post('reset')
+  async reset(@Session() s: SessionClaims, @Body() b: { scope?: string; confirm?: string }) {
+    if (!(await ownerIds(this.prisma)).includes(s.tg)) throw new ForbiddenException('فقط مدیر ارشد می‌تواند داده‌ها را پاک کند');
+    if ((b?.confirm ?? '').trim() !== 'پاک کن') throw new BadRequestException('برای تأیید، عبارت «پاک کن» را بنویسید');
+    const all = b.scope === 'all';
+    const p = this.prisma;
+    const counts = await p.$transaction(async tx => {
+      const chats = (await tx.conversation.deleteMany({})).count;
+      const drafts = (await tx.assistantDraft.deleteMany({})).count;
+      if (!all) return { chats, drafts };
+      await tx.document.deleteMany({});
+      const payments = (await tx.payment.deleteMany({})).count;
+      const invoices = (await tx.invoice.deleteMany({})).count;
+      const orders = (await tx.order.deleteMany({})).count;
+      await tx.joinRequest.deleteMany({});
+      const customers = (await tx.customer.deleteMany({})).count;
+      const users = (await tx.user.deleteMany({ where: { staffRole: null } })).count;
+      await tx.setting.deleteMany({ where: { key: { startsWith: 'bot.started.' } } });
+      // real customers start at code 1001, orders and invoices at 1
+      await tx.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"Customer"', 'code'), 1000, true)`);
+      await tx.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"Order"', 'number'), 1, false)`);
+      await tx.$executeRawUnsafe(`SELECT setval(pg_get_serial_sequence('"Invoice"', 'number'), 1, false)`);
+      return { chats, drafts, payments, invoices, orders, customers, users };
+    }, { timeout: 60_000 });
+    await audit(p, s.sub, all ? 'data.reset' : 'chats.reset', 'System', 'reset', null, counts);
+    return counts;
+  }
+
   @Post()
   async add(@Session() s: SessionClaims, @Body() b: { telegramId?: string; firstName?: string; role?: string }) {
     const tg = telegramId(b?.telegramId);

@@ -352,4 +352,8 @@ await call('POST', '/api/admin/staff/owner', { telegramId: '7502', keepOld: fals
 st = await call('GET', '/api/admin/staff', null, secondTok);
 assert.ok(st.find(x => x.telegramId === '7502').owner && !st.find(x => x.telegramId === '7501').isActive);
 await call('GET', '/api/admin/dashboard', null, boss, 403); step('handed on without keeping access: the previous one is switched off at once');
+await call('POST', '/api/admin/staff/reset', { scope: 'chats', confirm: 'پاک کن' }, admin, 403); step('only the senior manager clears data');
+await call('POST', '/api/admin/staff/reset', { scope: 'chats' }, secondTok, 400); step('clearing needs the typed confirmation');
+const rs = await call('POST', '/api/admin/staff/reset', { scope: 'chats', confirm: 'پاک کن' }, secondTok);
+assert.equal(typeof rs.chats, 'number'); assert.equal(rs.orders, undefined); step('the senior manager clears all chats, orders stay');
 console.log(`\nall ${n} checks passed`);
