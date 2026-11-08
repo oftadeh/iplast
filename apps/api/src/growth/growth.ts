@@ -45,12 +45,13 @@ export class AdminGrowthController {
     const rows = [];
     for (const u of staff) rows.push({ id: u.id, name: [u.firstName, u.lastName].filter(Boolean).join(' ') || 'بی‌نام', role: u.staffRole, link: link(u.refCode ?? (await codeOf(this.prisma, u.id))), joined: u._count.referrals, customers: u._count.supportOf, me: u.id === s.sub });
     const intro = await this.prisma.setting.findUnique({ where: { key: 'bot.introVideo' } });
-    return { bot, botLink: `https://t.me/${bot}`, appBonusPct: await this.orders.appBonusPct(), intro: !!intro, staff: rows };
+    const introState = intro?.value === 'off' ? 'off' : intro ? 'custom' : 'default';
+    return { bot, botLink: `https://t.me/${bot}`, appBonusPct: await this.orders.appBonusPct(), intro: introState, staff: rows };
   }
 
   @Put()
   @Staff('ADMIN')
-  async set(@Session() s: SessionClaims, @Body() b: { appBonusPct?: string | number; clearIntro?: boolean }) {
+  async set(@Session() s: SessionClaims, @Body() b: { appBonusPct?: string | number; clearIntro?: boolean; introDefault?: boolean }) {
     if (b.appBonusPct !== undefined) {
       const n = Number(fa(b.appBonusPct) || 0);
       if (!Number.isFinite(n) || n < 0 || n > 20) throw new BadRequestException('تخفیف سفارش از اپ باید بین ۰ تا ۲۰ درصد باشد');
@@ -58,7 +59,8 @@ export class AdminGrowthController {
       await this.prisma.setting.upsert({ where: { key: 'sale.appBonusPct' }, update: { value: v }, create: { key: 'sale.appBonusPct', value: v } });
       await audit(this.prisma, s.sub, 'setting.appBonus', 'Setting', 'sale.appBonusPct', null, { value: v });
     }
-    if (b.clearIntro) await this.prisma.setting.deleteMany({ where: { key: 'bot.introVideo' } });
+    if (b.clearIntro) await this.prisma.setting.upsert({ where: { key: 'bot.introVideo' }, update: { value: 'off' }, create: { key: 'bot.introVideo', value: 'off' } });
+    if (b.introDefault) await this.prisma.setting.deleteMany({ where: { key: 'bot.introVideo' } });
     return this.get(s);
   }
 }

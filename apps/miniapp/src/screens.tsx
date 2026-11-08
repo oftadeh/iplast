@@ -59,7 +59,7 @@ export function HomeScreen() {
       <section className="hero">
         <p className="hi">{me?.firstName ? `سلام ${me.firstName}، خوش آمدید` : 'سلام، خوش آمدید'}</p>
         <h1>اصفهان پلاست</h1>
-        <p className="sub">لوله و اتصالات پلی‌اتیلن، شیرآلات و تجهیزات آبیاری · فروش عمده</p>
+        <p className="sub">تولیدکننده‌ی لوله، اتصالات و تجهیزات آبیاری · فروش مستقیم از کارخانه</p>
         {hero && <img className="photo hero-photo" src={photoUrl(hero.media[0].key)!} alt="" />}
         <div className="row">
           <button type="button" className="pill white" onClick={() => go({ name: 'catalog' })}>مشاهده محصولات</button>
@@ -71,6 +71,7 @@ export function HomeScreen() {
         <label className="search"><Icon n="search" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="نری، فیلتر دیسکی، نیوفیت…" aria-label="جست‌وجو" enterKeyHint="search" /><span className="kbd">مترادف‌ها را می‌فهمد</span></label>
       </form>
       {!!me?.appBonusPct && <div className="appbonus">🎁 سفارش از همین پنل <b className="num">{fa(me.appBonusPct)}٪</b> تخفیف بیشتر دارد.</div>}
+      <IntroCard />
       <LastOrder />
       <MyTerms />
       <div className="quick">
@@ -606,6 +607,25 @@ export function AssistantScreen() {
         {typeof MediaRecorder !== 'undefined' && <button type="button" className="icb" aria-label={rec ? 'پایان ضبط' : 'پیام صوتی'} disabled={!authed || busy} onClick={record} style={rec ? { background: 'var(--bad)', color: '#fff' } : undefined}><Icon n="mic" s={18} /></button>}
         <button type="button" className="icb send" aria-label="ارسال" disabled={!authed || busy || !text.trim()} onClick={send}><Icon n="send" s={18} /></button>
       </div>
+    </>
+  );
+}
+
+/** «آموزش در ۵۰ ثانیه»: the how-to video (ordering by voice with the smart assistant), played over the page. */
+function IntroCard() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="introcard" onClick={() => setOpen(true)}>
+        <span className="play"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z" /></svg></span>
+        <span><b>آموزش در ۵۰ ثانیه</b><small>سفارش با ویس و دستیار هوشمند، پیش‌فاکتور و پیگیری بار</small></span>
+      </button>
+      {open && (
+        <div className="videosheet" role="dialog" aria-label="ویدیوی آموزش" onClick={() => setOpen(false)}>
+          <video src={`${import.meta.env.BASE_URL}intro.mp4`} controls autoPlay playsInline onClick={e => e.stopPropagation()} />
+          <button type="button" className="close" aria-label="بستن" onClick={() => setOpen(false)}>✕</button>
+        </div>
+      )}
     </>
   );
 }
