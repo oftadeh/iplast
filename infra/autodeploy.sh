@@ -27,6 +27,7 @@ diag() {
   echo "--- disk/memory:"
   df -h / /var/lib/docker 2>/dev/null | awk 'NR==1 || !seen[$0]++'
   free -m 2>/dev/null | head -2
+  docker system df 2>/dev/null
   echo "--- postgres:"
   docker compose logs --no-color --tail 15 postgres 2>&1 | tail -n 15
   echo "--- migrate:"
@@ -37,10 +38,14 @@ free_gb() { df -BG --output=avail /var/lib/docker 2>/dev/null | tail -1 | tr -cd
 # every deploy leaves the previous images and build cache behind; when the disk runs low the database can no longer
 # write and stops answering. Only unused images and build cache are removed, never volumes (the data).
 cleanup() {
+  # unused images, and build cache older than a day (kept recent so the next build stays fast)
+  docker image prune -f >/dev/null 2>&1
+  docker builder prune -f --filter until=24h >/dev/null 2>&1
   local f; f=$(free_gb)
   if [ -n "$f" ] && [ "$f" -lt 6 ]; then
-    docker image prune -f >/dev/null 2>&1
-    docker builder prune -f --keep-storage 2GB >/dev/null 2>&1
+    # disk still low: all build cache (only slows the next build) and old system logs
+    docker builder prune -af >/dev/null 2>&1
+    journalctl --vacuum-size=200M >/dev/null 2>&1
   fi
 }
 # waits until the database answers (it may be recovering after the server ran out of memory or disk)

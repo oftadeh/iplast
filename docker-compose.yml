@@ -1,6 +1,11 @@
 # Builds run on the host network so an optional BUILD_PROXY on 127.0.0.1 (servers behind a VPN) is reachable.
+# container logs are capped (Docker keeps them forever by default and they can fill the disk)
+x-logging: &logging
+  logging: { driver: json-file, options: { max-size: "20m", max-file: "3" } }
+
 services:
   postgres:
+    <<: *logging
     image: postgres:16
     restart: unless-stopped
     environment:
@@ -14,11 +19,13 @@ services:
       retries: 10
 
   redis:
+    <<: *logging
     image: redis:7
     restart: unless-stopped
     volumes: [redisdata:/data]
 
   migrate:
+    <<: *logging
     build: { network: host, context: ., dockerfile: infra/Dockerfile.node, args: { APP: api, HTTPS_PROXY: "${BUILD_PROXY:-}", HTTP_PROXY: "${BUILD_PROXY:-}", https_proxy: "${BUILD_PROXY:-}", http_proxy: "${BUILD_PROXY:-}" } }
     env_file: .env
     # a failed database update must not take the site down: the API starts on the old tables and sends the error to
@@ -27,6 +34,7 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
 
   api:
+    <<: *logging
     build: { network: host, context: ., dockerfile: infra/Dockerfile.node, args: { APP: api, HTTPS_PROXY: "${BUILD_PROXY:-}", HTTP_PROXY: "${BUILD_PROXY:-}", https_proxy: "${BUILD_PROXY:-}", http_proxy: "${BUILD_PROXY:-}" } }
     restart: unless-stopped
     env_file: .env
@@ -38,6 +46,7 @@ services:
       redis: { condition: service_started }
 
   bot:
+    <<: *logging
     build: { network: host, context: ., dockerfile: infra/Dockerfile.node, args: { APP: bot, HTTPS_PROXY: "${BUILD_PROXY:-}", HTTP_PROXY: "${BUILD_PROXY:-}", https_proxy: "${BUILD_PROXY:-}", http_proxy: "${BUILD_PROXY:-}" } }
     restart: unless-stopped
     env_file: .env
@@ -46,6 +55,7 @@ services:
 
   # mini app (/) + admin panel (/admin/) + API behind HTTPS on SITE_HOST
   web:
+    <<: *logging
     build: { network: host, context: ., dockerfile: infra/Dockerfile.web, args: { HTTPS_PROXY: "${BUILD_PROXY:-}", HTTP_PROXY: "${BUILD_PROXY:-}", https_proxy: "${BUILD_PROXY:-}", http_proxy: "${BUILD_PROXY:-}" } }
     restart: unless-stopped
     # SITE_ADDR=":80" when another web server on this machine already owns ports 80/443 and forwards here
@@ -57,6 +67,7 @@ services:
   # outbound V2Ray proxy for servers that reach Telegram/OpenAI only through a VPN (see infra/proxy).
   # Enabled with COMPOSE_PROFILES=proxy; api/bot then use HTTPS_PROXY=http://proxy:10809.
   proxy:
+    <<: *logging
     image: node:22-bookworm-slim
     profiles: [proxy]
     restart: unless-stopped
