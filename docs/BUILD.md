@@ -245,8 +245,8 @@ docker compose run --rm api node node_modules/@iplast/db/dist/seed.js
 | ربات جواب نمی‌دهد | `docker compose logs --tail 50 bot`. خطای `ECONNRESET` یعنی پراکسی کار نمی‌کند: `docker compose logs proxy`، `systemctl status iplast-proxy` و وضعیت در پنل ← «پراکسی سرور» |
 | `x509: unknown authority` در لاگ proxy | mount `/etc/ssl/certs` در `docker-compose.yml` |
 | deploy انجام نمی‌شود | `journalctl -u iplast-autodeploy -n 50` و `/var/log/iplast-deploy.log`. `git fetch` به پراکسی میزبان نیاز دارد |
-| سایت باز نمی‌شود | `curl -sI http://172.17.0.1:8088` (کانتینر web)، بعد Caddy مشترک: `docker logs --tail 50 niva-panel-proxy-1` |
-| Caddy تغییر Caddyfile را نمی‌بیند | فایل bind-mount است و inode آن عوض شده. با stdin بارگذاری مجدد کنید: `docker exec -i niva-panel-proxy-1 caddy reload --adapter caddyfile --config /dev/stdin < /opt/niva/deploy/panel-ip.Caddyfile` |
+| سایت باز نمی‌شود | `curl -sI http://172.17.0.1:8088` (کانتینر web)، بعد پروکسی جلو: `docker logs --tail 50 iplast-front` |
+| تغییر تنظیمات پروکسی جلو | `/opt/iplast-front/Caddyfile` را ویرایش و بارگذاری کنید: `docker exec iplast-front caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile` (این پروکسی با `infra/front/install.sh` جای Caddy قدیمی نیوا را گرفت و keyfitapp.ir را هم سرو می‌کند) |
 | گواهی تمدید نشد | `journalctl -u iplast-tls -n 50`. توکن Cloudflare باید معتبر باشد |
 | پشتیبان‌گیری | `/opt/iplast-backups/<آخرین>/backup.log` و `journalctl -u iplast-backup -n 30` |
 | از خارج ایران باز نمی‌شود | طبیعی است: سرور فقط از داخل ایران در دسترس است. کاربر با VPN ممکن است نتواند وصل شود |

@@ -94,6 +94,8 @@ git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
 # host tools that live outside the repo: this script itself and the daily backup timer
 install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy 2>/dev/null || true
+# the server's own front proxy for ports 80/443 (moves the sites off the old niva Caddy once; see the script)
+bash infra/front/install.sh >>/var/log/iplast-front.log 2>&1 || notify "⚠️ جابه‌جایی پروکسی جلوی سایت انجام نشد و پروکسی قبلی دوباره روشن شد؛ جزئیات: /var/log/iplast-front.log"
 grep -q 'Fri' /etc/systemd/system/iplast-backup.timer 2>/dev/null || bash infra/backup.sh --install >/dev/null 2>&1 || true
 # servers that use the outbound proxy (see infra/proxy): keep its host tools current
 if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi

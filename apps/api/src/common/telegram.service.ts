@@ -6,6 +6,36 @@ export class TelegramService {
   private readonly log = new Logger('Telegram');
   private botName: string | null = process.env.BOT_USERNAME || null;
 
+  /**
+   * A Bot API call that survives a short outage: the server reaches Telegram through a proxy that sometimes drops a
+   * connection. A dropped connection and 5xx are retried after 1 s and 3 s; a 429 waits for Telegram's retry_after
+   * (≤10 s). A 4xx (blocked bot, bad chat id) is final, and so is a 15 s timeout (Telegram is unreachable: retrying
+   * would only keep the person in the panel waiting).
+   */
+  private async call(url: string, init: RequestInit): Promise<Response> {
+    let last: unknown;
+    const tries = process.env.NODE_ENV === 'test' ? 1 : 3;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 1000 : 3000));
+      try {
+        const r = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
+        if (r.status === 429) {
+          const j = await r.clone().json().catch(() => null) as { parameters?: { retry_after?: number } } | null;
+          const wait = Math.min(j?.parameters?.retry_after ?? 3, 10);
+          await new Promise(res => setTimeout(res, wait * 1000));
+          last = r; continue;
+        }
+        if (r.status >= 500) { last = r; continue; }
+        return r;
+      } catch (e) {
+        last = e;
+        if ((e as Error).name === 'TimeoutError') break;
+      }
+    }
+    if (last instanceof Response) return last;
+    throw last;
+  }
+
   /** The bot's @username (for t.me links), from BOT_USERNAME or Telegram's getMe. */
   async username(): Promise<string> {
     if (this.botName) return this.botName;
@@ -21,7 +51,7 @@ export class TelegramService {
     const token = process.env.BOT_TOKEN;
     if (!token) return false;
     try {
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const r = await this.call(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: String(chatId), text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
@@ -39,7 +69,7 @@ export class TelegramService {
     const token = process.env.BOT_TOKEN;
     if (!token) return null;
     try {
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const r = await this.call(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: String(chatId), text }),
       });
@@ -79,7 +109,7 @@ export class TelegramService {
       fd.append('caption', caption.slice(0, 1000));
       if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
       fd.append('photo', new Blob([photo]), filename);
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: fd });
+      const r = await this.call(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: fd });
       if (!r.ok) this.log.warn(`sendPhoto ${r.status}`);
       return r.ok;
     } catch (e) {
@@ -99,7 +129,7 @@ export class TelegramService {
       fd.append('caption', caption.slice(0, 1000));
       if (replyMarkup) fd.append('reply_markup', JSON.stringify(replyMarkup));
       fd.append('document', new Blob([file], { type: mime }), filename);
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: fd });
+      const r = await this.call(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: fd });
       if (!r.ok) this.log.warn(`sendDocument ${r.status}`);
       return r.ok;
     } catch (e) {
