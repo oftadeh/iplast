@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Backup of an iPlast server: database, uploaded photos and server settings.
+# Weekly backup of an iPlast server: database, uploaded files (photos, documents, price-list PDFs) and server settings.
 #   sudo bash /opt/iplast/infra/backup.sh            take a backup now
-#   sudo bash /opt/iplast/infra/backup.sh --install  install the daily timer (03:30) and take a first backup
-# Backups go to /opt/iplast-backups/<date>/ (root only) and the newest KEEP (default 14) are kept.
-# The database dump is also sent to the first admin in Telegram via the bot (BACKUP_TELEGRAM=0 in .env turns
-# this off), so a copy lives off the server. .env holds secrets and is never sent; it stays on the server.
+#   sudo bash /opt/iplast/infra/backup.sh --install  install the weekly timer (Friday 03:30) and take a first backup
+# Backups go to /opt/iplast-backups/<date>/ (root only) and the newest KEEP (default 8, two months) are kept.
+# One archive with all the data (database + uploads) is also sent to the senior manager in Telegram, split into
+# parts under Telegram's 50 MB limit (BACKUP_TELEGRAM=0 in .env turns this off), so a copy lives off the server.
+# That is the only message the backup sends. .env holds secrets and is never sent; it stays on the server.
 # Restore: see docs/BUILD.md, section «بازگردانی پشتیبان».
 set -uo pipefail
 DIR=/opt/iplast
@@ -22,9 +23,9 @@ ExecStart=/bin/bash $SELF
 UNIT
   cat > /etc/systemd/system/iplast-backup.timer <<UNIT
 [Unit]
-Description=Daily iPlast backup
+Description=Weekly iPlast backup
 [Timer]
-OnCalendar=*-*-* 03:30:00
+OnCalendar=Fri *-*-* 03:30:00
 Persistent=true
 [Install]
 WantedBy=timers.target
@@ -41,7 +42,7 @@ fi
 cd "$DIR" || exit 1
 set -a; . ./.env; set +a
 [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY
-KEEP="${BACKUP_KEEP:-14}"
+KEEP="${BACKUP_KEEP:-8}"
 STAMP=$(date +%Y-%m-%d_%H%M)
 OUT="$OUT_ROOT/$STAMP"
 umask 077
@@ -66,23 +67,31 @@ git rev-parse HEAD > "$OUT/commit.txt" 2>/dev/null
 ls -1d "$OUT_ROOT"/2* 2>/dev/null | sort | head -n -"$KEEP" | xargs -r rm -rf
 
 SIZE=$(du -sh "$OUT" | cut -f1)
-DBSIZE=$(stat -c %s "$OUT/db.sql.gz" 2>/dev/null || echo 0)
 # the senior manager: the one set in the panel after a transfer, else the first ADMIN_TELEGRAM_IDS
 owner_id() {
   local v
   v=$(cd /opt/iplast 2>/dev/null && timeout 15 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT value->>0 FROM \"Setting\" WHERE key='owner.telegramIds'" 2>/dev/null | tr -cd '0-9')
   echo "${v:-${ADMIN_TELEGRAM_IDS%%,*}}"
 }
+tg() { curl -fsS -m 300 "https://api.telegram.org/bot${BOT_TOKEN}/$1" "${@:2}" >/dev/null 2>>"$LOG"; }
 ID="$(owner_id)"
-if [ -n "${BOT_TOKEN:-}" ] && [ -n "$ID" ]; then
-  if [ "$ok" = 1 ]; then CAP="🗄 iPlast backup $STAMP ($SIZE on the server, $OUT)"; else CAP="⚠️ iPlast backup $STAMP had errors, see $LOG"; fi
-  if [ "${BACKUP_TELEGRAM:-1}" != 0 ] && [ "$DBSIZE" -gt 0 ] && [ "$DBSIZE" -lt 45000000 ]; then
-    curl -fsS -m 120 "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" -F "chat_id=$ID" \
-      -F "document=@$OUT/db.sql.gz;filename=iplast-db-$STAMP.sql.gz" -F "caption=$CAP" >/dev/null 2>>"$LOG" \
-      || echo "telegram upload failed" >>"$LOG"
+if [ -n "${BOT_TOKEN:-}" ] && [ -n "$ID" ] && [ "${BACKUP_TELEGRAM:-1}" != 0 ]; then
+  if [ "$ok" = 1 ]; then
+    # all the data in one archive, split into 45 MB parts (a bot may send files up to 50 MB)
+    SEND="$OUT/send"; mkdir -p "$SEND"
+    tar -C "$OUT" -cf - db.sql.gz uploads.tar.gz commit.txt SHA256SUMS 2>>"$LOG" | split -b 45M -d -a 2 - "$SEND/iplast-backup-$STAMP.tar.part"
+    PARTS=$(ls -1 "$SEND" | wc -l)
+    i=0
+    for f in "$SEND"/*; do
+      i=$((i + 1))
+      CAP="🗄 پشتیبان هفتگی iPlast ($STAMP): دیتابیس و همه‌ی فایل‌ها، $SIZE"
+      [ "$PARTS" -gt 1 ] && CAP="$CAP، بخش $i از $PARTS (برای بازکردن: cat iplast-backup-*.part* > backup.tar)"
+      tg sendDocument -F "chat_id=$ID" -F "document=@$f" -F "caption=$CAP" -F disable_notification=true \
+        || { echo "telegram upload failed: $f" >>"$LOG"; break; }
+    done
+    rm -rf "$SEND"
   else
-    curl -fsS -m 20 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=$ID" \
-      --data-urlencode "text=$CAP" >/dev/null 2>>"$LOG" || true
+    tg sendMessage --data-urlencode "chat_id=$ID" --data-urlencode "text=⚠️ پشتیبان هفتگی iPlast ($STAMP) کامل نشد؛ جزئیات روی سرور: $LOG" || true
   fi
 fi
 echo "backup $STAMP: $([ $ok = 1 ] && echo ok || echo 'with errors') ($SIZE) in $OUT"
