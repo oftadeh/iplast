@@ -152,8 +152,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const lines = items.map(i => ({ variantId: req(i.variantId, 'کالا نامعتبر است'), quantity: int(i.quantity, 'تعداد نامعتبر است', 1, 1_000_000), packs: i.packs === undefined ? null : int(i.packs, 'تعداد کارتن نامعتبر است', 1, 100_000) }));
     const terms = await saleTerms(this.prisma, customerId);
     const payMode = modeFor(terms, input.payMode);
-    const q = await quote(this.prisma, lines.map(l => l.variantId), customerId, payMode, terms);
-    for (const l of lines) if (!q.has(l.variantId)) throw new BadRequestException('یکی از کالاها موجود نیست');
+    const units: Record<string, number> = {};
+    for (const l of lines) units[l.variantId] = (units[l.variantId] ?? 0) + l.quantity;
+    const q = await quote(this.prisma, lines.map(l => l.variantId), customerId, payMode, terms, units);
+    for (const l of lines) {
+      const x = q.get(l.variantId);
+      if (!x) throw new BadRequestException('یکی از کالاها موجود نیست');
+      if (byStaff) continue; // a phone order entered by staff may break a pack or sell from stock not yet counted
+      if (x.stock === 0) throw new BadRequestException(`«${x.title}» فعلاً ناموجود است`);
+      // the factory ships full cartons / bags: a pack-only product is ordered in whole packs
+      if (x.packOnly && x.perPack && l.quantity % x.perPack !== 0)
+        throw new BadRequestException(`«${x.title}» فقط به‌صورت ${x.packName ?? "بسته"} کامل فروخته می‌شود (هر ${x.packName ?? "بسته"} ${x.perPack} عدد)`);
+    }
     const list = await this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
     // ordering from the app earns the bonus the manager set (a reason to use the app); the agent can still change it
     const bonusPct = channel === 'miniapp' ? await this.appBonusPct() : 0;
@@ -164,7 +174,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         customerId, placedById: userId, channel, discount: bonus, note: input.note?.slice(0, 1000), idempotencyKey: input.idempotencyKey,
         priceListId: list?.id,
         termsSnapshot: terms as object, payMode, termMonths: payMode === 'TERM' ? terms.termMonths : 0,
-        items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, listPrice: x.listPrice, salePct: x.own || x.listPrice === null ? null : x.pct, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
+        items: { create: lines.map(l => { const x = q.get(l.variantId)!; return { variantId: l.variantId, title: x.title, quantity: l.quantity, packs: l.packs, unitPrice: x.unitPrice, listPrice: x.listPrice, salePct: x.own || x.listPrice === null ? null : x.pct, specialPct: x.special && x.listPrice !== null ? x.special.pct : null, priceStatus: x.unitPrice === null ? 'INQUIRY' : 'PRICED' }; }) },
         events: { create: { status: 'SUBMITTED', byUserId: userId, comment: [old ? `اصلاح سفارش #${old.number}` : '', bonus > 0n ? `تخفیف سفارش از اپ: ${bonusPct}٪` : '', byStaff ? 'ثبت‌شده توسط کارشناس (سفارش تلفنی)' : ''].filter(Boolean).join(' · ') || undefined } },
       },
       include: { items: true, customer: { include: { support: true } }, placedBy: true },
@@ -215,7 +225,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const b = this.breakdown(o);
     const inq = o.items.filter(i => i.unitPrice === null).length;
     const who = [o.placedBy.firstName, o.placedBy.lastName].filter(Boolean).join(' ') || `کاربر ${o.placedBy.telegramId}`;
-    const lines = o.items.slice(0, 40).map((i, n) => `${n + 1}. ${i.title} — ${i.packs ? `${i.packs} بسته (${i.quantity})` : i.quantity}${i.unitPrice === null ? ' — استعلامی' : ` × ${formatRial(i.unitPrice)}`}`);
+    const lines = o.items.slice(0, 40).map((i, n) => `${n + 1}. ${i.title} — ${i.packs ? `${i.packs} بسته (${i.quantity})` : i.quantity}${i.unitPrice === null ? ' — استعلامی' : ` × ${formatRial(i.unitPrice)}`}${i.specialPct && Number(i.specialPct) > 0 ? ` ⭐ تخفیف ویژه ${toFaDigits(Number(i.specialPct))}٪` : ''}`);
     if (o.items.length > 40) lines.push(`… و ${o.items.length - 40} قلم دیگر`);
     const top = forCustomer ? `${head} #${o.number}\n${o.customer.name}` : `${head} #${o.number}\nمشتری: ${o.customer.name}\nثبت‌کننده: ${who}${o.placedBy.username ? ` (@${o.placedBy.username})` : ''}`;
     return { o, b, text: `${top}\n\n${lines.join('\n')}\n\n${o.items.length} قلم${inq ? ` (${inq} استعلامی، قیمت را کارشناس می‌گذارد)` : ''}\n${breakdownText(b)}${o.note ? `\nتوضیح: ${o.note}` : ''}` };
@@ -353,12 +363,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         await this.prisma.order.update({ where: { id: o.id }, data: { payMode: e.payMode, termMonths: months } });
         if (e.payMode !== o.payMode) {
           // reprice from the list price with the other percentage; personal prices and prices the agent typed stay
-          const q = await quote(this.prisma, o.items.map(i => i.variantId), o.customerId, e.payMode, t);
+          const units: Record<string, number> = {};
+          for (const i of o.items) units[i.variantId] = (units[i.variantId] ?? 0) + i.quantity;
+          const q = await quote(this.prisma, o.items.map(i => i.variantId), o.customerId, e.payMode, t, units);
           for (const it of o.items) {
             const x = q.get(it.variantId);
             if (!x || x.own || it.listPrice === null || it.salePct === null) continue;
             const unitPrice = netPrice(it.listPrice, x.pct);
-            await this.prisma.orderItem.update({ where: { id: it.id }, data: { unitPrice, salePct: x.pct, priceStatus: 'PRICED' } });
+            await this.prisma.orderItem.update({ where: { id: it.id }, data: { unitPrice, salePct: x.pct, specialPct: x.special?.pct ?? null, priceStatus: 'PRICED' } });
             it.unitPrice = unitPrice;
           }
         }
@@ -371,14 +383,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const it = byId.get(String(x.id));
       if (!it) throw new BadRequestException('قلم نامعتبر است');
       if (x.remove) { keep.delete(it.id); changed = true; ops.push(this.prisma.orderItem.delete({ where: { id: it.id } })); continue; }
-      const data: { quantity?: number; packs?: null; unitPrice?: bigint; priceStatus?: 'PRICED'; salePct?: null } = {};
+      const data: { quantity?: number; packs?: null; unitPrice?: bigint; priceStatus?: 'PRICED'; salePct?: null; specialPct?: null } = {};
       if (x.quantity !== undefined && x.quantity !== '') {
         const q = int(Number(String(x.quantity).replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))), `تعداد «${it.title}» نامعتبر است`, 1, 1_000_000);
         if (q !== it.quantity) { data.quantity = q; data.packs = null; }
       }
       if (x.unitPrice !== undefined && x.unitPrice !== '' && x.unitPrice !== null) {
         const p = rialOf(x.unitPrice, `قیمت «${it.title}»`);
-        if (p !== it.unitPrice) { data.unitPrice = p; data.priceStatus = 'PRICED'; data.salePct = null; }
+        if (p !== it.unitPrice) { data.unitPrice = p; data.priceStatus = 'PRICED'; data.salePct = null; data.specialPct = null; }
       }
       if (Object.keys(data).length) { changed = true; ops.push(this.prisma.orderItem.update({ where: { id: it.id }, data })); }
     }
@@ -480,7 +492,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async reorder(userId: string, id: string) {
     const o = await this.get(userId, id);
     const ids = [...new Set(o.items.map(i => i.variantId))];
-    const q = await quote(this.prisma, ids, o.customerId, o.payMode);
+    const units: Record<string, number> = {};
+    for (const i of o.items) units[i.variantId] = (units[i.variantId] ?? 0) + i.quantity;
+    const q = await quote(this.prisma, ids, o.customerId, o.payMode, undefined, units);
     const vs = await this.prisma.variant.findMany({
       where: { id: { in: ids }, isActive: true, family: { isActive: true } },
       include: { options: true, family: { include: { axes: { orderBy: { sortOrder: 'asc' } }, media: { where: { isPrimary: true }, take: 1 } } } },

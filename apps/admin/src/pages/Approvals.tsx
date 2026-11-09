@@ -14,7 +14,7 @@ interface Detail {
   id: string; status: string; note: string | null; total: string; payable: string;
   discount: string; shipping: string; payMode: PayMode; termMonths: number;
   termsSnapshot: Snapshot | null; customer: { name: string; city: string | null };
-  items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice: string | null; salePct: string | null }[];
+  items: { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice: string | null; salePct: string | null; specialPct?: string | null }[];
   events: { id: string; status: string; comment: string | null; createdAt: string }[];
   proformas: { id: string; version: number; total: string; issuedAt: string; expiresAt: string; acceptedAt: string | null; changed: boolean }[];
 }
@@ -211,7 +211,7 @@ function OrderCard({ r, onChanged, open: initiallyOpen }: { r: Row; onChanged: (
                     const l = lines[i.id];
                     return (
                       <div key={i.id} className={`pfrow ${l?.remove ? 'gone' : ''} ${i.unitPrice === null && !l?.price ? 'need' : ''}`}>
-                        <span>{i.title}{i.packs ? <small className="muted num"> · {fa(i.packs)} بسته</small> : null}{i.listPrice !== null && pv?.unit[i.id] != null && BigInt(i.listPrice) > pv.unit[i.id]! && <small className="muted num"><br />لیست {fa(i.listPrice)} · −{pctFa(Number(((BigInt(i.listPrice) - pv.unit[i.id]!) * 10000n) / BigInt(i.listPrice)) / 100)}</small>}</span>
+                        <span>{i.title}{i.packs ? <small className="muted num"> · {fa(i.packs)} بسته</small> : null}{i.specialPct && Number(i.specialPct) > 0 ? <> <span className="st special num">تخفیف ویژه {pctFa(i.specialPct)}</span></> : null}{i.listPrice !== null && pv?.unit[i.id] != null && BigInt(i.listPrice) > pv.unit[i.id]! && <small className="muted num"><br />لیست {fa(i.listPrice)} · −{pctFa(Number(((BigInt(i.listPrice) - pv.unit[i.id]!) * 10000n) / BigInt(i.listPrice)) / 100)}</small>}</span>
                         <input className="in num" inputMode="numeric" aria-label="تعداد" value={l?.qty ? grp(l.qty) : ''} placeholder={fa(i.quantity)} onChange={e => setLine(i.id, { qty: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
                         <input className="in num" inputMode="numeric" aria-label="قیمت واحد" value={l?.price ? grp(l.price) : ''} placeholder={pv?.unit[i.id] == null ? 'استعلامی — قیمت بگذارید' : fa(pv.unit[i.id]!)} onChange={e => setLine(i.id, { price: toEnDigits(e.target.value).replace(/[^\d]/g, '') })} disabled={l?.remove} />
                         <button type="button" className="btn sm" title={l?.remove ? 'برگرداندن' : 'حذف این قلم'} onClick={() => setLine(i.id, { remove: !l?.remove })}>{l?.remove ? '↺' : '✕'}</button>

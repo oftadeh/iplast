@@ -19,13 +19,13 @@ export function short(n: bigint) {
 export const photoUrl = (key?: string | null) => (key ? '/' + key.replace(/^\/+/, '') : null);
 
 // ───────── API ─────────
-export interface Category { id: string; slug: string; name: string; sortOrder: number; _count: { families: number } }
+export interface Category { id: string; slug: string; name: string; sortOrder: number; parentId?: string | null; depth?: number; _count: { families: number } }
 export interface FamilyCard {
-  id: string; slug: string; name: string; model: string | null; badge: string | null; unitName: string; packName: string | null;
+  id: string; slug: string; name: string; model: string | null; badge: string | null; unitName: string; packName: string | null; packOnly?: boolean;
   category: { slug: string; name: string }; brand: { name: string } | null; media: { key: string }[]; sizeCount: number; minPrice: string | null;
 }
 export interface Axis { id: string; name: string; unit: string | null }
-export interface Variant { id: string; sku: string; accountingCode: string | null; title: string; perPack: number | null; options: { axisId: string; value: string }[]; price: string | null }
+export interface Variant { id: string; sku: string; accountingCode: string | null; title: string; perPack: number | null; options: { axisId: string; value: string }[]; price: string | null; soldOut?: boolean }
 export interface Family extends Omit<FamilyCard, 'sizeCount' | 'minPrice'> {
   description: string | null; specs: [string, string][] | null; axes: Axis[]; variants: Variant[]; priceList: { id: string; title: string } | null;
 }
@@ -37,7 +37,9 @@ export interface Account {
   members: { id: string; firstName: string | null; lastName: string | null; username: string | null; role: string }[];
 }
 export type PayMode = 'CASH' | 'TERM';
-export interface Sale { modes: PayMode[]; cashPct: number; termPct: number; termMonths: number; categories: Record<string, { name: string; cash: number; term: number }> }
+export interface Sale { modes: PayMode[]; cashPct: number; termPct: number; termMonths: number; categories: Record<string, { name: string; cash: number; term: number; own?: boolean }> }
+/** «تخفیف ویژه» the customer can get on a product: extra points on their own % (EXTRA) or a fixed % (FIXED). */
+export interface Offer { id: string; familyId: string; slug: string; kind: 'EXTRA' | 'FIXED'; pct: number; payMode: PayMode | null; minPacks: number | null; packName: string; note: string | null; endsAt: string | null; personal: boolean }
 export interface Me { id: string; firstName: string | null; lastName: string | null; staffRole?: 'ADMIN' | 'SALES' | null; appBonusPct?: number; accounts: Account[] }
 export interface OrderItem { id: string; title: string; quantity: number; packs: number | null; unitPrice: string | null; listPrice?: string | null; priceStatus: 'PRICED' | 'INQUIRY' }
 export interface Order {
@@ -126,6 +128,8 @@ export interface CartLine {
   variantId: string; slug: string; name: string; label: string; photo: string | null;
   perPack: number | null; packName: string | null; unitName: string; price: string | null;
   n: number; mode: 'unit' | 'pack';
+  /** sold only in whole packs (the factory ships full cartons / bags) */
+  packOnly?: boolean;
 }
 export const lineUnits = (l: Pick<CartLine, 'n' | 'mode' | 'perPack'>) => (l.mode === 'pack' && l.perPack ? l.n * l.perPack : l.n);
 export const lineTotal = (l: CartLine) => (l.price === null ? null : BigInt(l.price) * BigInt(lineUnits(l)));
@@ -188,4 +192,28 @@ export const withPct = (price: bigint, pct: number) => (pct ? price - (price * B
 export function salePrices(sale: Sale | undefined, categorySlug: string | undefined, list: bigint) {
   const modes = sale?.modes ?? ['CASH'];
   return modes.map(m => ({ mode: m, pct: pctFor(sale, categorySlug, m), price: withPct(list, pctFor(sale, categorySlug, m)) }));
+}
+
+// ───────── special discounts ─────────
+/** The best «تخفیف ویژه» for a sale mode and base %: `packs` = how many packs are being ordered. Same rule as the server. */
+export function bestOffer(offers: Offer[], mode: PayMode, base: number, packs: number) {
+  let best: { offer: Offer; pct: number } | null = null, next: { offer: Offer; pct: number } | null = null;
+  for (const o of offers) {
+    if (o.payMode && o.payMode !== mode) continue;
+    const pct = Math.min(100, Math.max(base, o.kind === 'FIXED' ? o.pct : base + o.pct));
+    if (pct <= base) continue;
+    if (!o.minPacks || packs >= o.minPacks) { if (!best || pct > best.pct) best = { offer: o, pct }; }
+    else if (!next || pct > next.pct) next = { offer: o, pct };
+  }
+  if (next && best && next.pct <= best.pct) next = null;
+  return { best, next };
+}
+/** «۵٪ تخفیف بیشتر در خرید نقدی، از ۱۰۰ کارتن به بالا» */
+export function offerText(o: Offer) {
+  return [
+    o.kind === 'FIXED' ? `${fa(o.pct)}٪ تخفیف از قیمت لیست` : `${fa(o.pct)}٪ تخفیف بیشتر`,
+    o.payMode === 'CASH' ? 'در خرید نقدی' : o.payMode === 'TERM' ? 'در خرید مدت‌دار' : '',
+    o.minPacks ? `، از ${fa(o.minPacks)} ${o.packName} به بالا` : '',
+    o.endsAt ? `، تا ${new Date(o.endsAt).toLocaleDateString('fa-IR', { month: 'long', day: 'numeric' })}` : '',
+  ].filter(Boolean).join(' ').replace(' ،', '،');
 }

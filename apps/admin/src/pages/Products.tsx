@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAdmin } from '../App';
 import { ApiError, api, fa, getToken, rial, toEnDigits, useApi } from '../lib';
+import { ProductSpecials } from './Specials';
 
-interface Row { id: string; name: string; isActive: boolean; model: string | null; category: { name: string }; media: { key: string }[]; sizes: number; priced: number; inactiveSizes: number }
-interface Meta { categories: { id: string; name: string }[] }
+interface Row { id: string; name: string; isActive: boolean; model: string | null; packOnly: boolean; category: { name: string }; media: { key: string }[]; sizes: number; priced: number; inactiveSizes: number; soldOut: number; specials: number }
+interface Meta { categories: { id: string; name: string; path: string; depth: number }[] }
+const catLabel = (c: Meta['categories'][number]) => `${'\u00a0\u00a0'.repeat(c.depth)}${c.depth ? '└ ' : ''}${c.name}`;
 interface Axis { id: string; name: string; unit: string | null }
-interface Variant { id: string; title: string; accountingCode: string | null; perPack: number | null; isActive: boolean; options: Record<string, string>; price: string | null; priceStatus: 'PRICED' | 'INQUIRY' | null }
+interface Variant { id: string; title: string; accountingCode: string | null; perPack: number | null; stock: number | null; isActive: boolean; options: Record<string, string>; price: string | null; priceStatus: 'PRICED' | 'INQUIRY' | null }
 interface Product {
-  id: string; slug: string; name: string; description: string | null; model: string | null; badge: string | null; unitName: string; packName: string | null; isActive: boolean;
-  category: { id: string; name: string }; axes: Axis[]; media: { id: string; key: string; isPrimary: boolean }[]; synonyms: string[];
+  id: string; slug: string; name: string; description: string | null; model: string | null; badge: string | null; unitName: string; packName: string | null; packOnly: boolean; isActive: boolean;
+  category: { id: string; name: string; path?: string }; axes: Axis[]; media: { id: string; key: string; isPrimary: boolean }[]; synonyms: string[];
   variants: Variant[]; priceList: { id: string; title: string } | null;
 }
 
@@ -37,7 +39,7 @@ function ProductList({ onOpen }: { onOpen: (id: string) => void }) {
         <input className="in search" placeholder="نام، مترادف یا کد کالا" value={q} onChange={e => setQ(e.target.value)} />
         <select className="in" value={cat} onChange={e => setCat(e.target.value)}>
           <option value="">همه‌ی دسته‌ها</option>
-          {meta.data?.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {meta.data?.categories.map(c => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}
         </select>
       </div>
       {list.error ? <div className="err">{list.error}</div> : !list.data ? <div className="card pad muted">در حال بارگذاری…</div> : !list.data.length ? <div className="empty">کالایی پیدا نشد.</div> : (
@@ -49,7 +51,11 @@ function ProductList({ onOpen }: { onOpen: (id: string) => void }) {
                 <b>{p.name}{p.model ? <span className="muted small"> · {p.model}</span> : null}</b>
                 <span className="muted small num">{p.category.name} · {fa(p.sizes)} سایز · {p.priced === p.sizes ? 'همه قیمت‌دار' : `${fa(p.priced)} قیمت‌دار`}</span>
               </span>
-              {!p.isActive ? <span className="st gray">غیرفعال</span> : p.priced < p.sizes ? <span className="st ask">{fa(p.sizes - p.priced)} استعلامی</span> : null}
+              <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                {p.specials > 0 && <span className="st special">تخفیف ویژه</span>}
+                {p.soldOut > 0 && <span className="st no num">{fa(p.soldOut)} ناموجود</span>}
+                {!p.isActive ? <span className="st gray">غیرفعال</span> : p.priced < p.sizes ? <span className="st ask">{fa(p.sizes - p.priced)} استعلامی</span> : null}
+              </span>
             </button>
           ))}
         </div>
@@ -79,7 +85,7 @@ function NewProduct({ onDone, onCancel }: { onDone: (id: string) => void; onCanc
         <label className="f"><span>دسته‌بندی</span>
           <select className="in" value={f.categoryId} onChange={set('categoryId')}>
             <option value="">انتخاب کنید…</option>
-            {meta.data?.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {meta.data?.categories.map(c => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}
             <option value="+">+ دسته‌ی جدید</option>
           </select>
         </label>
@@ -146,16 +152,22 @@ function ProductEditor({ id, onBack }: { id: string; onBack: () => void }) {
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e => e.target.files?.[0] && photo(e.target.files[0])} />
           <div className="stack" style={{ gap: 4 }}>
             <h1 style={{ fontSize: 19 }}>{d.name}</h1>
-            <span className="muted small">{d.category.name}{!d.isActive && <span className="st gray" style={{ marginInlineStart: 6 }}>غیرفعال</span>}</span>
+            <span className="muted small">{d.category.path ?? d.category.name}{!d.isActive && <span className="st gray" style={{ marginInlineStart: 6 }}>غیرفعال</span>}</span>
           </div>
         </div>
         <fieldset disabled={!can || busy} className="stack plain">
           <label className="f"><span>نام کالا</span><input className="in" value={info.name} onChange={set('name')} /></label>
-          <label className="f"><span>دسته‌بندی</span><select className="in" value={info.categoryId} onChange={set('categoryId')}>{meta.data?.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+          <label className="f"><span>دسته‌بندی</span><select className="in" value={info.categoryId} onChange={set('categoryId')}>{meta.data?.categories.map(c => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}</select></label>
           <div className="row2">
             <label className="f"><span>واحد</span><input className="in" value={info.unitName} onChange={set('unitName')} /></label>
             <label className="f"><span>بسته‌بندی</span><input className="in" value={info.packName} onChange={set('packName')} placeholder="ندارد" /></label>
           </div>
+          {d.packName && (
+            <label className="switch" style={{ justifySelf: 'start' }}>
+              <input type="checkbox" checked={d.packOnly} onChange={e => patch({ packOnly: e.target.checked }, e.target.checked ? `از این به بعد فقط ${d.packName} کامل فروخته می‌شود` : 'فروش تکی (عددی) هم مجاز شد')} />
+              فقط {d.packName} کامل فروخته شود {d.packOnly ? '(مشتری نمی‌تواند تکی سفارش دهد)' : '(تکی هم مجاز است)'}
+            </label>
+          )}
           <label className="f"><span>مدل یا برند</span><input className="in" value={info.model} onChange={set('model')} /></label>
           <label className="f"><span>کلمات جست‌وجو (مترادف‌ها)</span><input className="in" value={info.synonyms} onChange={set('synonyms')} placeholder="نری، اتصال نر" />
             <small className="muted">دستیار سفارش و جست‌وجوی مینی‌اپ این کلمات را هم می‌شناسند.</small></label>
@@ -171,6 +183,7 @@ function ProductEditor({ id, onBack }: { id: string; onBack: () => void }) {
         {!d.variants.length && <div className="empty">هنوز سایزی تعریف نشده است.</div>}
       </div>
       {can && <AddVariant p={d} onSaved={p.setData} />}
+      <ProductSpecials familyId={d.id} />
     </>
   );
 }
@@ -180,25 +193,27 @@ function VariantRow({ v, p, can, onSaved }: { v: Variant; p: Product; can: boole
   const [price, setPrice] = useState(digits(v.price));
   const [code, setCode] = useState(v.accountingCode ?? '');
   const [pack, setPack] = useState(v.perPack ? fa(v.perPack) : '');
+  const [stock, setStock] = useState(v.stock === null ? '' : fa(v.stock));
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setPrice(digits(v.price)); setCode(v.accountingCode ?? ''); setPack(v.perPack ? fa(v.perPack) : ''); }, [v.price, v.accountingCode, v.perPack]);
+  useEffect(() => { setPrice(digits(v.price)); setCode(v.accountingCode ?? ''); setPack(v.perPack ? fa(v.perPack) : ''); setStock(v.stock === null ? '' : fa(v.stock)); }, [v.price, v.accountingCode, v.perPack, v.stock]);
   const label = p.axes.map(a => v.options[a.id]).filter(Boolean).join(' × ') || v.title;
   const priceChanged = toEnDigits(price).replace(/[,،\s٬]/g, '') !== (v.price ?? '');
-  const metaChanged = code !== (v.accountingCode ?? '') || toEnDigits(pack) !== (v.perPack ? String(v.perPack) : '');
+  const stockEn = toEnDigits(stock).replace(/[,،\s٬]/g, '');
+  const metaChanged = code !== (v.accountingCode ?? '') || toEnDigits(pack) !== (v.perPack ? String(v.perPack) : '') || stockEn !== (v.stock === null ? '' : String(v.stock));
 
   const run = async (f: () => Promise<Product>, ok: string) => {
     setBusy(true);
     try { onSaved(await f()); toast(ok); } catch (e) { toast(err(e)); } finally { setBusy(false); }
   };
   const savePrice = () => run(() => api<Product>(`/admin/products/variants/${v.id}/price`, { method: 'PUT', body: { amount: toEnDigits(price).replace(/[,،\s٬]/g, '') || null } }), `قیمت ${label} ثبت شد`);
-  const saveMeta = () => run(() => api<Product>(`/admin/products/variants/${v.id}`, { method: 'PATCH', body: { accountingCode: code, perPack: toEnDigits(pack) || null } }), 'ذخیره شد');
+  const saveMeta = () => run(() => api<Product>(`/admin/products/variants/${v.id}`, { method: 'PATCH', body: { accountingCode: code, perPack: toEnDigits(pack) || null, stock: stockEn === '' ? null : stockEn } }), 'ذخیره شد');
   const toggle = () => run(() => api<Product>(`/admin/products/variants/${v.id}`, { method: 'PATCH', body: { isActive: !v.isActive } }), v.isActive ? 'سایز غیرفعال شد' : 'سایز فعال شد');
 
   return (
     <div className={`card vrow ${v.isActive ? '' : 'off'}`}>
       <div className="between">
         <b className="num">{label}</b>
-        <span className="small">{v.price ? <b className="num">{rial(v.price)}</b> : <span className="st ask">استعلامی</span>}</span>
+        <span className="small row" style={{ gap: 4 }}>{v.stock === 0 && <span className="st no">ناموجود</span>}{v.price ? <b className="num">{rial(v.price)}</b> : <span className="st ask">استعلامی</span>}</span>
       </div>
       {can ? (
         <>
@@ -211,13 +226,15 @@ function VariantRow({ v, p, can, onSaved }: { v: Variant; p: Product; can: boole
             <label className="f"><span>کد کالا</span><input className="in num" dir="ltr" value={code} onChange={e => setCode(e.target.value)} /></label>
             <label className="f"><span>تعداد در {p.packName ?? 'بسته'}</span><input className="in num" dir="ltr" inputMode="numeric" value={pack} onChange={e => setPack(e.target.value)} /></label>
           </div>
+          <label className="f"><span>موجودی ({p.unitName}) — خالی = پیگیری نمی‌شود، ۰ = ناموجود</span><input className="in num" dir="ltr" inputMode="numeric" value={stock} onChange={e => setStock(e.target.value)} placeholder="—" />
+            {v.stock !== null && v.stock > 0 && v.perPack ? <small className="muted num">حدود {fa(Math.floor(v.stock / v.perPack))} {p.packName ?? 'بسته'}</small> : null}</label>
           <div className="row">
             {metaChanged && <button type="button" className="btn sm primary" disabled={busy} onClick={saveMeta}>ذخیره</button>}
             <button type="button" className="btn sm ghost" disabled={busy} onClick={toggle}>{v.isActive ? 'غیرفعال‌کردن این سایز' : 'فعال‌کردن'}</button>
           </div>
         </>
       ) : (
-        <span className="muted small num">کد {v.accountingCode ?? '—'} · {v.perPack ? `${fa(v.perPack)} در ${p.packName ?? 'بسته'}` : 'بدون بسته‌بندی'}</span>
+        <span className="muted small num">کد {v.accountingCode ?? '—'} · {v.perPack ? `${fa(v.perPack)} در ${p.packName ?? 'بسته'}` : 'بدون بسته‌بندی'}{v.stock !== null ? ` · موجودی ${fa(v.stock)}` : ''}</span>
       )}
     </div>
   );
@@ -225,14 +242,14 @@ function VariantRow({ v, p, can, onSaved }: { v: Variant; p: Product; can: boole
 
 function AddVariant({ p, onSaved }: { p: Product; onSaved: (p: Product) => void }) {
   const { toast } = useAdmin();
-  const empty = () => ({ options: Object.fromEntries(p.axes.map(a => [a.id, ''])) as Record<string, string>, code: '', pack: '', price: '' });
+  const empty = () => ({ options: Object.fromEntries(p.axes.map(a => [a.id, ''])) as Record<string, string>, code: '', pack: '', price: '', stock: '' });
   const [f, setF] = useState(empty);
   const [busy, setBusy] = useState(false);
   const ready = p.axes.every(a => f.options[a.id]?.trim());
   const save = async () => {
     setBusy(true);
     try {
-      onSaved(await api<Product>(`/admin/products/${p.id}/variants`, { method: 'POST', body: { options: f.options, accountingCode: f.code, perPack: toEnDigits(f.pack) || null, price: toEnDigits(f.price).replace(/[,،\s٬]/g, '') } }));
+      onSaved(await api<Product>(`/admin/products/${p.id}/variants`, { method: 'POST', body: { options: f.options, accountingCode: f.code, perPack: toEnDigits(f.pack) || null, stock: toEnDigits(f.stock).replace(/[,،\s٬]/g, '') || null, price: toEnDigits(f.price).replace(/[,،\s٬]/g, '') } }));
       setF(empty()); toast('سایز اضافه شد');
     } catch (e) { toast(err(e)); } finally { setBusy(false); }
   };
@@ -246,7 +263,10 @@ function AddVariant({ p, onSaved }: { p: Product; onSaved: (p: Product) => void 
         <label className="f"><span>کد کالا</span><input className="in num" dir="ltr" value={f.code} onChange={e => setF({ ...f, code: e.target.value })} /></label>
         <label className="f"><span>تعداد در {p.packName ?? 'بسته'}</span><input className="in num" dir="ltr" inputMode="numeric" value={f.pack} onChange={e => setF({ ...f, pack: e.target.value })} /></label>
       </div>
-      <label className="f"><span>قیمت (ریال، خالی = استعلامی)</span><input className="in num" dir="ltr" inputMode="numeric" value={f.price} onChange={e => setF({ ...f, price: e.target.value })} /></label>
+      <div className="row2">
+        <label className="f"><span>قیمت (ریال، خالی = استعلامی)</span><input className="in num" dir="ltr" inputMode="numeric" value={f.price} onChange={e => setF({ ...f, price: e.target.value })} /></label>
+        <label className="f"><span>موجودی ({p.unitName}، اختیاری)</span><input className="in num" dir="ltr" inputMode="numeric" value={f.stock} onChange={e => setF({ ...f, stock: e.target.value })} /></label>
+      </div>
       <button type="button" className="btn primary" disabled={busy || !ready} onClick={save}>افزودن سایز</button>
     </div>
   );

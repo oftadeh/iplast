@@ -31,6 +31,9 @@ assert.ok(priced && inquiry); step('priced and inquiry sizes present; inquiry pr
 
 await call('GET', '/api/me', null, null, 401); step('protected route rejects anonymous');
 const admin = await login(Number(process.env.ADMIN_ID ?? 42), 'Admin');
+// the flow below orders single units; pack-only selling is checked on its own near the end
+const inqFam = famWithInquiry.find(f => f.variants.some(v => v.id === inquiry.id));
+for (const f of [male, inqFam]) await call('PATCH', `/api/admin/products/${f.id}`, { packOnly: false }, admin);
 const owner = await login(7001, 'Owner');
 const buyer = await login(7002, 'Buyer');
 const stranger = await login(7003, 'Stranger');
@@ -56,7 +59,7 @@ await call('POST', `/api/admin/customers/${cust.customerId}/members`, { telegram
 const meB = await call('GET', '/api/me', null, buyer);
 assert.equal(meB.accounts[0].sale.cashPct, 40); assert.equal(meB.accounts[0].sale.termMonths, 3); assert.deepEqual(meB.accounts[0].sale.modes, ['CASH', 'TERM']); step('buyer sees their cash and term terms');
 const q0 = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
-assert.deepEqual(q0[priced.id], { list: priced.price, cash: net(priced.price, 40), term: net(priced.price, 30) }); step('quote gives list, cash (−40%) and term (−30%) prices');
+assert.deepEqual({ list: q0[priced.id].list, cash: q0[priced.id].cash, term: q0[priced.id].term }, { list: priced.price, cash: net(priced.price, 40), term: net(priced.price, 30) }); step('quote gives list, cash (−40%) and term (−30%) prices');
 const o2 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 10 }] }, buyer);
 assert.equal(o2.placedBy.firstName, 'Buyer'); assert.equal(o2.payMode, 'CASH'); assert.equal(o2.items[0].unitPrice, net(priced.price, 40)); assert.equal(o2.items[0].listPrice, priced.price);
 assert.equal(o2.breakdown.cash, o2.payable); assert.equal(o2.breakdown.saleDiscount, String(BigInt(priced.price) * 10n - BigInt(o2.total))); step('buyer order: cash sale at list −40%, all in cash, records who placed it');
@@ -204,7 +207,7 @@ await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body(120, ''),
 const sale1 = await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, body('۳۵٫۵', ''), admin);
 assert.equal(sale1.categories.find(c => c.id === cat.id).cash, 35.5); assert.equal(sale1.categories.find(c => c.id === cat.id).term, null); step('manager sets 35.5% cash on a category, term follows the default (Persian digits accepted)');
 const meD = await call('GET', '/api/me', null, buyer);
-assert.deepEqual(meD.accounts[0].sale.categories[male.category.slug], { name: cat.name, cash: 35.5, term: 30 }); step('customer sees the category percentages in their panel');
+assert.deepEqual(meD.accounts[0].sale.categories[male.category.slug], { name: cat.name, cash: 35.5, term: 30, own: true }); step('customer sees the category percentages in their panel');
 const q = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
 assert.equal(q[priced.id].cash, net(priced.price, 35.5)); assert.equal(q[priced.id].term, net(priced.price, 30)); step('their cash price uses the category %, term price the default');
 const o4 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 4 }] }, buyer);
@@ -356,4 +359,65 @@ await call('POST', '/api/admin/staff/reset', { scope: 'chats', confirm: 'پاک 
 await call('POST', '/api/admin/staff/reset', { scope: 'chats' }, secondTok, 400); step('clearing needs the typed confirmation');
 const rs = await call('POST', '/api/admin/staff/reset', { scope: 'chats', confirm: 'پاک کن' }, secondTok);
 assert.equal(typeof rs.chats, 'number'); assert.equal(rs.orders, undefined); step('the senior manager clears all chats, orders stay');
+// ── category tree, «تخفیف ویژه», pack-only selling, stock ──
+const mgr = secondTok;
+const cats0 = await call('GET', '/api/admin/categories', null, sales);
+const parent = cats0.find(c => c.slug === male.category.slug);
+await call('POST', '/api/admin/categories', { name: 'زیرشاخه', parentId: parent.id }, sales, 403); step('only a manager changes the category tree');
+const cats1 = await call('POST', '/api/admin/categories', { name: 'اتصالات نر و ماده', parentId: parent.id }, mgr);
+const child = cats1.find(c => c.parentId === parent.id && c.name === 'اتصالات نر و ماده');
+assert.ok(child && child.depth === 1 && child.path.includes(' › ')); step('manager adds a sub-branch under a branch');
+await call('PATCH', `/api/admin/categories/${parent.id}`, { parentId: child.id }, mgr, 400); step('a branch cannot move under its own sub-branch');
+await call('POST', `/api/admin/categories/${child.id}/families`, { familyIds: [male.id] }, mgr);
+assert.equal((await call('GET', `/api/catalog/families/${male.slug}`)).category.slug, child.slug);
+const underParent = await call('GET', `/api/catalog/families?category=${parent.slug}`);
+assert.ok(underParent.some(f => f.slug === male.slug)); step('product moved to the sub-branch; the branch still lists it');
+const pubCats = await call('GET', '/api/catalog/categories');
+assert.equal(pubCats.find(c => c.id === child.id).parentId, parent.id);
+assert.equal(pubCats.find(c => c.id === parent.id)._count.families, parent.total); step('mini app gets the tree; a branch counts its sub-branches');
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: 40, termPct: 30, termMonths: 3, categories: [{ id: parent.id, cash: 36, term: '' }] }, mgr);
+const qTree = await call('POST', '/api/me/quote', { variantIds: [priced.id] }, buyer);
+assert.equal(qTree[priced.id].cash, net(priced.price, 36));
+const meT = await call('GET', '/api/me', null, buyer);
+assert.equal(meT.accounts[0].sale.categories[child.slug].cash, 36); assert.equal(meT.accounts[0].sale.categories[child.slug].own, false); step("a branch's customer % covers its sub-branches");
+await call('PUT', `/api/admin/customers/${cust.customerId}/sale`, { cashPct: 40, termPct: 30, termMonths: 3, categories: [{ id: parent.id, cash: '', term: '' }] }, mgr);
+
+const pp = priced.perPack;
+await call('POST', '/api/admin/specials', { familyId: male.id, pct: 5 }, sales, 403); step('only a manager sets a special discount');
+await call('POST', '/api/admin/specials', { familyId: male.id, pct: 120 }, mgr, 400);
+const sp1 = await call('POST', '/api/admin/specials', { familyId: male.id, kind: 'EXTRA', pct: '۵', payMode: 'CASH', minPacks: 2, note: 'جشنواره' }, mgr);
+const offers = await call('GET', '/api/me/offers', null, buyer);
+assert.ok(offers.some(o => o.id === sp1.id && o.minPacks === 2 && o.slug === male.slug)); step('special: +5% on cash from 2 cartons; the customer sees the offer');
+const qs1 = await call('POST', '/api/me/quote', { items: [{ variantId: priced.id, quantity: pp }] }, buyer);
+assert.equal(qs1[priced.id].cash, net(priced.price, 40)); assert.equal(qs1[priced.id].cashSpecial.special, null); assert.equal(qs1[priced.id].cashSpecial.next.minPacks, 2);
+const qs2 = await call('POST', '/api/me/quote', { items: [{ variantId: priced.id, quantity: pp * 2 }] }, buyer);
+assert.equal(qs2[priced.id].cash, net(priced.price, 45)); assert.equal(qs2[priced.id].term, net(priced.price, 30)); assert.equal(qs2[priced.id].cashSpecial.special, 5);
+step('1 carton: customer % and a hint; 2 cartons: 40% + 5% on cash, term unchanged');
+const os1 = await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: pp * 2, packs: 2 }] }, buyer);
+assert.equal(os1.items[0].unitPrice, net(priced.price, 45)); assert.equal(Number(os1.items[0].specialPct), 5); assert.equal(Number(os1.items[0].salePct), 45); step('the order is priced with the special and records it');
+const sp2 = await call('POST', '/api/admin/specials', { familyId: male.id, kind: 'FIXED', pct: 33, payMode: 'TERM', customerId: cust.customerId }, mgr);
+const qs3 = await call('POST', '/api/me/quote', { items: [{ variantId: priced.id, quantity: pp }] }, buyer);
+assert.equal(qs3[priced.id].term, net(priced.price, 33)); step("a fixed 33% on term for this customer beats their own 30%");
+await call('PATCH', `/api/admin/specials/${sp2.id}`, { isActive: false }, mgr);
+assert.equal((await call('POST', '/api/me/quote', { items: [{ variantId: priced.id, quantity: pp }] }, buyer))[priced.id].term, net(priced.price, 30));
+await call('PATCH', `/api/admin/specials/${sp1.id}`, { endsAt: '2020-01-01' }, mgr);
+assert.equal((await call('POST', '/api/me/quote', { items: [{ variantId: priced.id, quantity: pp * 2 }] }, buyer))[priced.id].cash, net(priced.price, 40)); step('switched off or ended specials stop at once');
+const spl = await call('GET', `/api/admin/specials?family=${male.id}`, null, sales);
+assert.deepEqual(spl.map(x => x.state).sort(), ['ended', 'off']);
+await call('DELETE', `/api/admin/specials/${sp2.id}`, null, mgr); step('staff see the specials with their state; a manager deletes one');
+
+await call('PATCH', `/api/admin/products/${male.id}`, { packOnly: true }, mgr);
+await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: 10 }] }, buyer, 400);
+await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: pp, packs: 1 }] }, buyer);
+await call('POST', '/api/admin/orders', { customerId: cust.customerId, items: [{ variantId: priced.id, quantity: 10 }] }, sales); step('pack-only: customers order whole cartons; a phone order by staff may break one');
+await call('PATCH', `/api/admin/products/variants/${priced.id}`, { stock: '۰' }, mgr);
+const famS = await call('GET', `/api/catalog/families/${male.slug}`);
+const vS = famS.variants.find(v => v.id === priced.id);
+assert.equal(vS.soldOut, true); assert.equal('stock' in vS, false);
+await call('POST', '/api/orders', { items: [{ variantId: priced.id, quantity: pp, packs: 1 }] }, buyer, 400);
+const pAdm = await call('PATCH', `/api/admin/products/variants/${priced.id}`, { stock: '' }, mgr);
+assert.equal(pAdm.variants.find(v => v.id === priced.id).stock, null); step('stock 0 = «ناموجود» for customers (count stays in the panel); empty = not tracked');
+const cats2 = await call('DELETE', `/api/admin/categories/${child.id}`, null, mgr);
+assert.ok(!cats2.some(c => c.id === child.id));
+assert.equal((await call('GET', `/api/catalog/families/${male.slug}`)).category.slug, parent.slug); step('deleting a sub-branch moves its products up to the branch');
 console.log(`\nall ${n} checks passed`);

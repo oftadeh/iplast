@@ -3,6 +3,7 @@ import { CustomerType, MemberRole } from '@iplast/db';
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { categoryTree } from '../catalog/tree';
 import { TelegramService } from '../common/telegram.service';
 import { audit } from '../common/audit';
 import { int, req, rialOf, telegramId } from '../common/validate';
@@ -117,13 +118,16 @@ export class AdminCustomersController {
   async sale(@Param('id') id: string) {
     const c = await this.prisma.customer.findUnique({ where: { id }, include: { terms: true, categoryDiscounts: true } });
     if (!c) throw new NotFoundException();
-    const cats = await this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, include: { _count: { select: { families: true } } } });
+    // tree order, with the path name; a percent on a branch covers its sub-branches unless they have their own
+    const [tree, counts] = await Promise.all([categoryTree(this.prisma), this.prisma.productFamily.groupBy({ by: ['categoryId'], _count: { _all: true } })]);
+    const own = new Map(counts.map(x => [x.categoryId, x._count._all]));
+    const cats = tree.ordered().map(k => ({ ...k, name: tree.path(k.id), _count: { families: tree.descendants(k.id).reduce((a, id) => a + (own.get(id) ?? 0), 0) } }));
     const t = c.terms;
     const n = (d: { toString(): string } | null | undefined) => (d === null || d === undefined ? null : Number(d.toString()));
     return {
       cashPct: n(t?.cashDiscountPct) ?? 0, termPct: n(t?.termDiscountPct) ?? 0, termMonths: t?.termMonths ?? 3,
       allowCash: t?.allowCash ?? true, allowTerm: t?.allowTerm ?? true, updatedAt: t?.updatedAt ?? null,
-      categories: cats.map(k => { const d = c.categoryDiscounts.find(x => x.categoryId === k.id); return { id: k.id, slug: k.slug, name: k.name, families: k._count.families, cash: n(d?.cashPct), term: n(d?.termPct) }; }),
+      categories: cats.map(k => { const d = c.categoryDiscounts.find(x => x.categoryId === k.id); return { id: k.id, slug: k.slug, name: k.name, depth: k.depth, families: k._count.families, cash: n(d?.cashPct), term: n(d?.termPct) }; }),
     };
   }
 

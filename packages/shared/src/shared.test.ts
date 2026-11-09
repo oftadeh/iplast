@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyInitData, signInitData, formatRial, splitCashCheque, orderBreakdown, salePct, netPrice, allowedModes } from './index';
+import { verifyInitData, signInitData, formatRial, splitCashCheque, orderBreakdown, salePct, netPrice, allowedModes, bestSpecial, Special } from './index';
 
 const TOKEN = '123456:TEST-TOKEN';
 const now = Date.UTC(2026, 10, 7, 9, 0, 0);
@@ -60,4 +60,27 @@ test('category overrides the customer default; empty means default', () => {
   assert.equal(salePct(null, 'CASH'), 0);
   assert.deepEqual(allowedModes({ allowCash: false, allowTerm: false }), ['CASH']);
   assert.deepEqual(allowedModes({ allowCash: false }), ['TERM']);
+});
+
+test('a branch percent covers its sub-branches; the nearest one wins', () => {
+  const t = { cashPct: 30, termPct: 20, categories: { root: { cash: 35 }, leaf: { term: 25 } } };
+  assert.equal(salePct(t, 'CASH', ['leaf', 'root']), 35);
+  assert.equal(salePct(t, 'TERM', ['leaf', 'root']), 25);
+  assert.equal(salePct(t, 'TERM', ['other', 'root']), 20);
+});
+test('special discount: extra points, fixed percent, pack minimum, customer and mode', () => {
+  const s: Special[] = [
+    { id: 'a', familyId: 'f', kind: 'EXTRA', pct: 5, minPacks: 100 },
+    { id: 'b', familyId: 'f', kind: 'FIXED', pct: 33, customerId: 'c1', payMode: 'TERM' },
+    { id: 'c', familyId: 'g', kind: 'EXTRA', pct: 10 },
+    { id: 'd', familyId: 'f', kind: 'EXTRA', pct: 50, isActive: false },
+  ];
+  const r1 = bestSpecial(s, { familyId: 'f', customerId: 'c1', mode: 'CASH', base: 35, packs: 99 });
+  assert.equal(r1.best, null); assert.equal(r1.next?.special.id, 'a'); assert.equal(r1.next?.pct, 40);
+  assert.equal(bestSpecial(s, { familyId: 'f', customerId: 'c1', mode: 'CASH', base: 35, packs: 100 }).best?.pct, 40);
+  const r3 = bestSpecial(s, { familyId: 'f', customerId: 'c1', mode: 'TERM', base: 30, packs: 1 });
+  assert.equal(r3.best?.special.id, 'b'); assert.equal(r3.best?.pct, 33); assert.equal(r3.next?.pct, 35);
+  assert.equal(bestSpecial(s, { familyId: 'f', customerId: 'c2', mode: 'TERM', base: 30, packs: 1 }).best, null);
+  // a fixed percent below the customer's own does nothing
+  assert.equal(bestSpecial(s, { familyId: 'f', customerId: 'c1', mode: 'TERM', base: 34, packs: 1 }).best, null);
 });

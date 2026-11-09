@@ -450,3 +450,19 @@ a.btn{text-decoration:none;color:inherit;display:inline-flex;align-items:center;
 .switch input::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:right .15s}
 .switch input:checked{background:#12b76a}.switch input:checked::after{right:18px}
 .deact{flex-basis:100%;display:grid;gap:8px;background:var(--surface-2);border-radius:10px;padding:10px;margin-top:8px}
+/* categories tree, special discounts */
+div.f{display:grid;gap:4px}div.f>span{font-size:12px;color:var(--muted);font-weight:600}
+.searchpick{display:grid;gap:4px}
+.link{background:none;border:0;padding:0;color:var(--brand);font-weight:700;cursor:pointer;text-align:right}
+.cattree{display:grid}
+.catrow{display:grid;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.catrow:first-child{border-top:0}
+.catrow.sel{background:var(--drop-soft)}
+.catname{flex:1;min-width:0;cursor:pointer}
+.catact{flex:none;gap:4px}.catact .in.sm{height:32px;padding:0 6px}
+.movebar{position:sticky;top:8px;z-index:2}
+.st.special{background:#FFF1D6;color:#9A5B00}
+:root[data-theme="dark"] .st.special{background:#3A2A0C;color:#F2B54B}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .st.special{background:#3A2A0C;color:#F2B54B}}
+.seg{flex-wrap:wrap}
+.catact .in.sm{width:52px}

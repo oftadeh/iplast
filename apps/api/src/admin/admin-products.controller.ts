@@ -10,6 +10,7 @@ import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { audit } from '../common/audit';
+import { categoryTree } from '../catalog/tree';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? '/data/uploads';
 const IMAGE_TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
@@ -31,6 +32,14 @@ function perPackOf(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(toEn(String(v)));
   if (!Number.isInteger(n) || n < 1 || n > 100000) throw new BadRequestException('تعداد در بسته نامعتبر است');
+  return n;
+}
+
+/** موجودی in units; empty = not tracked, 0 = ناموجود. */
+function stockOf(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(toEn(String(v)).replace(/[,،\s٬]/g, ''));
+  if (!Number.isInteger(n) || n < 0 || n > 100_000_000) throw new BadRequestException('موجودی نامعتبر است');
   return n;
 }
 
@@ -62,35 +71,43 @@ export class AdminProductsController {
     return this.prisma.priceList.findFirst({ where: { status: 'ACTIVE' }, orderBy: { publishedAt: 'desc' } });
   }
 
+  /** Categories in tree order with their path («اتصالات پیچی › زانو») and depth, for the pickers. */
   @Get('meta')
   async meta() {
-    const [categories, brands] = await Promise.all([
-      this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, select: { id: true, name: true } }),
+    const [tree, brands] = await Promise.all([
+      categoryTree(this.prisma),
       this.prisma.brand.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     ]);
-    return { categories, brands };
+    return { categories: tree.ordered().map(c => ({ id: c.id, name: c.name, path: tree.path(c.id), depth: c.depth, parentId: c.parentId })), brands };
   }
 
   @Get()
   async list(@Query('q') q?: string, @Query('category') category?: string) {
     const list = await this.activeList();
     const words = (q ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 5);
+    // a branch lists the products of its sub-branches too
+    const tree = await categoryTree(this.prisma);
+    const cats = category ? tree.descendants(category) : null;
     const rows = await this.prisma.productFamily.findMany({
       where: {
-        ...(category ? { categoryId: category } : {}),
+        ...(cats ? { categoryId: { in: cats } } : {}),
         ...(words.length ? { AND: words.map(w => ({ OR: [{ name: { contains: w } }, { synonyms: { some: { term: { contains: w } } } }, { variants: { some: { accountingCode: { contains: toEn(w) } } } }] })) } : {}),
       },
       orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
       take: 300,
       select: {
-        id: true, name: true, isActive: true, model: true,
+        id: true, name: true, isActive: true, model: true, packOnly: true, packName: true, categoryId: true,
         category: { select: { name: true } },
         media: { where: { isPrimary: true }, take: 1, select: { key: true } },
-        variants: { select: { isActive: true, prices: { where: { priceListId: list?.id ?? '-' }, select: { status: true } } } },
+        variants: { select: { isActive: true, stock: true, prices: { where: { priceListId: list?.id ?? '-' }, select: { status: true } } } },
+        _count: { select: { specials: { where: { isActive: true } } } },
       },
     });
-    return rows.map(({ variants, ...f }) => ({
+    return rows.map(({ variants, _count, ...f }) => ({
       ...f,
+      category: { name: tree.byId.has(f.categoryId) ? tree.path(f.categoryId) : f.category.name },
+      specials: _count.specials,
+      soldOut: variants.filter(v => v.isActive && v.stock === 0).length,
       sizes: variants.length,
       priced: variants.filter(v => v.prices[0]?.status === 'PRICED').length,
       inactiveSizes: variants.filter(v => !v.isActive).length,
@@ -114,12 +131,14 @@ export class AdminProductsController {
       },
     });
     if (!f) throw new NotFoundException();
+    const tree = await categoryTree(this.prisma);
     return {
       ...f,
+      category: { ...f.category, path: tree.path(f.category.id) },
       synonyms: f.synonyms.map(s => s.term),
       priceList: list ? { id: list.id, title: list.title } : null,
       variants: f.variants.map(v => ({
-        id: v.id, sku: v.sku, title: v.title, accountingCode: v.accountingCode, perPack: v.perPack, isActive: v.isActive,
+        id: v.id, sku: v.sku, title: v.title, accountingCode: v.accountingCode, perPack: v.perPack, stock: v.stock, isActive: v.isActive,
         options: Object.fromEntries(v.options.map(o => [o.axisId, o.value])),
         price: v.prices[0]?.amount?.toString() ?? null, priceStatus: v.prices[0]?.status ?? null,
       })),
@@ -142,7 +161,7 @@ export class AdminProductsController {
     const axes = (Array.isArray(b.axes) ? b.axes : []).map(a => text(a, 40)).filter((a): a is string => !!a).slice(0, 3);
     const f = await this.prisma.productFamily.create({
       data: {
-        name, slug: `p-${rid(5)}`, categoryId, unitName: text(b.unitName, 20) ?? 'عدد', packName: text(b.packName, 20), model: text(b.model, 60), sortOrder: 500,
+        name, slug: `p-${rid(5)}`, categoryId, unitName: text(b.unitName, 20) ?? 'عدد', packName: text(b.packName, 20), packOnly: !!text(b.packName, 20), model: text(b.model, 60), sortOrder: 500,
         axes: { create: (axes.length ? axes : ['سایز']).map((a, i) => ({ name: a, sortOrder: i })) },
       },
     });
@@ -154,13 +173,17 @@ export class AdminProductsController {
   @Staff('ADMIN')
   async update(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: {
     name?: string; categoryId?: string; unitName?: string; packName?: string | null; model?: string | null; description?: string | null;
-    badge?: string | null; isActive?: boolean; synonyms?: string[];
+    badge?: string | null; isActive?: boolean; synonyms?: string[]; packOnly?: boolean;
   }) {
     const before = await this.prisma.productFamily.findUnique({ where: { id } });
     if (!before) throw new NotFoundException();
     const data: Record<string, unknown> = {};
     if (b.name !== undefined) { const n = text(b.name, 120); if (!n) throw new BadRequestException('نام کالا لازم است'); data.name = n; }
-    if (b.categoryId !== undefined) data.categoryId = b.categoryId;
+    if (b.categoryId !== undefined) {
+      if (!(await this.prisma.category.findUnique({ where: { id: String(b.categoryId) } }))) throw new BadRequestException('دسته‌بندی پیدا نشد');
+      data.categoryId = b.categoryId;
+    }
+    if (b.packOnly !== undefined) data.packOnly = !!b.packOnly;
     if (b.unitName !== undefined) data.unitName = text(b.unitName, 20) ?? 'عدد';
     for (const k of ['packName', 'model', 'badge'] as const) if (b[k] !== undefined) data[k] = text(b[k], 60);
     if (b.description !== undefined) data.description = text(b.description, 2000);
@@ -180,7 +203,7 @@ export class AdminProductsController {
   /** New size. `options` maps axis id → value («۶۳», «۲″»). */
   @Post(':id/variants')
   @Staff('ADMIN')
-  async addVariant(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { options?: Record<string, string>; accountingCode?: string; perPack?: unknown; price?: unknown }) {
+  async addVariant(@Session() s: SessionClaims, @Param('id') id: string, @Body() b: { options?: Record<string, string>; accountingCode?: string; perPack?: unknown; stock?: unknown; price?: unknown }) {
     const f = await this.prisma.productFamily.findUnique({ where: { id }, include: { axes: { orderBy: { sortOrder: 'asc' } } } });
     if (!f) throw new NotFoundException();
     const values = f.axes.map(a => ({ axisId: a.id, value: text(b?.options?.[a.id], 30) }));
@@ -188,7 +211,7 @@ export class AdminProductsController {
     const v = await this.prisma.variant.create({
       data: {
         familyId: id, sku: `${f.slug}-${rid(3)}`, title: `${f.name} ${values.map(x => x.value).join(' × ')}`,
-        accountingCode: text(b.accountingCode && toEn(b.accountingCode), 30), perPack: perPackOf(b.perPack),
+        accountingCode: text(b.accountingCode && toEn(b.accountingCode), 30), perPack: perPackOf(b.perPack), stock: stockOf(b.stock),
         options: { create: values.map(x => ({ axisId: x.axisId, value: x.value! })) },
       },
     });
@@ -199,12 +222,13 @@ export class AdminProductsController {
 
   @Patch('variants/:vid')
   @Staff('ADMIN')
-  async updateVariant(@Session() s: SessionClaims, @Param('vid') vid: string, @Body() b: { options?: Record<string, string>; accountingCode?: string | null; perPack?: unknown; isActive?: boolean }) {
+  async updateVariant(@Session() s: SessionClaims, @Param('vid') vid: string, @Body() b: { options?: Record<string, string>; accountingCode?: string | null; perPack?: unknown; stock?: unknown; isActive?: boolean }) {
     const v = await this.prisma.variant.findUnique({ where: { id: vid }, include: { family: { include: { axes: { orderBy: { sortOrder: 'asc' } } } }, options: true } });
     if (!v) throw new NotFoundException();
     const data: Record<string, unknown> = {};
     if (b.accountingCode !== undefined) data.accountingCode = text(b.accountingCode && toEn(b.accountingCode), 30);
     if (b.perPack !== undefined) data.perPack = perPackOf(b.perPack);
+    if (b.stock !== undefined) data.stock = stockOf(b.stock);
     if (b.isActive !== undefined) data.isActive = !!b.isActive;
     await this.prisma.$transaction(async tx => {
       if (b.options) {
@@ -214,7 +238,7 @@ export class AdminProductsController {
       }
       await tx.variant.update({ where: { id: vid }, data });
     });
-    await audit(this.prisma, s.sub, 'variant.update', 'Variant', vid, { accountingCode: v.accountingCode, perPack: v.perPack, isActive: v.isActive }, b);
+    await audit(this.prisma, s.sub, 'variant.update', 'Variant', vid, { accountingCode: v.accountingCode, perPack: v.perPack, stock: v.stock, isActive: v.isActive }, b);
     return this.one(v.familyId);
   }
 

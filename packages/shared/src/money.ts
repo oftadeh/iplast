@@ -29,12 +29,58 @@ export interface SaleTerms {
 export const payModeFa = (mode: PayMode, months?: number | null) => (mode === 'CASH' ? 'نقدی' : `مدت‌دار${months ? ` ${toFaDigits(months)} ماهه` : ''}`);
 
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0; };
-/** Discount percent off the list price for a sale mode and product category. */
-export function salePct(t: SaleTerms | null | undefined, mode: PayMode, categoryId?: string | null): number {
-  const c = categoryId ? t?.categories?.[categoryId] : undefined;
-  const own = mode === 'CASH' ? c?.cash : c?.term;
-  if (own !== null && own !== undefined && own !== '') return num(own);
+/**
+ * Discount percent off the list price for a sale mode and product category. `category` may be the category's chain
+ * (its id, then its parent's, …): the nearest category with its own percent wins, so a branch's percent covers its
+ * sub-branches.
+ */
+export function salePct(t: SaleTerms | null | undefined, mode: PayMode, category?: string | string[] | null): number {
+  for (const id of Array.isArray(category) ? category : category ? [category] : []) {
+    const c = t?.categories?.[id];
+    const own = mode === 'CASH' ? c?.cash : c?.term;
+    if (own !== null && own !== undefined && own !== '') return num(own);
+  }
   return num(mode === 'CASH' ? t?.cashPct : t?.termPct);
+}
+
+/**
+ * «تخفیف ویژه»: a manager's discount on one product. EXTRA adds its points to the customer's own percent (30% + 5%);
+ * FIXED sets the product's percent (40%) when that is better for the customer. Optional: one customer only, one sale
+ * mode only, a minimum number of packs (cartons / bags) of that product in the order, and dates.
+ */
+export interface Special {
+  id: string; familyId: string; customerId?: string | null; payMode?: PayMode | null; kind: 'EXTRA' | 'FIXED';
+  pct: number | string; minPacks?: number | null; startsAt?: Date | string | null; endsAt?: Date | string | null; isActive?: boolean; note?: string | null;
+}
+/** Whether a special is for this customer and sale mode today (the pack minimum is checked by bestSpecial). */
+export function specialFits(s: Special, customerId: string | null | undefined, mode: PayMode, now = new Date()) {
+  if (s.isActive === false) return false;
+  if (s.customerId && s.customerId !== customerId) return false;
+  if (s.payMode && s.payMode !== mode) return false;
+  if (s.startsAt && new Date(s.startsAt) > now) return false;
+  if (s.endsAt && new Date(s.endsAt) < now) return false;
+  return true;
+}
+/** The percent a special gives on top of a base percent (never less than the base). */
+export const specialTotal = (s: Special, base: number) => Math.min(100, Math.max(base, s.kind === 'FIXED' ? num(s.pct) : base + num(s.pct)));
+/**
+ * The best special for a product: `packs` is how many packs of it the order has (null = unknown, e.g. the catalog
+ * before a quantity is chosen: specials with a minimum are then left out). Returns the total percent and the special,
+ * and the best one still out of reach because of its minimum (to tell the customer «از ۱۰۰ کارتن، ۵٪ بیشتر»).
+ */
+export function bestSpecial(list: Special[], o: { familyId: string; customerId?: string | null; mode: PayMode; base: number; packs: number | null; now?: Date }) {
+  let best: { special: Special; pct: number } | null = null;
+  let next: { special: Special; pct: number } | null = null;
+  for (const s of list) {
+    if (s.familyId !== o.familyId || !specialFits(s, o.customerId, o.mode, o.now)) continue;
+    const pct = specialTotal(s, o.base);
+    if (pct <= o.base) continue;
+    const reached = !s.minPacks || (o.packs !== null && o.packs >= s.minPacks);
+    if (reached) { if (!best || pct > best.pct) best = { special: s, pct }; }
+    else if (!next || pct > next.pct) next = { special: s, pct };
+  }
+  if (next && best && next.pct <= best.pct) next = null;
+  return { best, next };
 }
 /** Modes a customer may buy with; at least one. */
 export function allowedModes(t: SaleTerms | null | undefined): PayMode[] {

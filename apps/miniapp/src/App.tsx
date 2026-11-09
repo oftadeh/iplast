@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
-import { CartLine, Family, Me, api, loadCart, login, mainAccount, saveCart } from './lib';
+import { CartLine, Family, Me, Offer, api, loadCart, login, mainAccount, saveCart } from './lib';
 import { haptic, setupTelegram, tg } from './telegram';
 import { ChatScreen } from './chat';
 import { ProformaScreen } from './proforma';
@@ -18,6 +18,8 @@ interface Ctx {
   cart: CartLine[]; setCart: (c: CartLine[]) => void; add: (l: CartLine) => void;
   me: Me | null; authed: boolean | null; reloadMe: () => void;
   quickAdd: (slug: string) => void; toast: (t: string) => void; aiEnabled: boolean;
+  /** this customer's «تخفیف ویژه»s, by product */
+  offers: Offer[];
 }
 const AppCtx = createContext<Ctx>(null as unknown as Ctx);
 export const useApp = () => useContext(AppCtx);
@@ -29,6 +31,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [sheet, setSheet] = useState<{ slug: string; f: Family | null } | null>(null);
   const [toastText, setToastText] = useState('');
   const toastTimer = useRef<number>();
@@ -48,7 +51,10 @@ export function App() {
   const back = () => { setSheet(null); setStack(s => (s.length > 1 ? s.slice(0, -1) : s)); };
   const tab = (r: Route) => { setSheet(null); setStack(r.name === 'home' ? [r] : [{ name: 'home' }, r]); };
 
-  const reloadMe = useCallback(() => { api<Me>('/me').then(setMe, () => setMe(null)); }, []);
+  const reloadMe = useCallback(() => {
+    api<Me>('/me').then(setMe, () => setMe(null));
+    api<Offer[]>('/me/offers').then(setOffers, () => setOffers([]));
+  }, []);
   useEffect(() => {
     const app = tg();
     setupTelegram();
@@ -111,7 +117,7 @@ export function App() {
   const navItems2: [Route, string, string][] = [[{ name: 'orders' }, 'box', 'سفارش‌ها']];
   const isTab = (n: string) => route.name === n || (n === 'orders' && ['order', 'account', 'invoice', 'proforma'].includes(route.name)) || (n === 'catalog' && route.name === 'product');
 
-  const ctx: Ctx = { route, go, back, cart, setCart, add, me, authed, reloadMe, quickAdd, toast, aiEnabled };
+  const ctx: Ctx = { route, go, back, cart, setCart, add, me, authed, reloadMe, quickAdd, toast, aiEnabled, offers };
   return (
     <AppCtx.Provider value={ctx}>
       <div className="app">
