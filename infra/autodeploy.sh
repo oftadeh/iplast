@@ -37,10 +37,16 @@ LOG=/var/log/iplast-deploy.log
 if docker compose up -d --build --remove-orphans >"$LOG" 2>&1; then
   sleep 8
   STATE=$(docker compose ps --format '{{.Service}}: {{.State}}' | tr '\n' ' ')
+  MIG=$(docker compose logs --no-color --tail 40 migrate 2>&1 | grep -A20 -E "Error|MIGRATE FAILED" | tail -n 20)
   notify "✅ iPlast deployed: ${MSG}
-${STATE}"
+${STATE}${MIG:+
+
+⚠️ database update failed:
+${MIG}}"
 else
   notify "❌ iPlast deploy failed: ${MSG}
-$(tail -n 25 "$LOG")"
+$(tail -n 25 "$LOG")
+--- migrate:
+$(docker compose logs --no-color --tail 25 migrate 2>&1 | tail -n 25)"
   exit 1
 fi

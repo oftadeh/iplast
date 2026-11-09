@@ -1,5 +1,7 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { ownerIds } from '../common/owner';
-import { BadRequestException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { TelegramService } from '../common/telegram.service';
 import * as jwt from 'jsonwebtoken';
@@ -12,6 +14,7 @@ export interface SessionClaims { sub: string; tg: string; staff: string | null }
 export class AuthService implements OnModuleInit {
   private readonly codes = new Map<string, { code: string; expires: number; tries: number }>();
 
+  private readonly log = new Logger('Auth');
   constructor(private readonly prisma: PrismaService, private readonly tg: TelegramService) {}
 
   /**
@@ -21,6 +24,7 @@ export class AuthService implements OnModuleInit {
   async onModuleInit() {
     // after a transfer in the panel the owner lives in the database, not in .env
     const ids = await ownerIds(this.prisma);
+    void this.reportFailedMigrations(ids);
     for (const id of ids) {
       await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'ADMIN' }, update: { staffRole: 'ADMIN', isActive: true } });
     }
@@ -28,6 +32,31 @@ export class AuthService implements OnModuleInit {
     for (const id of (process.env.SUPPORT_TELEGRAM_IDS ?? '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x) && !ids.includes(x))) {
       const u = await this.prisma.user.upsert({ where: { telegramId: BigInt(id) }, create: { telegramId: BigInt(id), staffRole: 'SALES' }, update: {} });
       if (!u.staffRole) await this.prisma.user.update({ where: { id: u.id }, data: { staffRole: 'SALES' } });
+    }
+  }
+
+  /**
+   * A database update (migration) that failed on deploy: the server keeps running on the old tables, so tell the
+   * senior manager in Telegram with Prisma's error, instead of the site going down silently.
+   */
+  private async reportFailedMigrations(ids: string[]) {
+    try {
+      const all = await this.prisma.$queryRawUnsafe<{ migration_name: string; logs: string | null; finished_at: Date | null; rolled_back_at: Date | null }[]>(
+        'SELECT migration_name, logs, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at',
+      );
+      const failed = all.filter(r => !r.finished_at && !r.rolled_back_at);
+      const done = new Set(all.filter(r => r.finished_at).map(r => r.migration_name));
+      const dir = join(process.cwd(), 'prisma', 'migrations');
+      const pending = existsSync(dir) ? readdirSync(dir).filter(d => /^\d{14}_/.test(d) && !done.has(d) && !failed.some(f => f.migration_name === d)) : [];
+      if (!failed.length && !pending.length) return;
+      const text = [
+        '⚠️ به‌روزرسانی دیتابیس iPlast کامل نشد؛ این پیام را برای پشتیبان فنی بفرستید.',
+        ...failed.map(r => `خطا در ${r.migration_name}:\n${(r.logs ?? '').slice(0, 1500)}`),
+        ...(pending.length ? [`اجرا نشده: ${pending.join('، ')}`] : []),
+      ].join('\n\n');
+      for (const id of ids) await this.tg.send(id, text.slice(0, 3900));
+    } catch (e) {
+      this.log.warn(`migration check failed: ${(e as Error).message}`);
     }
   }
 

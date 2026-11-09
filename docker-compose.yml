@@ -21,7 +21,9 @@ services:
   migrate:
     build: { network: host, context: ., dockerfile: infra/Dockerfile.node, args: { APP: api, HTTPS_PROXY: "${BUILD_PROXY:-}", HTTP_PROXY: "${BUILD_PROXY:-}", https_proxy: "${BUILD_PROXY:-}", http_proxy: "${BUILD_PROXY:-}" } }
     env_file: .env
-    command: ["./node_modules/.bin/prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    # a failed database update must not take the site down: the API starts on the old tables and sends the error to
+    # the senior manager in Telegram (see AuthService.reportFailedMigrations)
+    command: ["sh", "-c", "./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma || echo 'MIGRATE FAILED'"]
     depends_on: { postgres: { condition: service_healthy } }
 
   api:
