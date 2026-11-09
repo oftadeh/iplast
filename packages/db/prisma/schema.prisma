@@ -423,6 +423,8 @@ model Order {
   termMonths     Int                @default(0) // for TERM: the cheque is due after this many months
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
 }
 
 model OrderItem {
@@ -439,6 +441,7 @@ model OrderItem {
   salePct     Decimal?    @db.Decimal(5, 2) // the cash / term discount applied to listPrice (incl. a special discount)
   specialPct  Decimal?    @db.Decimal(5, 2) // the part of salePct that came from a «تخفیف ویژه»
   priceStatus PriceStatus
+  @@index([orderId])
 }
 
 model OrderStatusEvent {
@@ -449,6 +452,7 @@ model OrderStatusEvent {
   byUserId  String?
   comment   String?
   createdAt DateTime    @default(now())
+  @@index([orderId, createdAt])
 }
 
 model Proforma {
@@ -497,6 +501,7 @@ model Conversation {
   updatedAt      DateTime  @updatedAt
 
   @@index([userTelegramId])
+  @@index([customerId])
 }
 
 model Message {
@@ -515,6 +520,7 @@ model Message {
   createdAt      DateTime         @default(now())
 
   @@index([relayChatId, relayMessageId])
+  @@index([conversationId, createdAt])
 }
 
 // ───────────── Misc ─────────────
@@ -597,6 +603,7 @@ model InvoiceItem {
   packs     Int?
   unitPrice BigInt
   total     BigInt
+  @@index([invoiceId])
 }
 
 enum InvoiceStatus {

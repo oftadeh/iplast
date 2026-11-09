@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pulls new commits from GitHub and rebuilds. Reports the result to the admin via the bot.
+# Pulls new commits from GitHub and rebuilds. Messages the senior manager only when something needs attention.
 set -uo pipefail
 DIR="/opt/iplast"
 cd "$DIR" || exit 1
@@ -63,6 +63,22 @@ wait_db() {
 LOG=/var/log/iplast-deploy.log
 RETRY=/var/lib/iplast-deploy-retry
 
+# low disk: one warning a day at most (a full disk stops the database, as on 2026-11-09)
+DISKMARK=/var/lib/iplast-disk-warned
+f=$(free_gb)
+if [ -n "$f" ] && [ "$f" -lt 5 ]; then
+  if [ ! -f "$DISKMARK" ] || [ $(( $(date +%s) - $(stat -c %Y "$DISKMARK") )) -gt 86400 ]; then
+    cleanup; f=$(free_gb)
+    if [ -n "$f" ] && [ "$f" -lt 5 ]; then
+      touch "$DISKMARK"
+      notify "⚠️ دیسک سرور iPlast تقریباً پر است: فقط ${f} گیگ آزاد مانده. اگر پر شود دیتابیس و سایت از کار می‌افتند. این پیام را برای پشتیبان فنی بفرستید.
+$(df -h / | tail -1)"
+    fi
+  fi
+else
+  rm -f "$DISKMARK"
+fi
+
 git fetch -q origin main || { echo "fetch failed"; exit 1; }
 LOCAL=$(git rev-parse HEAD); REMOTE=$(git rev-parse origin/main)
 if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then
@@ -78,7 +94,9 @@ git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
 # host tools that live outside the repo: this script itself and the daily backup timer
 install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy 2>/dev/null || true
-[ -f /etc/systemd/system/iplast-backup.timer ] || bash infra/backup.sh --install >/dev/null 2>&1 || true
+# the server's own front proxy for ports 80/443 (moves the sites off the old niva Caddy once; see the script)
+bash infra/front/install.sh >>/var/log/iplast-front.log 2>&1 || notify "⚠️ جابه‌جایی پروکسی جلوی سایت انجام نشد و پروکسی قبلی دوباره روشن شد؛ جزئیات: /var/log/iplast-front.log"
+grep -q 'Fri' /etc/systemd/system/iplast-backup.timer 2>/dev/null || bash infra/backup.sh --install >/dev/null 2>&1 || true
 # servers that use the outbound proxy (see infra/proxy): keep its host tools current
 if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi
 : >"$LOG"
@@ -90,18 +108,15 @@ if [ "$BUILT" = 1 ] && wait_db && docker compose up -d --remove-orphans >>"$LOG"
   rm -f "$RETRY"
   cleanup
   sleep 8
-  STATE=$(docker compose ps --format '{{.Service}}: {{.State}}' | tr '\n' ' ')
-  MIG=$(docker compose logs --no-color --tail 40 migrate 2>&1 | grep -A20 -E "Error|MIGRATE FAILED" | tail -n 20)
-  notify "✅ iPlast deployed: ${MSG}
-${STATE}${MIG:+
-
-⚠️ database update failed:
-${MIG}}"
+  # a successful deploy is silent (a failed database update is reported once by the API itself)
 else
   [ -f "$RETRY" ] || echo 0 >"$RETRY"
+  n=$(cat "$RETRY" 2>/dev/null || echo 0)
+  # one message when it first fails and one when the retries run out, not one every 20 minutes
+  [ "$n" = 0 ] || [ "$n" -ge 6 ] || exit 1
   notify "❌ iPlast deploy failed: ${MSG}
 $(tail -n 12 "$LOG")
 $(diag)
-(هر ۲۰ دقیقه خودکار دوباره امتحان می‌شود، حداکثر ۶ بار)"
+$([ "$n" -ge 6 ] && echo "(۶ بار دوباره امتحان شد و نشد؛ دیگر خودکار امتحان نمی‌شود)" || echo "(هر ۲۰ دقیقه بی‌صدا دوباره امتحان می‌شود، حداکثر ۶ بار)")"
   exit 1
 fi

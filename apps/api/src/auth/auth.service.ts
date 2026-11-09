@@ -49,6 +49,12 @@ export class AuthService implements OnModuleInit {
       const dir = join(process.cwd(), 'prisma', 'migrations');
       const pending = existsSync(dir) ? readdirSync(dir).filter(d => /^\d{14}_/.test(d) && !done.has(d) && !failed.some(f => f.migration_name === d)) : [];
       if (!failed.length && !pending.length) return;
+      // once per problem: a restart with the same failed/pending migrations does not message again
+      const key = 'migration.reported';
+      const sig = [...failed.map(r => r.migration_name), ...pending].join(',');
+      const prev = await this.prisma.setting.findUnique({ where: { key } });
+      if (prev && (prev.value as unknown) === sig) return;
+      await this.prisma.setting.upsert({ where: { key }, create: { key, value: sig }, update: { value: sig } });
       const text = [
         '⚠️ به‌روزرسانی دیتابیس iPlast کامل نشد؛ این پیام را برای پشتیبان فنی بفرستید.',
         ...failed.map(r => `خطا در ${r.migration_name}:\n${(r.logs ?? '').slice(0, 1500)}`),

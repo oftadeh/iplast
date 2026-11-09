@@ -13,8 +13,12 @@ HOST=${1:-$(cat /opt/iplast-tls/host 2>/dev/null || true)}
 [ -n "$HOST" ] || { echo "usage: $0 <host>"; exit 1; }
 DIR=/opt/iplast-tls
 PROXY=${TLS_PROXY:-http://127.0.0.1:10809}  # host xray (infra/proxy)
-CADDY_CONTAINER=${CADDY_CONTAINER:-niva-panel-proxy-1}
-CADDYFILE=${CADDYFILE:-/opt/niva/deploy/panel-ip.Caddyfile}
+# the server's front proxy: iplast-front (infra/front/install.sh), or the older shared niva Caddy
+if docker inspect iplast-front >/dev/null 2>&1; then
+  CADDY_CONTAINER=${CADDY_CONTAINER:-iplast-front}; CADDYFILE=${CADDYFILE:-/opt/iplast-front/Caddyfile}
+else
+  CADDY_CONTAINER=${CADDY_CONTAINER:-niva-panel-proxy-1}; CADDYFILE=${CADDYFILE:-/opt/niva/deploy/panel-ip.Caddyfile}
+fi
 UPSTREAM=${UPSTREAM:-172.17.0.1:8088}
 mkdir -p "$DIR"; chmod 700 "$DIR"; echo "$HOST" > "$DIR/host"
 
