@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { ApiError, Me, api, getToken, personName, setToken, setUnauthorizedHandler, toEnDigits, ROLE_FA } from './lib';
 import { ApprovalsPage } from './pages/Approvals';
 import { ProductsPage } from './pages/Products';
+import { CategoriesPage } from './pages/Categories';
+import { SpecialsPage } from './pages/Specials';
 import { StaffPage } from './pages/Staff';
 import { PricesPage } from './pages/Prices';
 import { AccountsPage } from './pages/Accounts';
@@ -52,6 +54,8 @@ const AREAS: Area[] = [
   { id: 'warehouse', title: 'انبار و ارسال', icon: 'truck', roles: ['ADMIN', 'WAREHOUSE'], pages: [{ id: 'warehouse/queue', title: 'انبار و ارسال', roles: ['ADMIN', 'WAREHOUSE'], badge: 'warehouse' }] },
   { id: 'catalog', title: 'کاتالوگ', icon: 'box', roles: AS, pages: [
     { id: 'catalog/products', title: 'کالاها', roles: AS },
+    { id: 'catalog/categories', title: 'دسته‌بندی‌ها', roles: AS },
+    { id: 'catalog/specials', title: 'تخفیف ویژه', roles: AS },
     { id: 'catalog/prices', title: 'به‌روزرسانی قیمت', roles: AS },
   ] },
   { id: 'system', title: 'تنظیمات', icon: 'shield', roles: A, pages: [
@@ -63,7 +67,7 @@ const AREAS: Area[] = [
 ];
 const LEAVES = AREAS.flatMap(a => a.pages.map(p => ({ ...p, area: a })));
 // older names that pages and links still use
-const ALIAS: Record<string, string> = { dashboard: 'home/dashboard', approvals: 'orders/agent', chats: 'chats/human', warehouse: 'warehouse/queue', accounts: 'customers/accounts', customers: 'customers/settings', products: 'catalog/products', prices: 'catalog/prices', staff: 'system/staff', messages: 'system/messages', proxy: 'system/proxy' };
+const ALIAS: Record<string, string> = { dashboard: 'home/dashboard', approvals: 'orders/agent', chats: 'chats/human', warehouse: 'warehouse/queue', accounts: 'customers/accounts', customers: 'customers/settings', products: 'catalog/products', categories: 'catalog/categories', specials: 'catalog/specials', prices: 'catalog/prices', staff: 'system/staff', messages: 'system/messages', proxy: 'system/proxy' };
 function parseHash(): [string, string | undefined] {
   const h = location.hash.slice(1);
   const leaf = LEAVES.find(l => h === l.id || h.startsWith(l.id + '/'));
@@ -193,6 +197,8 @@ export function App() {
           {id === 'customers/receipts' && <ApprovalsPage view="pay" />}
           {id === 'warehouse/queue' && <WarehousePage />}
           {id === 'catalog/products' && <ProductsPage focus={focus} onFocus={setFocus} />}
+          {id === 'catalog/categories' && <CategoriesPage />}
+          {id === 'catalog/specials' && <SpecialsPage />}
           {id === 'catalog/prices' && <PricesPage />}
           {id === 'system/ai' && <AiPage />}
           {id === 'system/staff' && <StaffPage />}

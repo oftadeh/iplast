@@ -51,7 +51,7 @@ export async function seed(prisma: PrismaClient) {
     const brand = f.brand ? await prisma.brand.upsert({ where: { name: f.brand }, create: { name: f.brand }, update: {} }) : null;
     const fam = await prisma.productFamily.upsert({
       where: { slug: f.id },
-      create: { slug: f.id, name: f.name, model: f.model, unitName: f.unit ?? 'عدد', packName: f.pack, specs: f.spec ?? undefined, badge: f.badge, sortOrder: fi, categoryId, brandId: brand?.id },
+      create: { slug: f.id, name: f.name, model: f.model, unitName: f.unit ?? 'عدد', packName: f.pack, packOnly: !!f.pack, specs: f.spec ?? undefined, badge: f.badge, sortOrder: fi, categoryId, brandId: brand?.id },
       update: { name: f.name, model: f.model, unitName: f.unit ?? 'عدد', packName: f.pack, specs: f.spec ?? undefined, badge: f.badge, sortOrder: fi, categoryId, brandId: brand?.id },
     });
     const axes = [];

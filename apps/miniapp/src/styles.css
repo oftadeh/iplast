@@ -528,3 +528,12 @@ textarea.note-in,.field input,.field select{border-radius:12px}
 .company .av{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--brand-2) 14%,var(--surface));color:var(--brand-2);font-weight:900;flex:none}
 .company b{display:block;font-size:14.5px}.company small{color:var(--muted);font-size:12px}
 .joinform{display:grid;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:12px}
+/* sub-branches, special discounts */
+.chips.sub{position:static;padding-top:0;z-index:auto}
+.chips.sub .chip{font-size:12px}
+.pimg .sp-flag{position:absolute;bottom:8px;right:8px;font-size:10px;font-weight:800;background:var(--warn-soft);color:var(--warn);border-radius:999px;padding:2px 8px;box-shadow:var(--shadow-sm)}
+.special-box{display:grid;gap:4px;background:var(--warn-soft);color:var(--warn);border-radius:16px;padding:10px 12px;font-size:13px}
+.special-box b{font-size:14px}
+.sp-tag{display:inline-block;margin-inline-start:6px;font-size:11px;font-weight:800;background:var(--warn-soft);color:var(--warn);border-radius:999px;padding:0 8px}
+.sp-line{font-size:12px;font-weight:700;color:var(--warn)}
+.cta:disabled{opacity:.5}

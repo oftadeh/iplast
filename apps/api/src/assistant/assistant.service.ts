@@ -24,7 +24,7 @@ const INSTRUCTIONS = `تو دستیار سفارش «اصفهان پلاست» �
 قواعد:
 - فقط از نتیجه‌ی search_catalog استفاده کن. هرگز کالا، سایز یا قیمت از خودت نساز.
 - «نری» یعنی اتصال نر، «مادگی» یعنی اتصال ماده، «بوشن/رابط» یعنی رابط. اعداد ۲۰ تا ۲۰۰ معمولاً قطر لوله (میلی‌متر) و ½ تا ۴ اینچ سایز رزوه است.
-- کارتن/کیسه/بسته = unit:"pack"؛ عدد/شاخه/تا = unit:"unit". اگر واحد گفته نشد و کالا بسته‌بندی دارد، "pack" نگیر؛ "unit" بگیر.
+- کارتن/کیسه/بسته = unit:"pack"؛ عدد/شاخه/تا = unit:"unit". کارخانه رند کارتن و کیسه می‌فروشد: اگر واحد گفته نشد و کالا بسته‌بندی (perPack) دارد، "pack" بگیر.
 - اگر سایز یا کالا مبهم بود یا در کاتالوگ نبود، آن را در unclear بنویس و در reply کوتاه بپرس؛ حدس نزن.
 - درباره‌ی قیمت فقط عدد همان نتیجه را بگو؛ «استعلامی» یعنی قیمت را کارشناس فروش اعلام می‌کند.
 - reply کوتاه باشد (حداکثر دو جمله) و فهرست اقلام را تکرار نکند؛ برنامه خودش فهرست را نشان می‌دهد.
@@ -37,6 +37,19 @@ const fa = (s: string) => s.replace(/\d/g, d => FA[+d]);
 const STOP = new Set(['و', 'با', 'در', 'از', 'به', 'تا', 'عدد', 'کارتن', 'کیسه', 'بسته', 'شاخه', 'اینچ', 'سایز', 'میخوام', 'می‌خوام', 'لطفا', 'لطفاً']);
 
 export interface DraftLine { variantId: string; quantity: number; mode: 'unit' | 'pack'; packs: number | null }
+
+/**
+ * A draft line from what the model asked. The factory sells full cartons / bags, so a size that has a pack is taken
+ * in packs; a pack-only product asked in units is rounded up to whole packs (`rounded` tells the model to say so).
+ */
+export function draftLine(v: { variantId: string; perPack: number | null; packOnly: boolean }, i: { quantity: number; unit: 'unit' | 'pack' }): DraftLine & { rounded?: boolean } {
+  if (!v.perPack) return { variantId: v.variantId, quantity: i.quantity, mode: 'unit', packs: null };
+  if (i.unit === 'pack') return { variantId: v.variantId, quantity: i.quantity * v.perPack, mode: 'pack', packs: i.quantity };
+  if (i.quantity % v.perPack === 0) return { variantId: v.variantId, quantity: i.quantity, mode: 'pack', packs: i.quantity / v.perPack };
+  if (!v.packOnly) return { variantId: v.variantId, quantity: i.quantity, mode: 'unit', packs: null };
+  const packs = Math.ceil(i.quantity / v.perPack);
+  return { variantId: v.variantId, quantity: packs * v.perPack, mode: 'pack', packs, rounded: true };
+}
 
 @Injectable()
 export class AssistantService {
@@ -156,8 +169,8 @@ export class AssistantService {
     for (const i of out.items) {
       const v = q.get(i.variantId);
       if (!v) continue;
-      const pack = i.unit === 'pack' && !!v.perPack;
-      lines.push({ variantId: v.variantId, quantity: pack ? i.quantity * v.perPack! : i.quantity, mode: pack ? 'pack' : 'unit', packs: pack ? i.quantity : null });
+      const { rounded: _r, ...line } = draftLine(v, i); void _r;
+      lines.push(line);
     }
     const d = await this.prisma.assistantDraft.create({
       data: { userId, source, inputText: input, reply: out.reply.replace(/(سفارش(\s*شما)?\s*)?ثبت شد/g, 'در پیش‌نویس آمد').slice(0, 1000), items: lines as object[], unclear: out.unclear.slice(0, 20), model: process.env.OPENAI_MODEL ?? null },
@@ -170,7 +183,9 @@ export class AssistantService {
     const d = await this.prisma.assistantDraft.findUnique({ where: { id } });
     if (!d || d.userId !== userId) throw new BadRequestException('پیش‌نویس پیدا نشد');
     const items = d.items as unknown as DraftLine[];
-    const q = await quote(this.prisma, items.map(i => i.variantId), customerId);
+    const units: Record<string, number> = {};
+    for (const i of items) units[i.variantId] = (units[i.variantId] ?? 0) + i.quantity;
+    const q = await quote(this.prisma, items.map(i => i.variantId), customerId, 'CASH', undefined, units);
     const vs = await this.prisma.variant.findMany({
       where: { id: { in: items.map(i => i.variantId) } },
       include: { options: true, family: { include: { axes: { orderBy: { sortOrder: 'asc' } }, media: { where: { isPrimary: true }, take: 1 } } } },

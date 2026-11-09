@@ -4,7 +4,7 @@ import { Icon, Photo } from './icons';
 import { Picker } from './Picker';
 import {
   ApiError, Category, Family, FamilyCard, Order, PayMode, ROLE_FA, api, apiForm, fa, lineTotal, lineUnits, mainAccount, payModeFa, pctFor, personName, photoUrl, salePrices, short, useApi,
-  faDigits,
+  faDigits, bestOffer, withPct,
 } from './lib';
 import { BOT_USERNAME, haptic } from './telegram';
 
@@ -12,15 +12,19 @@ const cardPhoto = (f: FamilyCard) => photoUrl(f.media[0]?.key);
 const badgeCls = (b: string) => (b === 'جدید' ? 'new' : b === 'پرفروش' ? 'hot' : 'pick');
 
 function PCard({ f, withAdd }: { f: FamilyCard; withAdd?: boolean }) {
-  const { go, quickAdd, me } = useApp();
+  const { go, quickAdd, me, offers } = useApp();
   const sale = mainAccount(me)?.sale;
-  const ps = f.minPrice ? salePrices(sale, f.category.slug, BigInt(f.minPrice)) : [];
+  const mine = offers.filter(o => o.familyId === f.id);
+  const special = mine.length > 0;
+  // a special without a carton minimum lowers the card price too
+  const ps = f.minPrice ? salePrices(sale, f.category.slug, BigInt(f.minPrice)).map(x => { const b = bestOffer(mine, x.mode, x.pct, 0).best; return b ? { ...x, pct: b.pct, price: withPct(BigInt(f.minPrice!), b.pct) } : x; }) : [];
   return (
     <div className="pcard">
       <button type="button" className="pimg" aria-label={f.name} onClick={() => (withAdd ? quickAdd(f.slug) : go({ name: 'product', slug: f.slug }))}>
         <Photo src={cardPhoto(f)} />
         {f.badge && <span className={`tag ${badgeCls(f.badge)} flag`}>{f.badge}</span>}
         <span className="sizes num">{fa(f.sizeCount)} سایز</span>
+        {special && <span className="sp-flag">⭐ تخفیف ویژه</span>}
       </button>
       {withAdd && <button type="button" className="add-mini" style={{ position: 'relative', marginTop: -50, marginInlineStart: 'auto', marginInlineEnd: 8 }} aria-label={`افزودن ${f.name}`} onClick={() => quickAdd(f.slug)}><Icon n="plus" s={18} /></button>}
       <button type="button" className="link" style={{ color: 'inherit', textAlign: 'right', fontWeight: 'inherit' }} onClick={() => go({ name: 'product', slug: f.slug })}><b>{f.name}</b></button>
@@ -47,8 +51,12 @@ export function HomeScreen() {
 
   const tiles = useMemo(() => {
     if (!cats.data) return [];
-    const sorted = [...cats.data].sort((a, b) => (b._count.families > 0 ? 1 : 0) - (a._count.families > 0 ? 1 : 0) || a.sortOrder - b.sortOrder);
-    return sorted.slice(0, 8).map((c, i) => ({ c, size: i === 0 ? 'big' : i === 5 ? 'wide' : '', photo: photoUrl(fams.data?.find(f => f.category.slug === c.slug && f.media[0])?.media[0].key) }));
+    // main branches only; a branch's photo comes from a product in it or in one of its sub-branches
+    const under = (root: string) => { const out = new Set([root]); for (const c of cats.data!) if (c.parentId && out.has(c.parentId)) out.add(c.id); return out; };
+    const slugs = (root: string) => { const ids = under(root); return new Set(cats.data!.filter(c => ids.has(c.id)).map(c => c.slug)); };
+    const roots = cats.data.filter(c => !c.parentId);
+    const sorted = [...roots].sort((a, b) => (b._count.families > 0 ? 1 : 0) - (a._count.families > 0 ? 1 : 0));
+    return sorted.slice(0, 8).map((c, i) => { const ss = slugs(c.id); return { c, size: i === 0 ? 'big' : i === 5 ? 'wide' : '', photo: photoUrl(fams.data?.find(f => ss.has(f.category.slug) && f.media[0])?.media[0].key) }; });
   }, [cats.data, fams.data]);
   const featured = useMemo(() => (fams.data ? [...fams.data].sort((a, b) => (b.badge ? 1 : 0) - (a.badge ? 1 : 0)).filter(f => f.media[0]).slice(0, 8) : []), [fams.data]);
   const hero = fams.data?.find(f => f.slug === 'elbow' && f.media[0]) ?? fams.data?.find(f => f.media[0]);
@@ -115,7 +123,13 @@ export function CatalogScreen({ cat, q }: { cat?: string; q?: string }) {
   const [text, setText] = useState(q ?? '');
   const [query, setQuery] = useState(q ?? '');
   useEffect(() => { const t = setTimeout(() => setQuery(text.trim()), 300); return () => clearTimeout(t); }, [text]);
-  const active = cat ?? cats.data?.find(c => c._count.families > 0)?.slug;
+  const active = cat ?? cats.data?.find(c => !c.parentId && c._count.families > 0)?.slug;
+  // main branches on the first row; the open branch's sub-branches on the second
+  const byId = new Map((cats.data ?? []).map(c => [c.id, c]));
+  const activeCat = cats.data?.find(c => c.slug === active);
+  let root = activeCat;
+  while (root?.parentId && byId.has(root.parentId)) root = byId.get(root.parentId);
+  const subs = root ? (cats.data ?? []).filter(c => c.id !== root!.id && c._count.families > 0 && (() => { let p = c.parentId; while (p) { if (p === root!.id) return true; p = byId.get(p)?.parentId ?? null; } return false; })()) : [];
   const path = query ? `/catalog/families?q=${encodeURIComponent(query)}` : active ? `/catalog/families?category=${encodeURIComponent(active)}` : null;
   const fams = useApi<FamilyCard[]>(path);
 
@@ -125,10 +139,16 @@ export function CatalogScreen({ cat, q }: { cat?: string; q?: string }) {
         <label className="search"><Icon n="search" /><input value={text} onChange={e => setText(e.target.value)} placeholder="جست‌وجو در محصولات" aria-label="جست‌وجو" enterKeyHint="search" /></label>
       </div>
       <div className="chips">
-        {cats.data?.map(c => (
-          <button key={c.id} type="button" className="chip" aria-pressed={!query && c.slug === active} onClick={() => { setText(''); setQuery(''); go({ name: 'catalog', cat: c.slug }, true); }}>{c.name}</button>
+        {cats.data?.filter(c => !c.parentId).map(c => (
+          <button key={c.id} type="button" className="chip" aria-pressed={!query && c.id === root?.id} onClick={() => { setText(''); setQuery(''); go({ name: 'catalog', cat: c.slug }, true); }}>{c.name}</button>
         ))}
       </div>
+      {!query && subs.length > 0 && (
+        <div className="chips sub">
+          <button type="button" className="chip" aria-pressed={activeCat?.id === root?.id} onClick={() => go({ name: 'catalog', cat: root!.slug }, true)}>همه‌ی {root!.name}</button>
+          {subs.map(c => <button key={c.id} type="button" className="chip" aria-pressed={c.slug === active} onClick={() => go({ name: 'catalog', cat: c.slug }, true)}>{(c.depth ?? 1) > 1 ? '· ' : ''}{c.name}</button>)}
+        </div>
+      )}
       {fams.error ? <Failed msg="اتصال به سرور برقرار نشد." retry={fams.reload} /> : !fams.data ? <Loading h={420} /> : fams.data.length ? (
         <div className="grid">{fams.data.map(f => <PCard key={f.id} f={f} withAdd />)}</div>
       ) : (
@@ -144,7 +164,7 @@ function MyTerms() {
   const a = mainAccount(me);
   if (!a) return null;
   const t = a.sale;
-  const ds = Object.entries(t.categories);
+  const ds = Object.entries(t.categories).filter(([, d]) => d.own !== false);
   if (!ds.length && !t.cashPct && !t.termPct) return null;
   const both = t.modes.length > 1;
   return (
@@ -188,6 +208,8 @@ export function ProductScreen({ slug }: { slug: string }) {
 }
 
 // ───────── cart ─────────
+interface SpecialQ { special: number | null; next: { extra: number; minPacks: number; packName: string | null } | null }
+interface Quoted { list: string | null; cash: string | null; term: string | null; cashSpecial?: SpecialQ; termSpecial?: SpecialQ; packOnly?: boolean; soldOut?: boolean }
 export function CartScreen() {
   const { cart, setCart, go, me, authed, reloadMe, toast } = useApp();
   const accounts = me?.accounts.filter(a => a.role !== 'VIEWER') ?? [];
@@ -195,7 +217,7 @@ export function CartScreen() {
   const [newName, setNewName] = useState('');
   const [newCity, setNewCity] = useState('');
   const [note, setNote] = useState('');
-  const [prices, setPrices] = useState<Record<string, { list: string | null; cash: string | null; term: string | null }> | null>(null);
+  const [prices, setPrices] = useState<Record<string, Quoted> | null>(null);
   const [payMode, setPayMode] = useState<PayMode | ''>('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -208,13 +230,31 @@ export function CartScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (!cart.length && edit) stopEdit(false); }, [cart.length]);
   const account = accounts.find(a => a.customerId === acct);
-  const idsKey = cart.map(c => c.variantId).join(',');
-  // personal prices of this customer (falls back to the list price on the server)
+  const idsKey = cart.map(c => `${c.variantId}:${lineUnits(c)}`).join(',');
+  // personal prices of this customer (falls back to the list price on the server), with the quantities so a
+  // «تخفیف ویژه» with a carton minimum counts
   useEffect(() => {
     if (!authed || !cart.length) { setPrices(null); return; }
-    api<Record<string, { list: string | null; cash: string | null; term: string | null }>>('/me/quote', { method: 'POST', body: { variantIds: cart.map(c => c.variantId), customerId: acct || undefined } }).then(setPrices, () => setPrices(null));
+    let live = true;
+    const t = setTimeout(() => {
+      api<Record<string, Quoted>>('/me/quote', { method: 'POST', body: { items: cart.map(c => ({ variantId: c.variantId, quantity: lineUnits(c) })), customerId: acct || undefined } })
+        .then(p => live && setPrices(p), () => live && setPrices(null));
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, idsKey, acct]);
+  // the factory sells full cartons / bags: a pack-only size left in units (an older cart) moves to whole packs
+  useEffect(() => {
+    if (!prices) return;
+    let changed = false;
+    const next = cart.map(l => {
+      if (l.mode !== 'unit' || !l.perPack || !prices[l.variantId]?.packOnly) return l;
+      changed = true;
+      return { ...l, mode: 'pack' as const, n: Math.max(1, Math.ceil(l.n / l.perPack)), packOnly: true, packName: l.packName ?? 'بسته' };
+    });
+    if (changed) { setCart(next); toast('کالاهای کارتنی به کارتن کامل گرد شد'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prices]);
 
   if (!cart.length) return (<><div className="top"><h1>سبد سفارش</h1></div><div className="empty">سبد خالی است.<br /><br /><button type="button" className="cta" style={{ justifyContent: 'center' }} onClick={() => go({ name: 'catalog' })}>رفتن به محصولات</button></div></>);
 
@@ -268,12 +308,17 @@ export function CartScreen() {
                 <input className="num" aria-label="مقدار" value={fa(l.n)} readOnly />
                 <button type="button" aria-label="کاهش" onClick={() => upd(i, { n: Math.max(1, l.n - 1) })}><Icon n="minus" s={15} /></button>
               </div>
-              {l.perPack && l.packName ? (
-                <div className="unit"><button type="button" aria-pressed={l.mode === 'unit'} onClick={() => upd(i, { mode: 'unit' })}>{l.unitName}</button><button type="button" aria-pressed={l.mode === 'pack'} onClick={() => upd(i, { mode: 'pack' })}>{l.packName}</button></div>
+              {l.perPack && (l.packOnly || prices?.[l.variantId]?.packOnly) ? <span className="conv">{l.packName ?? 'بسته'}</span> : l.perPack ? (
+                <div className="unit"><button type="button" aria-pressed={l.mode === 'pack'} onClick={() => upd(i, { mode: 'pack', n: l.mode === 'unit' ? Math.max(1, Math.ceil(l.n / l.perPack!)) : l.n })}>{l.packName ?? 'بسته'}</button><button type="button" aria-pressed={l.mode === 'unit'} onClick={() => upd(i, { mode: 'unit', n: l.mode === 'pack' ? l.n * l.perPack! : l.n })}>{l.unitName}</button></div>
               ) : <span className="conv">{l.unitName}</span>}
             </div>
             <div className="r"><span className="conv num">{l.mode === 'pack' && l.perPack ? `${fa(lineUnits(l))} ${l.unitName}` : ''}</span>
-              <b className="num">{l.price !== null ? `${fa(lineTotal(l)!)} ریال` : <span className="tag warn">استعلامی</span>}</b></div>
+              <b className="num">{prices?.[l.variantId]?.soldOut ? <span className="tag warn">ناموجود</span> : l.price !== null ? `${fa(lineTotal(l)!)} ریال` : <span className="tag warn">استعلامی</span>}</b></div>
+            {(() => {
+              const sp = prices?.[l.variantId]?.[mode === 'CASH' ? 'cashSpecial' : 'termSpecial'];
+              if (!sp || (!sp.special && !sp.next)) return null;
+              return <span className="sp-line num">{sp.special ? `⭐ تخفیف ویژه ${fa(sp.special)}٪ اعمال شد` : ''}{sp.special && sp.next ? ' · ' : ''}{sp.next ? `⭐ از ${fa(sp.next.minPacks)} ${sp.next.packName ?? 'کارتن'} این کالا به بالا، ${fa(sp.next.extra)}٪ تخفیف ویژه` : ''}</span>;
+            })()}
           </div>
         </div>
       ))}

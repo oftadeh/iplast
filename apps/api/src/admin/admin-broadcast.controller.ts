@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Logger, Post, Query, UseGua
 import { Session, SessionGuard, Staff } from '../common/session';
 import type { SessionClaims } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { categoryTree } from '../catalog/tree';
 import { TelegramService } from '../common/telegram.service';
 import { audit } from '../common/audit';
 
@@ -22,7 +23,7 @@ export class AdminBroadcastController {
     if (audience === 'city' || audience === 'category') {
       const where = audience === 'city'
         ? { isApproved: true, city: { contains: target ?? '-' } }
-        : { isApproved: true, orders: { some: { items: { some: { variant: { family: { categoryId: target ?? '-' } } } } } } };
+        : { isApproved: true, orders: { some: { items: { some: { variant: { family: { categoryId: { in: target ? (await categoryTree(this.prisma)).descendants(target) : ['-'] } } } } } } } };
       const members = await this.prisma.customerMember.findMany({ where: { customer: where, user: { isActive: true } }, select: { user: { select: { id: true, telegramId: true } } } });
       return [...new Map(members.map(m => [m.user.id, m.user])).values()];
     }
@@ -65,10 +66,11 @@ export class AdminBroadcastController {
   /** Cities of approved customers and product categories, for the targeted audiences. */
   @Get('targets')
   async targets() {
-    const [cities, cats] = await Promise.all([
+    const [cities, tree] = await Promise.all([
       this.prisma.customer.groupBy({ by: ['city'], where: { isApproved: true, city: { not: null } }, _count: true }),
-      this.prisma.category.findMany({ orderBy: { sortOrder: 'asc' }, select: { id: true, name: true } }),
+      categoryTree(this.prisma),
     ]);
+    const cats = tree.ordered().map(c => ({ id: c.id, name: tree.path(c.id) }));
     return { cities: cities.filter(c => c.city?.trim()).map(c => ({ city: c.city!, n: c._count })).sort((a, b) => b.n - a.n), categories: cats };
   }
 

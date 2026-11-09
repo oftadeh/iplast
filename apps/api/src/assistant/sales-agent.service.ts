@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EDITABLE, OrdersService, STATUS_FA } from '../orders/orders.service';
 import { TelegramService } from '../common/telegram.service';
 import { quote, saleTerms } from '../orders/pricing';
-import { AssistantService, DraftLine } from './assistant.service';
+import { AssistantService, DraftLine, draftLine } from './assistant.service';
 import { AccountingService, METHOD_FA, PAY_STATUS_FA } from '../accounting/accounting';
 
 const AI_PREFIX = '[دستیار]\n';
@@ -20,7 +20,7 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 
 روش کار:
 1. سفارش مشتری را با search_catalog پیدا کن و با set_draft در پیش‌نویس بگذار. هر بار که اقلام تغییر کرد، set_draft را با فهرست کامل و جدید صدا بزن.
-2. اگر کالا یا سایز مبهم است، کوتاه بپرس؛ حدس نزن. «نری» = اتصال نر، «مادگی» = اتصال ماده، «بوشن/رابط» = رابط. اعداد ۲۰ تا ۲۰۰ معمولاً قطر لوله و ½ تا ۴ اینچ سایز رزوه است. کارتن/کیسه/بسته = pack؛ عدد/شاخه = unit.
+2. اگر کالا یا سایز مبهم است، کوتاه بپرس؛ حدس نزن. «نری» = اتصال نر، «مادگی» = اتصال ماده، «بوشن/رابط» = رابط. اعداد ۲۰ تا ۲۰۰ معمولاً قطر لوله و ½ تا ۴ اینچ سایز رزوه است. کارتن/کیسه/بسته = pack؛ عدد/شاخه = unit. کارخانه رند کارتن و کیسه می‌فروشد: کالایی که بسته‌بندی دارد را به کارتن/کیسه سفارش بگیر و اگر مشتری عدد گفت، به کارتن کامل گرد کن و بگو (roundedToWholePacks در نتیجه‌ی set_draft).
 3. وقتی پیش‌نویس کامل شد، فهرست کوتاه و جمع را بگو. دو نوع فروش داریم: «نقدی» (قیمت لیست منهای درصد نقدی مشتری) و «مدت‌دار» (قیمت لیست منهای درصد مدت‌دار، پرداخت با چک بعد از چند ماه). اگر مشتری نگفته، هر دو جمع را از نتیجه‌ی set_draft بگو و بپرس کدام را می‌خواهد و «ثبت کنم؟».
 4. فقط وقتی مشتری صریحاً تأیید کرد (مثلاً «بله»، «ثبت کن»، «اوکی»)، submit_order را با payMode انتخاب‌شده (CASH یا TERM) صدا بزن. اگر نام فروشگاه/شرکت لازم بود، اول بپرس و بعد با companyName صدا بزن.
 5. بعد از ثبت بگو: «پیش‌فاکتور شماره‌ی X ثبت شد و برای تأیید کارشناس فروش رفت.» تأیید، تخفیف، زمان ارسال و قیمت استعلامی با کارشناس است؛ قول نده.
@@ -33,6 +33,7 @@ const INSTRUCTIONS = `تو «ایجنت فروش» اصفهان پلاست هس�
 12. اگر مشتری فقط پیش‌نویس (سفارشی که هنوز ثبت نشده) را نمی‌خواهد، set_draft با فهرست خالی.
 13. لیست قیمت: اگر مشتری لیست قیمت خواست، send_price_list. قیمت یک کالا را با search_catalog بگو.
 14. تو خودت کار را تمام می‌کنی؛ ارجاع به کارشناس آخرین راه است. فقط در این موارد handoff کن: مشتری صریحاً آدم/کارشناس خواست؛ شکایت، تأخیر یا خرابی بار؛ اختلاف حساب یا چک برگشتی؛ درخواست تخفیف یا شرایط ویژه بیش از شرایط فعلی‌اش. حتی بعد از handoff هم به سؤال‌ها و کارهای بعدی مشتری خودت جواب بده و کارها را انجام بده.
+16. تخفیف ویژه: اگر نتیجه‌ی set_draft «specialDiscounts» دارد، بگو کدام کالا تخفیف ویژه گرفت؛ و اگر با چند کارتن بیشتر به تخفیف ویژه می‌رسد، پیشنهاد بده. درصد تخفیف ویژه‌ای که در «تخفیف‌های ویژه‌ی این مشتری» نیست را قول نده.
 15. درخواست مبهم مثل «فیلتر می‌خواهم» را با search_catalog پیدا کن و گزینه‌ها و سایزها را بگو و بپرس کدام و چند عدد؛ ارجاع نده.
 
 قواعد:
@@ -118,16 +119,25 @@ export class SalesAgentService {
       parameters: z.object({ items: z.array(z.object({ variantId: z.string(), quantity: z.number().int().positive(), unit: z.enum(['unit', 'pack']) })) }),
       execute: async ({ items }) => {
         const terms = await saleTerms(this.prisma, customerId);
-        const q = await quote(this.prisma, items.map(i => i.variantId), customerId, 'CASH', terms);
-        const qt = await quote(this.prisma, items.map(i => i.variantId), customerId, 'TERM', terms);
+        const q0 = await quote(this.prisma, items.map(i => i.variantId), customerId, 'CASH', terms);
         const lines: DraftLine[] = [];
         const missing: string[] = [];
+        const rounded: string[] = [];
         for (const i of items) {
-          const v = q.get(i.variantId);
+          const v = q0.get(i.variantId);
           if (!v) { missing.push(i.variantId); continue; }
-          const pack = i.unit === 'pack' && !!v.perPack;
-          lines.push({ variantId: v.variantId, quantity: pack ? i.quantity * v.perPack! : i.quantity, mode: pack ? 'pack' : 'unit', packs: pack ? i.quantity : null });
+          const { rounded: r, ...line } = draftLine(v, i);
+          if (r) rounded.push(`${v.title}: ${line.packs} ${v.packName ?? 'بسته'} (${line.quantity} عدد)`);
+          lines.push(line);
         }
+        // prices with the order's quantities, so a «تخفیف ویژه» with a pack minimum counts
+        const units: Record<string, number> = {};
+        for (const l of lines) units[l.variantId] = (units[l.variantId] ?? 0) + l.quantity;
+        const [q, qt] = await Promise.all([quote(this.prisma, lines.map(l => l.variantId), customerId, 'CASH', terms, units), quote(this.prisma, lines.map(l => l.variantId), customerId, 'TERM', terms, units)]);
+        const specials = [...q.values(), ...qt.values()].flatMap(x => [
+          ...(x.special ? [`${x.title}: تخفیف ویژه ${x.special.pct}٪ اعمال شد`] : []),
+          ...(x.next ? [`${x.title}: از ${x.next.minPacks} ${x.next.packName ?? 'عدد'} به بالا ${x.next.extra}٪ تخفیف ویژه‌ی بیشتر`] : []),
+        ]);
         const d = await this.prisma.assistantDraft.create({ data: { userId, source: 'agent', inputText: text.slice(0, 1500), reply: '', items: lines as object[], model: process.env.OPENAI_MODEL ?? null } });
         draftId = d.id;
         const v = await this.ai.view(d.id, userId, customerId);
@@ -138,6 +148,8 @@ export class SalesAgentService {
           totalCash: modes.includes('CASH') ? `${formatRial(sum(q))} (نقدی، ${terms.cashPct}٪ زیر قیمت لیست)` : 'برای این مشتری فعال نیست',
           totalTerm: modes.includes('TERM') ? `${formatRial(sum(qt))} (مدت‌دار ${terms.termMonths} ماهه، ${terms.termPct}٪ زیر قیمت لیست)` : 'برای این مشتری فعال نیست',
           invalidIds: missing,
+          ...(rounded.length ? { roundedToWholePacks: rounded } : {}),
+          ...(specials.length ? { specialDiscounts: [...new Set(specials)] } : {}),
         });
       },
     });
@@ -279,9 +291,15 @@ export class SalesAgentService {
     const history = await this.prisma.message.findMany({ where: { conversationId: conv.id, id: { not: msg.id } }, orderBy: { createdAt: 'desc' }, take: 16 });
     const transcript = history.reverse().map(m => `${m.direction === 'IN' ? 'مشتری' : m.text?.startsWith(AI_PREFIX) ? 'تو' : 'کارشناس'}: ${(m.text ?? `[${m.kind}]`).replace(AI_PREFIX, '').slice(0, 600)}`).join('\n');
     const current = draftId ? await this.ai.view(draftId, userId, customerId).catch(() => null) : null;
+    const specials = await this.prisma.specialDiscount.findMany({
+      where: { isActive: true, OR: [{ customerId: null }, ...(customerId ? [{ customerId }] : [])], AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: new Date() } }] }, { OR: [{ startsAt: null }, { startsAt: { lte: new Date() } }] }] },
+      include: { family: { select: { name: true, packName: true } } }, take: 30,
+    });
+    const specialsText = specials.length ? `تخفیف‌های ویژه‌ی این مشتری: ${specials.map(x => `${x.family.name}: ${x.kind === 'FIXED' ? `${Number(x.pct)}٪ زیر قیمت لیست` : `${Number(x.pct)}٪ بیشتر از درصد خودش`}${x.payMode ? (x.payMode === 'CASH' ? ' در خرید نقدی' : ' در خرید مدت‌دار') : ''}${x.minPacks ? ` از ${x.minPacks} ${x.family.packName ?? 'عدد'} به بالا` : ''}`).join('؛ ')}.` : '';
     const context = [
       `مشتری: ${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'بی‌نام'}${account ? ` · ${account.name}${account.isApproved ? '' : ' (حساب هنوز تأیید نشده)'}` : ' · هنوز حساب مشتری ندارد (برای اولین سفارش نام فروشگاه لازم است)'}`,
       account ? `شرایط فروش این مشتری: ${[account.terms?.allowCash !== false ? `نقدی ${Number(account.terms?.cashDiscountPct ?? 0)}٪ زیر قیمت لیست` : '', account.terms?.allowTerm !== false ? `مدت‌دار ${account.terms?.termMonths ?? 3} ماهه ${Number(account.terms?.termDiscountPct ?? 0)}٪ زیر قیمت لیست` : ''].filter(Boolean).join('؛ ')}.${account.categoryDiscounts.length ? ` درصد ویژه‌ی دسته‌ها: ${account.categoryDiscounts.map(d => `${d.category.name}${d.cashPct !== null ? ` نقدی ${Number(d.cashPct)}٪` : ''}${d.termPct !== null ? ` مدت‌دار ${Number(d.termPct)}٪` : ''}`).join('، ')}.` : ''} قیمت search_catalog قیمت لیست است؛ قیمت مشتری در نتیجه‌ی set_draft می‌آید و همان را بگو.` : '',
+      specialsText,
       current?.lines.length ? `پیش‌نویس فعلی: ${current.lines.map(l => `${l.name} ${l.label} × ${l.quantity}`).join('، ')}` : 'پیش‌نویس فعلی: خالی',
       transcript ? `گفتگوی قبلی:\n${transcript}` : '',
       `پیام جدید مشتری: ${text}`,

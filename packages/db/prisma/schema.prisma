@@ -31,27 +31,29 @@ model Brand {
 }
 
 model ProductFamily {
-  id          String       @id @default(cuid())
-  slug        String       @unique
+  id          String            @id @default(cuid())
+  slug        String            @unique
   name        String
   description String?
   specs       Json? // [["فشار کاری","۱۰ اتمسفر"], ...]
   badge       String? // پرفروش، جدید
   model       String? // e.g. IPT, قالب آلومینیومی
-  unitName    String       @default("عدد")
+  unitName    String            @default("عدد")
   packName    String? // کارتن / کیسه / بسته
-  isActive    Boolean      @default(true)
-  sortOrder   Int          @default(0)
+  packOnly    Boolean           @default(false) // sold only in whole packs (the factory ships full cartons / bags)
+  isActive    Boolean           @default(true)
+  sortOrder   Int               @default(0)
   categoryId  String
-  category    Category     @relation(fields: [categoryId], references: [id])
+  category    Category          @relation(fields: [categoryId], references: [id])
   brandId     String?
-  brand       Brand?       @relation(fields: [brandId], references: [id])
+  brand       Brand?            @relation(fields: [brandId], references: [id])
   axes        OptionAxis[]
   variants    Variant[]
   media       Media[]
   synonyms    Synonym[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  specials    SpecialDiscount[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 }
 
 model OptionAxis {
@@ -74,6 +76,7 @@ model Variant {
   familyId       String
   family         ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
   perPack        Int? // تعداد در کارتن
+  stock          Int? // موجودی (عدد) set by hand in the panel; NULL = not tracked, 0 = ناموجود
   isActive       Boolean         @default(true)
   options        VariantOption[]
   prices         Price[]
@@ -254,6 +257,7 @@ model Customer {
   payments          Payment[]
   documents         Document[]
   categoryDiscounts CustomerCategoryDiscount[]
+  specials          SpecialDiscount[]
   creditLimit       BigInt? // most the customer may owe (Rial); the manager is warned at final approval above it
   code              Int                        @unique @default(autoincrement()) // «کد مشتری»: colleagues ask to join the account with it
   joinRequests      JoinRequest[]
@@ -296,6 +300,35 @@ model CustomerCategoryDiscount {
   updatedAt  DateTime @updatedAt
 
   @@id([customerId, categoryId])
+}
+
+enum SpecialKind {
+  EXTRA // percentage points on top of the customer's own cash / term %
+  FIXED // this product's % off the list price, when it is better than the customer's own
+}
+
+/// «تخفیف ویژه»: a senior manager's discount on one product, for everyone or one customer, for one or both sale
+/// modes, optionally only from a minimum number of packs (e.g. 100 cartons) and within dates.
+model SpecialDiscount {
+  id         String        @id @default(cuid())
+  familyId   String
+  family     ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  customerId String? // null = every customer
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  payMode    PayMode? // null = both نقدی and مدت‌دار
+  kind       SpecialKind   @default(EXTRA)
+  pct        Decimal       @db.Decimal(5, 2)
+  minPacks   Int? // the order must have at least this many packs (cartons / bags) of the product
+  startsAt   DateTime?
+  endsAt     DateTime?
+  note       String? // shown to the customer, e.g. «جشنواره پاییز»
+  isActive   Boolean       @default(true)
+  createdBy  String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([familyId])
+  @@index([customerId])
 }
 
 enum MemberRole {
@@ -403,7 +436,8 @@ model OrderItem {
   packs       Int? // as entered by the customer, if by pack
   unitPrice   BigInt? // snapshot, NULL for inquiry items; already includes the sale discount
   listPrice   BigInt? // list price at order time, before the cash / term discount
-  salePct     Decimal?    @db.Decimal(5, 2) // the cash / term discount applied to listPrice
+  salePct     Decimal?    @db.Decimal(5, 2) // the cash / term discount applied to listPrice (incl. a special discount)
+  specialPct  Decimal?    @db.Decimal(5, 2) // the part of salePct that came from a «تخفیف ویژه»
   priceStatus PriceStatus
 }
 

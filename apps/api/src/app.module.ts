@@ -19,6 +19,7 @@ import { AdminDocumentsController, DocumentsService, MyDocumentsController } fro
 import { AccountingService, AdminAccountsController, MyAccountController } from './accounting/accounting';
 import { PriceAiService } from './prices/price-ai.service';
 import { AdminProductsController, MediaController } from './admin/admin-products.controller';
+import { AdminCategoriesController, AdminSpecialsController } from './admin/admin-catalog.controller';
 import { AdminBroadcastController } from './admin/admin-broadcast.controller';
 import { AdminProxyController } from './admin/admin-proxy.controller';
 import { AdminDashboardController } from './admin/admin-dashboard.controller';
@@ -28,7 +29,7 @@ import { AssistantService } from './assistant/assistant.service';
 import { SalesAgentService } from './assistant/sales-agent.service';
 
 @Module({
-  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminJoinsController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController, AdminDocumentsController, MyDocumentsController, AdminGrowthController, InternalReferralController, ShareController],
+  controllers: [HealthController, AuthController, CatalogController, MeController, OrdersController, AdminOrdersController, AdminCustomersController, AdminJoinsController, AdminStaffController, PricesController, AdminConversationsController, AssistantController, InternalAssistantController, InternalOrdersController, InternalPaymentsController, AdminProductsController, MediaController, AdminCategoriesController, AdminSpecialsController, AdminAccountsController, MyAccountController, AdminBroadcastController, AdminProxyController, AdminDashboardController, MeChatController, InternalAgentController, AdminDocumentsController, MyDocumentsController, AdminGrowthController, InternalReferralController, ShareController],
   providers: [PrismaService, AuthService, TelegramService, SessionGuard, OrdersService, AssistantService, PriceAiService, AccountingService, SalesAgentService, DocumentsService, WeeklyReport],
 })
 export class AppModule {}
