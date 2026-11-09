@@ -19,12 +19,55 @@ notify() {
   local id; id="$(owner_id)"
   [ -n "${BOT_TOKEN:-}" ] && [ -n "$id" ] || return 0
   curl -fsS -m 20 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${id}" --data-urlencode "text=$1" >/dev/null || true
+    --data-urlencode "chat_id=${id}" --data-urlencode "text=${1:0:3900}" >/dev/null || true
 }
+
+# what the owner needs to see when a deploy fails: disk, memory and the database's own log
+diag() {
+  echo "--- disk/memory:"
+  df -h / /var/lib/docker 2>/dev/null | awk 'NR==1 || !seen[$0]++'
+  free -m 2>/dev/null | head -2
+  echo "--- postgres:"
+  docker compose logs --no-color --tail 15 postgres 2>&1 | tail -n 15
+  echo "--- migrate:"
+  docker compose logs --no-color --tail 15 migrate 2>&1 | tail -n 15
+}
+# free space in GB on the disk that holds Docker's images and volumes
+free_gb() { df -BG --output=avail /var/lib/docker 2>/dev/null | tail -1 | tr -cd '0-9'; }
+# every deploy leaves the previous images and build cache behind; when the disk runs low the database can no longer
+# write and stops answering. Only unused images and build cache are removed, never volumes (the data).
+cleanup() {
+  local f; f=$(free_gb)
+  if [ -n "$f" ] && [ "$f" -lt 6 ]; then
+    docker image prune -f >/dev/null 2>&1
+    docker builder prune -f --keep-storage 2GB >/dev/null 2>&1
+  fi
+}
+# waits until the database answers (it may be recovering after the server ran out of memory or disk)
+wait_db() {
+  docker compose up -d postgres redis >>"$LOG" 2>&1
+  for i in $(seq 1 60); do
+    [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q postgres)" 2>/dev/null)" = healthy ] && return 0
+    # still not answering after 2 minutes: restart it once (the data is in its volume and is kept)
+    [ "$i" = 24 ] && docker compose restart postgres >>"$LOG" 2>&1
+    sleep 5
+  done
+  echo "postgres is still unhealthy after 5 minutes" >>"$LOG"
+  return 1
+}
+LOG=/var/log/iplast-deploy.log
+RETRY=/var/lib/iplast-deploy-retry
 
 git fetch -q origin main || { echo "fetch failed"; exit 1; }
 LOCAL=$(git rev-parse HEAD); REMOTE=$(git rev-parse origin/main)
-if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then exit 0; fi
+if [ "$LOCAL" = "$REMOTE" ] && [ -z "${FORCE:-}" ]; then
+  # the last deploy of this commit failed (the API is not running): try again every 20 minutes, at most 6 times
+  [ -n "$(docker compose ps -q --status running api 2>/dev/null)" ] && { rm -f "$RETRY"; exit 0; }
+  n=$(cat "$RETRY" 2>/dev/null || echo 0)
+  [ "$n" -ge 6 ] && exit 0
+  [ -f "$RETRY" ] && [ $(( $(date +%s) - $(stat -c %Y "$RETRY") )) -lt 1200 ] && exit 0
+  echo $((n + 1)) >"$RETRY"
+fi
 
 git reset -q --hard origin/main
 MSG=$(git log -1 --pretty=%s)
@@ -33,8 +76,14 @@ install -m 755 infra/autodeploy.sh /usr/local/bin/iplast-autodeploy 2>/dev/null 
 [ -f /etc/systemd/system/iplast-backup.timer ] || bash infra/backup.sh --install >/dev/null 2>&1 || true
 # servers that use the outbound proxy (see infra/proxy): keep its host tools current
 if [ -d /opt/iplast-proxy ]; then bash infra/proxy/install.sh >/dev/null 2>&1 || notify "⚠️ iPlast proxy tools update failed"; set -a; . ./.env; set +a; [ -n "${BUILD_PROXY:-}" ] && export HTTPS_PROXY=$BUILD_PROXY HTTP_PROXY=$BUILD_PROXY https_proxy=$BUILD_PROXY http_proxy=$BUILD_PROXY; fi
-LOG=/var/log/iplast-deploy.log
-if docker compose up -d --build --remove-orphans >"$LOG" 2>&1; then
+: >"$LOG"
+cleanup
+# images are built one at a time, so the build does not take the memory the running database needs
+BUILT=1
+for s in migrate api bot web; do docker compose build "$s" >>"$LOG" 2>&1 || { BUILT=0; break; }; done
+if [ "$BUILT" = 1 ] && wait_db && docker compose up -d --remove-orphans >>"$LOG" 2>&1; then
+  rm -f "$RETRY"
+  cleanup
   sleep 8
   STATE=$(docker compose ps --format '{{.Service}}: {{.State}}' | tr '\n' ' ')
   MIG=$(docker compose logs --no-color --tail 40 migrate 2>&1 | grep -A20 -E "Error|MIGRATE FAILED" | tail -n 20)
@@ -44,9 +93,10 @@ ${STATE}${MIG:+
 ⚠️ database update failed:
 ${MIG}}"
 else
+  [ -f "$RETRY" ] || echo 0 >"$RETRY"
   notify "❌ iPlast deploy failed: ${MSG}
-$(tail -n 25 "$LOG")
---- migrate:
-$(docker compose logs --no-color --tail 25 migrate 2>&1 | tail -n 25)"
+$(tail -n 12 "$LOG")
+$(diag)
+(هر ۲۰ دقیقه خودکار دوباره امتحان می‌شود، حداکثر ۶ بار)"
   exit 1
 fi
