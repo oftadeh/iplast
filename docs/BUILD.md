@@ -65,7 +65,7 @@ sudo bash /opt/iplast/infra/enable-web.sh isfahanplast.co
 
 ## ۴. نصب روی سرور داخل ایران (نصب فعلی)
 
-نصب فعلی روی سرور mobinhost با آی‌پی `87.107.129.163` و آدرس `https://iplast.iplas.co` است. این سرور مشکل‌هایی دارد که سرور خارج ندارد:
+نصب فعلی روی سرور mobinhost با آی‌پی `87.107.129.163` و آدرس `https://iplast.keyfitapp.ir` است (دامنه‌ی `iplas.co` کنار گذاشته شد؛ مثال‌های زیر با همان نام قدیمی نوشته شده‌اند). این سرور مشکل‌هایی دارد که سرور خارج ندارد:
 
 | مشکل | راه‌حل |
 |---|---|
@@ -73,7 +73,7 @@ sudo bash /opt/iplast/infra/enable-web.sh isfahanplast.co
 | پورت‌های ۸۰ و ۴۴۳ دست Caddy پروژه‌ی دیگری (niva) است | `web` روی `172.17.0.1:8088` با HTTP؛ Caddy مشترک HTTPS را می‌دهد |
 | Let's Encrypt از خارج به سرور نمی‌رسد | گواهی از راه DNS کلادفلر (`infra/tls/cert-cloudflare.sh`) |
 
-> روی این سرور پروژه‌های niva، karnik و keyfitapp هم هستند. به آن‌ها دست نزنید؛ تنها تغییر در niva یک بلوک `iplast.iplas.co` در Caddyfile آن است که اسکریپت گواهی می‌سازد.
+> روی این سرور پروژه‌ی keyfit هم هست؛ به آن دست نزنید. niva و karnik در ۲۰۲۶-۱۱-۰۹ به درخواست کارفرما حذف شدند و پورت‌های ۸۰/۴۴۳ حالا دست کانتینر `iplast-front` است (`infra/front/install.sh`، کانفیگ `/opt/iplast-front/Caddyfile`). جاهایی از این بخش که از Caddy نیوا نام می‌برند، تاریخچه‌ی نصب اول هستند.
 
 ### ۴.۱ پراکسی (xray)
 1. باینری xray را در `/opt/iplast-proxy/xray` بگذارید (از [Xray-core releases](https://github.com/XTLS/Xray-core/releases)، با یک کانفیگ اولیه که از اشتراک ساخته شده؛ تا پراکسی بالا نیامده دانلود مستقیم از گیت‌هاب ممکن است کار نکند و باید فایل را دستی منتقل کنید).
